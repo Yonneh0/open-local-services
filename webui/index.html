@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>open-local-services</title>
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23151a22'/%3E%3Ctext x='50' y='74' font-size='68' text-anchor='middle'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <main class="monitor">
+
+    <section class="panel">
+      <div class="panel-title">this page</div>
+      <!-- The machine's health stated in words, for the page that is about the
+           machine. The same reading paints the home tab in the nav; this line
+           is what a person reads. common.js writes it from the state it just
+           read; nothing here is claimed before a reading arrives. -->
+      <div class="meta" id="sysinfo">server not read yet</div>
+      <div class="meta" id="updated">not connected</div>
+      <div class="meta-ok" id="totals-line"></div>
+      <div class="meta" id="key-state">the doors have not been asked yet</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">open models</div>
+      <div class="pill-row">
+        <div class="pill">engine:
+          <select id="model-engine" aria-label="Model engine filter"
+            title="Narrow which models get a card to one engine. The rows inside every card keep their own filter.">
+            <option value="all" title="Cards for models in every engine.">every engine</option>
+            <option value="image" title="Only picture models.">picture only</option>
+            <option value="voice" title="Only spoken renders.">voice only</option>
+          </select>
+        </div>
+        <div class="pill">models:
+          <input id="model-search" aria-label="Search models" placeholder="model name, engine, or port"
+            title="Matches the model name, its engine, or its port, in the cards this page draws.">
+        </div>
+      </div>
+      <div class="meta" id="model-page-line"></div>
+      <div id="model-cards"></div>
+      <div class="meta" id="since"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">machine</div>
+      <!-- The machine's own badges, kept as separate badges in a row across the
+           top of this panel: each states its own fact with its own border, its
+           own fill and its own words. They are here rather than in the header,
+           because what a machine holds open belongs with the machine, not with
+           every page. common.js writes what a reading found into these. -->
+      <div class="machine-chips" id="machine-chips">
+        <span class="chip" id="chip-cpu"><span class="cr">cpu: not read</span><span class="cr">memory: not
+            read</span></span>
+        <span class="chip" id="chip-gpu"><span class="cr">gpu: not read</span><span class="cr">vram: not
+            read</span></span>
+        <span class="chip" id="chip-version"><span class="cr">code: not read</span></span>
+      </div>
+      <div id="machine-metrics"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">the log</div>
+      <div class="meta" id="log-line">what the pages of this machine have said as they worked, oldest first…</div>
+      <div class="log-panel" id="log"
+        title="One record for the whole machine: the image studio, the voice studio and this page all write here. Green is progress, amber is a stop you caused, red is a refusal or an error.">
+      </div>
+      <div class="pill-row">
+        <button class="pill" id="log-clear"
+          title="Take the lines written here off this browser. Nothing on the machine is touched, and a page that says something new writes it here again.">clear</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="key-shim.js"></script>
+  <script src="status-cache.js"></script>
+  <script src="common.js"></script>
+  <script src="config.js"></script>
+  <script src="monitor.js"></script>
+</body>
+
+</html>

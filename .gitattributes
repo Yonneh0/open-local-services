@@ -1,0 +1,6 @@
+# One end-of-line rule per file type: text is stored with line feeds, so a file
+# that was only re-saved on another machine no longer reads as a whole-file
+# rewrite. The batch entry points keep carriage returns on disk, since the
+# command interpreter reads labels and gotos there.
+* text=auto eol=lf
+*.bat text eol=crlf

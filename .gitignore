@@ -1,0 +1,60 @@
+build/
+api/build/
+api/build-arm64/
+# the development root a CUDA build on Windows drives with ninja: a generated
+# tree like every other build root, and its name is long on the same grounds.
+api/build-cuda/
+# the development path's card-named roots: run.bat and build-rel.bat now name
+# the same root for one shape, so a root like api\build-c75 is generated state
+# exactly like every other build root and is never a source.
+api/build-c*/
+# the release path's own api build root: kept shallow on the same grounds as
+# the development one, and never a source.
+api/.build/
+# the release roots named for one target each: the plain cpu flavour and one
+# folder per card generation, generated like every other build root.
+api/.build-p/
+api/.build-c*/
+Release/.build/
+*.exe
+*.dll
+api/open-local-services
+api/open-local-services.new
+weights/
+data/
+vendor/
+.env
+
+# the release artifacts are built bytes, not source: build-rel.sh and
+# build-rel.bat lay them under Release/ on the box that built them - a server
+# binary and the engines beside it run to hundreds of megabytes each - and they
+# reach another box over the link, which is how a windows flavour gets to the
+# machine meant to run it. build-info.txt beside them names the commit they were
+# made from, which is what a later build is read against; the bytes themselves
+# have no place in a clone.
+Release/
+
+# the phonemizer package the statically linked voice engine reads: built with
+# the voice engine and placed beside the binary by run.bat, so it is generated
+# data like the other built trees, not part of the source.
+api/espeak-ng-data/
+
+# the same generated phonemizer data beside a release artifact: build-rel.bat
+# copies it next to the binary it builds, and it is built data, not source.
+Release/*/espeak-ng-data/
+
+# the owner's reference manuals: 110 MB of PDFs that reach a machine by copy
+# over the link like the other payload trees, never by clone. what the
+# maintainer tab reads is held under data/maint once a manual is brought in,
+# so a clone on another box has no use for these bytes.
+ref/
+
+# the working notes an agent keeps for itself beside the tree: behaviour rules,
+# the map of this environment. Not part of the product, and written for the
+# machine that is doing the work, so it is never carried in a clone.
+local.md
+
+# what the picture suite wrote the last time it ran: one line per run, laid
+# beside the script that made it, so a person reads what the machine answered.
+# Machine state like every other log, and never part of a clone.
+*.log

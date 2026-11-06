@@ -1,0 +1,11 @@
+[Unit]
+Description=open-local-services api server
+
+[Service]
+WorkingDirectory=/home/yonneh/open-local-services
+ExecStart=/home/yonneh/open-local-services/run.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

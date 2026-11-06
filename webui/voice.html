@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>open-local-services</title>
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23151a22'/%3E%3Ctext x='50' y='74' font-size='68' text-anchor='middle'%3E%F0%9F%8E%99%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <main>
+
+    <aside id="left">
+
+      <section class="panel"
+        title="Speech happens here, in this program: the audio.cpp engine is linked into the server itself - there is no engine window and no other port. Nothing stands by itself: a model holds memory only while its own card asked for it, and it answers calls directly from there; what the server can say about a model is what that model's own handle states, so the page's dials are the model's declared options, never a list kept here. A voice is a short recording the model listens to; a packaged voice is a name the model's card documents. Everything spoken becomes a wav in the render library below.">
+        <div class="panel-title">this page</div>
+        <div class="panel-foot">Last read: <span id="voice-updated" class="meta">not read yet</span></div>
+      </section>
+
+      <section class="panel"
+        title="The card is the model: its files are either on disk or not, and a package with files here is one that can be opened, not one that stands. A model holds memory only after its card's load hand asked for it. A loaded card answers what the model's own engine states about it: the tasks it runs, the languages it speaks, and every option it declares. Those words are what the dials below will accept. The counts at the top of this room and the words of its filters are the engine's own answer, and the cards are one page of the set that filter matched.">
+        <div class="panel-title">models</div>
+        <div class="model-stats" id="model-stats-line"
+          title="What this machine can offer, counted from its own cards: packages, families, which files are here, which models stand in memory, the weight they hold, and the tasks and languages those families name.">
+        </div>
+        <div class="model-filter"
+          title="Narrow the set before drawing it: a family, a task, a language, where its files are, or any words at all - the package name, a family, a language. Only the words this machine named are offered.">
+          <label for="model-search"
+            title="Words to match: a package name, a family, a language, anything its own card says. Leave blank for all of it.">find</label>
+          <input id="model-search" type="text" value="" title="Words to match. Blank asks for the whole set.">
+          <label for="model-family"
+            title="One family only. The list is the families this machine knows, with how many packages each names.">family</label>
+          <select id="model-family" title="One family only.">
+            <option value="any">any</option>
+          </select>
+          <label for="model-task"
+            title="Only packages that name this task. The words are the ones the engine accepts.">task</label>
+          <select id="model-task" title="Only packages that name this task.">
+            <option value="any">any</option>
+          </select>
+          <label for="model-language" title="Only families that name this language.">language</label>
+          <select id="model-language" title="Only families that name this language.">
+            <option value="any">any</option>
+          </select>
+          <div id="model-language-note"
+            title="How many language words this machine names, and how many of them this field offers."></div>
+          <label for="model-state"
+            title="Where this package stands: in memory here, with files here, or not on this machine yet.">state</label>
+          <select id="model-state" title="Where this package stands.">
+            <option value="any">any</option>
+            <option value="memory">in memory here</option>
+            <option value="disk">files here</option>
+            <option value="missing">not on this machine</option>
+          </select>
+          <label for="model-sort" title="The order the cards stand in.">order</label>
+          <select id="model-sort" title="The order the cards stand in.">
+            <option value="answers">the ones that answer first</option>
+            <option value="biggest">heaviest first</option>
+            <option value="named">by name</option>
+          </select>
+        </div>
+        <div class="model-cursor" id="model-page-cursor"
+          title="How many cards the filter matched, which of them this page draws, and the hands that move through the set. A page draws forty cards at a time, never a wall of hundreds.">
+        </div>
+        <div id="models-pane-list"></div>
+      </section>
+
+      <section class="panel"
+        title="The voice room is shared: every voice model listens to the same recordings. A saved voice is the recording plus, when you gave it one, the words it says - models that clone by listening need the words; models that only need the speaker's shape do not. Play a card to hear a saved voice. Keep one through either door: a recording from this browser's microphone, or a wav file dropped from this machine.">
+        <div class="panel-title">voice library</div>
+        <div id="voice-library-pane"></div>
+        <div id="voice-keep-zone">
+          <form id="voice-file-form" class="file-door">
+            <input id="voice-file-input" type="file" accept="audio/*,.wav,.mp3,.m4a,.mp4,.aac,.flac,.ogg,.webm"
+              title="choose an audio file from this machine; it is read here and kept as a voice">
+          </form>
+        </div>
+      </section>
+
+    </aside>
+
+    <section id="studio">
+
+      <div class="steps" title="How this page works, in order.">
+        <div class="step"
+          title="Nothing stands by itself: a card's load hand puts that model's weights in memory, and its put-down hand gives the memory back.">
+          <b>1 · stand a model</b> press its load hand, its card shows it in memory
+        </div>
+        <div class="step" title="Pick a model that stands and say something.">
+          <b>2 · say it</b> the text and a voice, then press speak it
+        </div>
+        <div class="step" title="The render plays and keeps itself.">
+          <b>3 · the render</b> a wav in the library, playable and deletable
+        </div>
+      </div>
+
+      <section class="panel"
+        title="Pick any loaded model's card here, type what it should say, and choose a voice: a name from the model's packaged voices, a recording from the voice room, or nothing at all. The dials this panel offers are the ones that model's own engine declared; the values sent are only the ones you moved. Long text is chunked by the model itself.">
+        <div class="panel-title">say it</div>
+        <div id="voice-say-zone">
+          <label for="say-model" title="the model to speak with - pick any loaded one">model:</label>
+          <select id="say-model"></select>
+          <label for="say-voice"
+            title="a voice for this line: a name the model ships, a recording from the voice room, or none">voice:</label>
+          <select id="say-voice"></select>
+          <label for="say-field" title="what the model should say">say:</label>
+          <textarea id="say-field" spellcheck="true"
+            title="subject, then style in words if the model reads them. Long text is chunked by the model itself."></textarea>
+          <div id="say-options" title="the options this model's own engine declared; blank fields are not sent"></div>
+          <div id="say-session"
+            title="the run controls this model sets its standing copy with - how its weights are kept, how much state it caches, and the rest, in that model's own words; blank fields keep what the model asks for by itself, and changing one starts a fresh standing copy that runs with the new settings">
+          </div>
+        </div>
+      </section>
+
+      <section class="panel"
+        title="A recording you own becomes a voice: the model listens to it and says new words in that same speaker. Pick a saved voice, or bring a recording in - choose one with the field below, or drop the file anywhere on this panel and the page keeps it and holds it for the clone. The page opens wav, mp3, m4a, mp4, aac, flac, ogg, and webm, and turns what it opens into the plain wav a model listens to. A model that clones needs the words the recording says, so name them; a model that only needs the speaker's shape does not. The clone answers through the model whose card says it listens to references.">
+        <div class="panel-title">voice clone</div>
+        <div id="clone-zone">
+          <label for="clone-model" title="a model that listens to a reference recording">model:</label>
+          <select id="clone-model"></select>
+          <label for="clone-voice" title="a recording already kept in the voice room">voice:</label>
+          <select id="clone-voice"></select>
+          <label for="clone-file" title="or bring an audio file from this machine">recording:</label>
+          <form id="clone-file-form" class="file-door">
+            <input id="clone-file" type="file" accept="audio/*,.wav,.mp3,.m4a,.mp4,.aac,.flac,.ogg,.webm"
+              title="an audio recording from this machine: it is read in this browser and kept">
+          </form>
+          <label for="clone-words" title="the words that recording says - some models need them">the recording
+            says:</label>
+          <input id="clone-words" type="text" autocomplete="off" title="the words the reference recording says">
+          <label for="clone-say" title="what the cloned voice should say">say:</label>
+          <textarea id="clone-say" spellcheck="true" title="the new words the cloned voice speaks"></textarea>
+        </div>
+      </section>
+
+      <section class="panel"
+        title="Words describing a voice make one: a model that designs voices takes the description as its own instruction and answers with a speaker saying your line. Name it and it keeps in the voice room like any other recording.">
+        <div class="panel-title">voice creator</div>
+        <div id="create-zone">
+          <label for="create-model" title="a model whose card says it designs voices from words">model:</label>
+          <select id="create-model"></select>
+          <label for="create-words" title="describe the voice: how it sounds, not what it says">describe it:</label>
+          <textarea id="create-words" spellcheck="true"
+            title="a voice in words: tired, bright, careful, close, unhurried"></textarea>
+          <label for="create-say" title="the line that new voice should speak">say:</label>
+          <textarea id="create-say" spellcheck="true" title="the words the created voice speaks"></textarea>
+          <label for="create-name" title="keep this voice under a name">keep as:</label>
+          <input id="create-name" type="text" autocomplete="off" title="a name to keep the created voice under">
+        </div>
+      </section>
+
+      <section class="panel"
+        title="A voice you already kept, said again with the directions changed: the instruction, the language, the speed. The recording is not re-read as a new speaker - the directions travel to the model with its own voice.">
+        <div class="panel-title">voice editor</div>
+        <div id="edit-zone">
+          <label for="edit-voice" title="the voice to say again">voice:</label>
+          <select id="edit-voice"></select>
+          <label for="edit-for" title="the model that speaks it">model:</label>
+          <select id="edit-for"></select>
+          <label for="edit-instruct" title="the directions the model is told with this voice">directions:</label>
+          <textarea id="edit-instruct" spellcheck="true" title="what to change about how it is said"></textarea>
+          <label for="edit-language" title="say it in this language">language:</label>
+          <input id="edit-language" type="text" autocomplete="off" title="a language this model names">
+          <label for="edit-speed" title="speech speed">speed:</label>
+          <input id="edit-speed" type="text" autocomplete="off" title="a speed multiplier the model names">
+          <label for="edit-say" title="what it should say">say:</label>
+          <textarea id="edit-say" spellcheck="true" title="the words said again"></textarea>
+        </div>
+      </section>
+
+      <section class="panel"
+        title="Nothing here finishes quickly enough to skip a wait, and nothing counts steps: a render is one answer with no counted parts, so its bar says how long it has taken and where the page stops waiting. Stopping one keeps the record's truth and lets the answer go.">
+        <div class="panel-title">progress</div>
+        <div id="progress-panel"></div>
+      </section>
+
+      <section class="panel"
+        title="The same engine, the other direction: a recording comes in and the model answers with what its own handle states - the words it heard and where they sit, the speaker turns it found, or, for a family that converts, separates, or cleans audio, the audio streams it produced, each kept as its own file. What a model can do is what its card states; nothing here is chosen by this page.">
+        <div class="panel-title">listen to a recording</div>
+        <div id="listen-pane"></div>
+        <div id="listen-zone">
+          <label for="listen-model"
+            title="which model listens - pick one whose card says it listens to a recording">model:</label>
+          <select id="listen-model"></select>
+          <label for="listen-audio" title="the recording to listen to - dropped from this machine">recording:</label>
+          <form id="listen-audio-form" class="file-door">
+            <input id="listen-audio" type="file" accept="audio/*,.wav,.mp3,.m4a,.mp4,.aac,.flac,.ogg,.webm"
+              title="a recording from this machine for the model to listen to">
+          </form>
+          <label for="listen-voice" title="or listen to a recording already kept in the voice room">kept voice:</label>
+          <select id="listen-voice"></select>
+          <div id="listen-options"
+            title="the options this model declared for one listening; blank fields are not sent, and a model that states where its words sit can be asked to do so with its own option">
+          </div>
+          <div id="listen-session"
+            title="the run controls this model sets its standing copy with; blank fields keep what the model asks for by itself, and changing one starts a fresh standing copy that runs with the new settings">
+          </div>
+        </div>
+      </section>
+
+      <section class="panel"
+        title="One render, played here rather than in the browser's own player: the strip above draws the sound itself as the audio reaches it, and the line under it lights what the model stated it had said, in order, as the audio passes its positions. A model states its own groups - some state whole words, others state the sound groups it synthesizes with, shown exactly as the model states them. A model that states no positions lights nothing, and the cards say which can.">
+        <div class="panel-title">play it</div>
+        <div id="play-zone">
+          <label for="play-render" title="the render to play here">render:</label>
+          <select id="play-render"></select>
+          <canvas id="eq-canvas" width="720" height="180" title="the sound of the render, drawn as it plays"></canvas>
+          <div id="word-track" title="the words, lit as they are said"></div>
+        </div>
+      </section>
+
+      <section class="panel"
+        title="Every render is kept as a wav under this server's voice room, named by its job. Newest first; each plays, each can be dropped; the words beside it name the model and the voice it was told to use.">
+        <div class="panel-title">renders</div>
+        <div id="renders-pane"></div>
+      </section>
+
+    </section>
+
+  </main>
+
+  <script src="key-shim.js"></script>
+  <script src="status-cache.js"></script>
+  <script src="common.js"></script>
+  <script src="config.js"></script>
+  <script src="voice.js"></script>
+</body>
+
+</html>

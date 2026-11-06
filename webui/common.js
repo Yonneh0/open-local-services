@@ -1,0 +1,1327 @@
+// Shared library every page loads after key-shim and status-cache: page
+// chrome (header bar and nav), the running-state line and machine chips,
+// field/option readers, formatters, API and job-event plumbing, progress
+// bars, and replay of this browser's last reading.
+(function () {
+  const UI = {};
+  window.ols = UI;
+
+  const E = (id) => document.getElementById(id);
+  UI.E = E;
+
+  // ---------- the header: one line every page carries ----------
+  // While a job runs, the topbar doubles as a progress bar behind the words.
+  // Each engine has its own tint, matching the row tags on the pages.
+  const TINT = {
+    image: 'var(--accent)',
+    voice: 'var(--accent2)',
+  };
+
+  // The machine's health, held in one place: the home tab in the nav is
+  // painted with the state (a glow whose colour is the state), and the page
+  // about the machine - the home page, which the bare address opens - states the
+  // same reading in words in its own panel. A page with no such line paints the
+  // tab and states nothing, and nothing is claimed in words before a reading
+  // arrives, which is why an unread machine says it was not read. The key the
+  // colours and the words are both read by: nothing read is orange, an
+  // unreachable machine is red, one only standing models up is yellow, counted
+  // work is blue, a machine at rest is green. Only the state class is swapped;
+  // everything else the chrome set on that tab - including the mark of the page
+  // you are on - stays where it was.
+  const STATE_WORDS = {
+    unknown: 'server not read yet',
+    bad: 'server not reachable',
+    loading: 'server ok: models being stood up',
+    running: 'server ok: work running',
+    idle: 'server ok: nothing running',
+  };
+
+  UI.sysinfo = function (text) {
+    const node = E('sysinfo');
+    if (node) node.textContent = text;
+  };
+
+  UI.serverGlow = function (state) {
+    const known = STATE_WORDS[state] ? state : 'unknown';
+    UI.sysinfo(STATE_WORDS[known]);
+    const tab = document.querySelector('#nav a[href="index.html"]');
+    if (!tab) return;
+    tab.classList.remove('state-unknown', 'state-bad', 'state-loading',
+      'state-running', 'state-idle');
+    tab.classList.add('state-' + known);
+  };
+
+  UI.headProgress = function (pct, text, engine, asOfText, indeterminate) {
+    const bar = E('topbar');
+    if (bar) {
+      bar.style.setProperty('--job-progress', Math.max(0, Math.min(100, pct)) + '%');
+      bar.style.setProperty('--job-tint', TINT[engine] || TINT.image);
+      if (indeterminate) bar.classList.add('indeterminate');
+    }
+    UI.serverGlow('running');
+    const node = E('head-status');
+    if (!node) return;
+    node.textContent = text + (asOfText || '');
+    node.className = 'head-status run';
+  };
+
+  UI.headIdle = function (asOfText) {
+    const bar = E('topbar');
+    if (bar) {
+      bar.style.setProperty('--job-progress', '0%');
+      bar.style.removeProperty('--job-tint');
+    }
+    UI.serverGlow('idle');
+    const node = E('head-status');
+    if (!node) return;
+    node.textContent = 'nothing running' + (asOfText || '');
+    node.className = 'head-status idle';
+  };
+
+  // Offline header: everything is labeled unknown, not absent — an
+  // unreachable server cannot show what it has; it can only fail to show it.
+  UI.headUnknown = function () {
+    UI.serverGlow('bad');
+    const bar = E('topbar');
+    if (bar) bar.style.setProperty('--job-progress', '0%');
+    const unknown = 'Server unreachable: value is unknown, not absent';
+    UI.chip(E('chip-cpu'), 'cpu: unknown\nmemory: unknown', 'err', unknown);
+    UI.chip(E('chip-gpu'), 'gpu: unknown\nvram: unknown', 'err', unknown);
+    UI.chip(E('chip-loaded'), 'in memory: unknown', 'err', unknown);
+    UI.chip(E('chip-jobs'), 'jobs: unknown', 'err', unknown);
+    UI.chip(E('chip-version'), 'code: not read', 'err',
+      'The code version (a development build says dev, a released one names its commit) was not ' +
+      'read.');
+    const node = E('head-status');
+    if (!node) return;
+    node.textContent = 'not connected';
+    node.className = 'head-status err';
+  };
+
+  // Only engine kinds this server actually tags; anything else is a job of
+  // unknown kind, and a guessed label would state a fact that is not true.
+  UI.jobEngine = function (job) {
+    const engine = String(job.engine || '');
+    if (engine === 'image' || engine === 'voice') return engine;
+    return 'job';
+  };
+
+  UI.jobLabel = function (job) {
+    return String(job.model || job.voice || job.kind || job.id);
+  };
+
+  // Header state from the merged snapshot: the bar tracks only counted work
+  // (generation, synthesis, downloads); a load has no percentage and is shown
+  // on the loaded chip instead.
+  UI.headerState = function (jobs) {
+    const active = (Array.isArray(jobs) ? jobs : []).filter((j) => j.state === 'running');
+    if (!active.length) {
+      UI.headIdle();
+      return;
+    }
+    const what = [];
+    let furthest = 0;
+    let furthestEngine = 'job';
+    let furthestWindow = 0;
+    let onlyLoads = true;
+    for (const job of active) {
+      what.push(UI.jobEngine(job) + ' ' + UI.jobLabel(job));
+      if (String(job.kind || '') === 'load') continue;
+      onlyLoads = false;
+      const max = Number(job.max || 0);
+      const pct = max > 0 ? Math.round((Number(job.done || 0) / max) * 100) : 0;
+      if (pct > furthest) {
+        furthest = pct;
+        furthestEngine = UI.jobEngine(job);
+        furthestWindow = max;
+      }
+    }
+    // A run that names no window has no percentage to draw: the bar stripes
+    // instead, so the header says work is going on without naming a share of it.
+    UI.headProgress(furthest, active.length + ' running: ' + what.join(', '), furthestEngine,
+      '', furthestWindow <= 0);
+    // Standing a model up is the one kind of work that has no count to draw:
+    // with only loads running, the tab glow is yellow rather than blue.
+    if (onlyLoads) UI.serverGlow('loading');
+  };
+
+  // What the engines hold open in memory, in words every page reads the same way:
+  // the picture engine names its models and its bytes, and a model loaded in the
+  // linked voice engine is open with no port to name and no memory of its own. One
+  // place describes that set, so a number on one page and the same number on
+  // another cannot describe different things.
+  UI.openModels = function (system) {
+    const labels = [];
+    let bytes = 0;
+    const weights = (system.loaded && system.loaded.loaded) ? system.loaded : {};
+    const resident = weights.resident || [];
+    for (const item of resident) {
+      labels.push('picture ' + String(item.model));
+      bytes += Number(item.bytes || 0);
+    }
+    if (!resident.length && Array.isArray(weights.loaded)) {
+      for (const model of weights.loaded) labels.push('picture ' + String(model));
+    }
+    const voiceOpen = Array.isArray((system.voice || {}).open_models) ? system.voice.open_models : [];
+    for (const model of voiceOpen) {
+      labels.push('voice ' + String(model));
+    }
+    return { labels: labels, bytes: bytes };
+  };
+
+  // The standard header chips from a merged /api/monitor reading, identical on
+  // every page: CPU and machine memory (two rows in the cpu chip), GPU and its
+  // memory (two rows in the gpu chip), models the engines hold open, and jobs
+  // running. Only ever drawn from a valid reading — live, or a copy this
+  // browser kept while it still described the machine.
+  UI.monitorChrome = function (snapshot) {
+    const system = (snapshot && snapshot.system) || {};
+
+    const poolPercent = function (used, total) {
+      return total > 0 ? Math.round((used / total) * 100) : 0;
+    };
+    const level = function (used, total) {
+      return UI.sizeText(used) + ' used (' + poolPercent(used, total) + '%)';
+    };
+
+    const cpu = system.cpu || {};
+    let memTotal = Number((system.memory || {}).total_bytes || 0);
+    let memFree = Number((system.memory || {}).free_bytes || 0);
+    if (!(memTotal > 0)) {
+      const cpuDev = (system.devices || []).find((d) => d.type === 'cpu');
+      if (cpuDev) {
+        memTotal = Number(cpuDev.total_bytes || 0);
+        memFree = Number(cpuDev.free_bytes || 0);
+      }
+    }
+    const cpuLine = cpu.name ? String(cpu.name).trim() + ' · ' + (cpu.cores || '?') + ' cores'
+      : 'cpu: not reported';
+    const memLine = memTotal > 0 ? 'memory: ' + UI.sizeText(memTotal) + ' total · ' + level(memTotal - memFree, memTotal)
+      : 'memory: not reported';
+    UI.chip(E('chip-cpu'), cpuLine + '\n' + memLine,
+      (cpu.name && memTotal > 0) ? 'ok' : 'warn',
+      'The processor and cores of the server machine, and its physical memory usage — read from the' +
+      ' machine, not the browser.',
+      poolPercent(memTotal - memFree, memTotal));
+
+    const gpu = (system.devices || []).find((d) => d.type === 'gpu' || d.type === 'accel');
+    const vramTotal = gpu ? Number(gpu.total_bytes || 0) : 0;
+    const gpuLine = gpu ? String(gpu.name) + ' ' + String(gpu.description).trim() : 'gpu: no gpu driver';
+    const vramLine = vramTotal > 0 ? 'vram: ' + UI.sizeText(vramTotal) + ' total · ' + level(vramTotal - Number(gpu.free_bytes || 0), vramTotal)
+      : 'vram: not reported';
+    UI.chip(E('chip-gpu'), gpuLine + '\n' + vramLine,
+      gpu ? 'ok' : 'warn',
+      gpu ? 'The GPU this server sees and its driver report, with memory usage for that device — read from the machine, not the browser.'
+        : 'No GPU driver was found on this machine.',
+      (gpu && vramTotal) ? poolPercent(vramTotal - Number(gpu.free_bytes || 0), vramTotal) : 0);
+
+    const openNow = UI.openModels(system);
+    const open = openNow.labels;
+    const bytes = openNow.bytes;
+
+    // Opening a model is a load: there is no honest percentage, so the
+    // seconds taken are real and the bar is only elapsed time against the
+    // page's own cap (striping marks it as an estimate).
+    const jobs = (snapshot && Array.isArray(snapshot.jobs)) ? snapshot.jobs : [];
+    let loadLine = '';
+    let loadFill = 0;
+    let loadTint = '';
+    for (const job of jobs) {
+      if (String(job.state || '') !== 'running' || String(job.kind || '') !== 'load') continue;
+      const secs = Math.max(0, Math.round(Number(job.done || 0)));
+      const cap = Math.max(1, Number(job.max || 0));
+      loadFill = Math.min(100, Math.round((secs / cap) * 100));
+      loadLine = 'loading ' + String(job.model || job.id) + ' - ' + secs + 's so far';
+      // The fill wears the colour of the engine being opened, the way the
+      // header bar does while a job runs.
+      loadTint = TINT[String(UI.jobEngine(job))] || TINT.image;
+    }
+
+    // The chip line counts what is open by engine and stops there: a machine with
+    // dozens open would otherwise wrap a wall of names across the header, and each
+    // open model has its own card naming it. The whole list rides in the tip.
+    const openByEngine = {};
+    for (const label of open) {
+      const engine = String(label).split(' ')[0];
+      openByEngine[engine] = (openByEngine[engine] || 0) + 1;
+    }
+    const openGroups = Object.keys(openByEngine).map(function (engine) {
+      return engine + ' ' + openByEngine[engine];
+    }).join(' · ');
+    const openText = open.length ? open.length + ' in memory: ' + openGroups
+      + (bytes ? ' · ' + UI.sizeText(bytes) : '') : 'nothing open in memory';
+    const openTip = 'Every model the engines currently have open in memory (pictures and voices). ' +
+      'Only picture engines report bytes. If a load does ' +
+      'not fit, ' +
+      'the least recently used idle model is closed first. A "loading" line is real elapsed ' +
+      'seconds; ' +
+      'the bar is only time against the cap the page allows.' +
+      (open.length ? ' Open now: ' + open.join(' · ') + '.' : '');
+    UI.chip(E('chip-loaded'),
+      loadLine && open.length ? openText + '\n' + loadLine : (loadLine || openText),
+      loadLine ? (open.length ? 'loaded loading' : 'loading') : (open.length ? 'loaded' : 'ok'),
+      openTip,
+      loadLine ? loadFill : undefined, loadLine ? loadTint : undefined);
+
+    const active = jobs.filter((j) => j.state === 'running');
+    UI.chip(E('chip-jobs'),
+      active.length + ' running',
+      active.length ? 'warn' : 'ok',
+      'Jobs every engine currently has running — read from the machine now.');
+
+    // The code version, exactly as the build named it: a development build is
+    // the dev tag and carries its compile time only - its code is a working
+    // tree; a released build names the commit its code stands on beside that
+    // same compile time, so the artifact is tied to one re-creatable source
+    // tree. A build that named nothing says so; no version is ever guessed.
+    const version = String(system.version || '');
+    const compiledAt = String(system.compiled || '');
+    const dev = version === 'dev';
+    const commit = /^[0-9a-f]{40}$/i.test(version) ? version : '';
+    let versionWords = 'code: not stated\nthis binary carries no version';
+    let versionTip = 'This binary carries no version: the build that made it named none. Nothing here can say which code it runs.';
+    let versionKind = 'warn';
+    if (dev) {
+      versionWords = 'code: dev\ncompiled ' + (compiledAt.length ? compiledAt : 'not stated');
+      versionTip = 'Development build: the version is dev, compiled ' +
+        (compiledAt.length ? compiledAt : 'at a time this binary does not state') +
+        '. This is the code of a working tree, not a released version.';
+      versionKind = 'warn';
+    }
+    else if (commit) {
+      versionWords = 'code: rel ' + commit.slice(0, 12) +
+        '\ncompiled ' + (compiledAt.length ? compiledAt : 'not stated');
+      versionTip = 'The exact code this server runs: the version is the release commit ' + commit +
+        ', compiled ' + (compiledAt.length ? compiledAt : 'at a time this binary does not state') +
+        '. That commit names the one source tree this binary can be re-created from; ' +
+        'the pages, the start-up line, and this chip name the same code.';
+      versionKind = 'ok';
+    }
+    UI.chip(E('chip-version'), versionWords, versionKind, versionTip);
+  };
+
+  // ---------- shared controls ----------
+  // A chip's optional level paints as a fill rising from its bottom; a fill may
+  // carry the colour of the engine it is about, and one that names no colour
+  // stays the neutral wash the sheet falls back to.
+  UI.chip = function (node, text, kind, tip, fill, tint) {
+    if (!node) return;
+    // One line per <span class="cr"> row so multi-line text reads across.
+    node.textContent = '';
+    const lines = String(text).split('\n');
+    for (const line of lines) {
+      const row = document.createElement('span');
+      row.className = 'cr';
+      row.textContent = line;
+      node.appendChild(row);
+    }
+    node.className = 'chip ' + (kind || '');
+    if (tip !== undefined) node.title = tip;
+    node.style.removeProperty('--fill');
+    node.style.removeProperty('--fill-tint');
+    const at = Math.round(Number(fill));
+    if (Number.isFinite(at) && at > 0) node.style.setProperty('--fill', Math.min(at, 100) + '%');
+    if (tint) node.style.setProperty('--fill-tint', String(tint));
+  };
+
+  // A card's fact row: a short state/tag/size shown down the card's right
+  // edge, hairline-separated, hoverable for its detail. All pages share this.
+  // The optional mark names one of the shapes style.css draws at low contrast
+  // under the row's words, so a control can be recognised by its shape as well
+  // as by its text; the mark sits behind the first letters and never replaces
+  // them.
+  UI.finger = function (text, kind, tip, mark) {
+    const row = document.createElement('div');
+    row.className = 'finger' + (kind ? ' ' + kind : '');
+    row.textContent = text;
+    if (tip !== undefined) row.title = tip;
+    if (mark) row.dataset.icon = mark;
+    return row;
+  };
+
+  // A fact row that is an action: styled like a fact row but it is a button,
+  // and tapping it flashes first so the action reads as taken on screen.
+  UI.fingerAct = function (text, handler, tip, mark) {
+    const row = document.createElement('button');
+    row.className = 'finger';
+    row.textContent = text;
+    row.addEventListener('click', function () {
+      UI.flash(row);
+      handler();
+    });
+    if (tip !== undefined) row.title = tip;
+    if (mark) row.dataset.icon = mark;
+    return row;
+  };
+
+  // The shell every card is drawn in: its words on the left and its facts down
+  // the right edge, so a fact runs to the card's border on every page. A page
+  // that builds a card without this shell draws facts that stop in mid-card.
+  // The extra names a card may carry - lit, chosen, framed - go on the card; a
+  // page of its own design passes its own card class instead.
+  UI.cardShell = function (extra, base) {
+    const card = document.createElement('div');
+    card.className = (base || 'model-card') + (extra ? ' ' + extra : '');
+    const main = document.createElement('div');
+    main.className = 'model-main';
+    const fingers = document.createElement('div');
+    fingers.className = 'model-fingers';
+    card.appendChild(main);
+    card.appendChild(fingers);
+    return { card: card, main: main, fingers: fingers };
+  };
+
+  // What the pages say as they work. One page keeps the written record - the
+  // home page, whose whole job is what this machine is doing - and every page
+  // writes into the same store, so a line raised on the image studio or the
+  // voice studio is read again there rather than being forgotten when that page
+  // is left. A line that stopped or refused is also put on the notice stack of
+  // the page that raised it, because that is where the hand that caused it was.
+  const LOG_STORE = 'ols-log-v1';
+  const LOG_KEEP = 200;
+  const LOG_PAGE_WORDS = {
+    '': 'status', index: 'status', imagegen: 'image', voice: 'voice',
+  };
+
+  function logWords() {
+    const at = String(location.pathname).lastIndexOf('/');
+    const file = decodeURIComponent(String(location.pathname).slice(at + 1));
+    const stem = file.replace(/\.html?$/i, '');
+    return LOG_PAGE_WORDS[stem] || stem || 'page';
+  }
+
+  function logRead() {
+    try {
+      const kept = JSON.parse(localStorage.getItem(LOG_STORE) || 'null');
+      return Array.isArray(kept) ? kept : [];
+    } catch (badStore) {
+      return [];
+    }
+  }
+
+  UI.log = function (text, kind) {
+    const words = String(text);
+    const here = E('log');
+    const kept = logRead();
+    kept.push({ at: Date.now(), page: logWords(), kind: kind || '', words: words });
+    try {
+      localStorage.setItem(LOG_STORE, JSON.stringify(kept.slice(-LOG_KEEP)));
+    } catch (storageFull) {
+      // A store that will not take the record loses it; the page still says the
+      // line the same way it did before the record existed.
+    }
+    if (!here && (kind === 'err' || kind === 'warn')) UI.toastPush(words, kind);
+  };
+
+  // The record as the page that draws it wants it: newest last, the plainest
+  // lines dropped first. Nothing here is invented - a line the pages never wrote
+  // is not a line this page may show.
+  UI.logLines = function (limit) {
+    const kept = logRead();
+    const at = Number(limit) > 0 ? Number(limit) : LOG_KEEP;
+    return kept.length > at ? kept.slice(-at) : kept;
+  };
+
+  UI.logClear = function () {
+    try {
+      localStorage.removeItem(LOG_STORE);
+    } catch (badStore) {
+    }
+  };
+
+  // A hand that was refused is the one moment a person must see, so the page
+  // that pressed it says so on the stack in plain words, and keeps the machine's
+  // own reason verbatim beside it - the reason is the machine's, never rewritten.
+  UI.toastNo = function (whatWords, answer) {
+    const reason = UI.askWhy(answer);
+    const line = 'Could not ' + String(whatWords) + (reason ? ': ' + reason : '.');
+    UI.toastPush(line, 'err');
+  };
+
+  // The immediate answer a control gives when taken: it flashes, so a press is
+  // visibly registered. The page may still be working on the request.
+  UI.flash = function (node) {
+    if (!node) return;
+    node.classList.add('act-flash');
+    setTimeout(function () { node.classList.remove('act-flash'); }, 700);
+  };
+
+  // Wire a click handler to a control: the press flashes, then runs the
+  // handler. Promise-returning handlers are started, not awaited, so page
+  // order stays with the page.
+  UI.onPress = function (node, handler) {
+    if (!node) return;
+    node.addEventListener('click', function () {
+      UI.flash(node);
+      handler();
+    });
+  };
+
+  // Wire a change handler to a dropdown field: the field flashes when a value
+  // is chosen, and the handler applies it. A page that repopulates the field
+  // itself raises the same event, so it says so with a flag of its own and its
+  // handler leaves the screen alone - a page matching machine state is not a
+  // human choice.
+  UI.onChoose = function (node, handler) {
+    if (!node) return;
+    node.addEventListener('change', function () {
+      UI.flash(node);
+      handler();
+    });
+  };
+
+  // Draw a file the machine holds from the machine's own address. The file doors
+  // answer that such a file does not change - a year, marked immutable - so a
+  // browser that has drawn it keeps it, and a page reload asks the machine for
+  // nothing. The credential of the visit rides on the connection as the cookie
+  // the door wrote, so the address stays a bare path. Nothing that has an
+  // address is copied into this page's store.
+  UI.fileSrc = function (path) {
+    const store = window.olsCache;
+    if (store) {
+      // Only a file this page made of its own bytes is drawn from those bytes:
+      // the machine has no address for what was made here.
+      const madeHere = store.file(path);
+      if (madeHere) return madeHere;
+    }
+    return path;
+  };
+
+  // Keep a picture this page made of bytes it read here - a dragged file, a
+  // clipboard picture - under the name the machine gave it, so drawing it does
+  // not decode it a second time while this page is open.
+  UI.fileKeep = function (path, data, type) {
+    const store = window.olsCache;
+    if (store) store.keep(path, data, type);
+  };
+
+  UI.textField = function (id) {
+    const node = E(id);
+    return node ? String(node.value || '') : '';
+  };
+
+  UI.numberField = function (id, fallback) {
+    const text = UI.textField(id).trim();
+    if (text === '') return fallback;
+    const value = Number(text);
+    return Number.isFinite(value) ? value : fallback;
+  };
+
+  UI.isOn = function (id) {
+    const node = E(id);
+    return !!node && node.classList.contains('on');
+  };
+
+  // A <select> has no value of its own: the option a person chose is the one
+  // at selectedIndex (what the screen shows). The selected attribute marks the
+  // markup default, not the choice, so read the option item, not the select.
+  UI.optionValue = function (option) {
+    if (!option) return '';
+    const direct = option.value;
+    if (typeof direct === 'string') return direct;
+    if (option.getAttribute) {
+      const attr = option.getAttribute('value');
+      return attr === null || attr === true ? '' : String(attr);
+    }
+    return '';
+  };
+
+  UI.optionList = function (select) {
+    if (!select || !select.options) return [];
+    const options = select.options;
+    const list = [];
+    for (let at = 0; at < options.length; ++at) {
+      list.push(options.item ? options.item(at) : options[at]);
+    }
+    return list;
+  };
+
+  UI.chosenOption = function (select) {
+    const list = UI.optionList(select);
+    if (!list.length) return '';
+    let at = Number(select ? select.selectedIndex : -1);
+    if (!Number.isInteger(at) || at < 0 || at >= list.length) at = 0;
+    return UI.optionValue(list[at]);
+  };
+
+  UI.selectValue = function (id) {
+    return UI.chosenOption(E(id));
+  };
+
+  // Restore a choice after refilling a list: an unmatched value falls back to
+  // the first option, which is what the browser itself shows, so the form and
+  // the screen cannot disagree.
+  UI.chooseOption = function (select, value) {
+    const list = UI.optionList(select);
+    if (!list.length) return;
+    const wanted = String(value || '');
+    let hit = -1;
+    for (let at = 0; at < list.length; ++at) {
+      if (UI.optionValue(list[at]) === wanted) { hit = at; break; }
+    }
+    if (hit < 0) hit = 0;
+    for (let at = 0; at < list.length; ++at) {
+      list[at].selected = at === hit;
+    }
+  };
+
+  // ---------- formatters ----------
+  UI.sizeText = function (bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value >= 1073741824) return (value / 1073741824).toFixed(1) + ' GB';
+    if (value >= 1048576) return Math.round(value / 1048576) + ' MB';
+    if (value >= 1024) return Math.round(value / 1024) + ' KB';
+    return value + ' B';
+  };
+
+  UI.pad2 = function (n) {
+    return (n < 10 ? '0' : '') + n;
+  };
+
+  // Seconds-since-epoch to a clock string; job and gallery records keep
+  // seconds, browser readings keep milliseconds (clockMs below).
+  UI.clock = function (epochSeconds) {
+    if (typeof epochSeconds !== 'number' || epochSeconds <= 0) return '';
+    return new Date(epochSeconds * 1000).toLocaleTimeString();
+  };
+
+  UI.clockMs = function (epochMillis) {
+    if (typeof epochMillis !== 'number' || epochMillis <= 0) return '';
+    return new Date(epochMillis).toLocaleTimeString();
+  };
+
+  UI.whenText = function (createdSeconds) {
+    const value = Number(createdSeconds || 0);
+    if (!value) return '';
+    const d = new Date(value * 1000);
+    return d.getFullYear() + '-' + UI.pad2(d.getMonth() + 1) + '-' + UI.pad2(d.getDate()) +
+      ' ' + UI.pad2(d.getHours()) + ':' + UI.pad2(d.getMinutes());
+  };
+
+  // the largest request body the server reads: a page that sends past it gets a
+  // refusal of its own, so an ask is kept whole or named as too large rather
+  // than half carried. a page that must fit a body derives its own margin.
+  UI.bodyBytes = 2 * 1024 * 1024;
+
+  // Whether a body would fit one door, measured exactly as it will travel - the
+  // words in it counted where they belong, not a fixed allowance - so a long ask
+  // or a whole document's words are part of the count. A body that would not fit
+  // is answered here with the code the door gives for that same refusal, which
+  // saves the browser uploading two megabytes only to be told they were too many,
+  // and the words name which part of the body carries the most, because naming it
+  // is what tells a person which of their own words or files to trim. Answers
+  // null when the body would fit.
+  UI.tooBigBody = function (body) {
+    const text = JSON.stringify(body === undefined ? {} : body);
+    if (text.length <= UI.bodyBytes) return null;
+    let widest = '';
+    let widestLength = 0;
+    if (body) {
+      for (const key in body) {
+        const value = body[key];
+        const length = typeof value === 'string' ? value.length : JSON.stringify(value).length;
+        if (length > widestLength) {
+          widestLength = length;
+          widest = key;
+        }
+      }
+    }
+    const holdsAFile = widest === 'image_b64' || widest === 'audio_b64' || widest === 'reference_b64';
+    return {
+      status: 413,
+      error: holdsAFile
+        ? 'that file is bigger than one request can carry: the request stands at ' +
+        UI.sizeText(text.length) + ', and a door reads at most two megabytes at a time. trim the file, or pick a shorter part of it.'
+        : 'the words this request carries are more than one door can read: the request stands at ' +
+        UI.sizeText(text.length) + ', and a door reads at most two megabytes at a time. send a shorter passage, or fewer words.',
+    };
+  };
+
+  UI.clip = function (text, width) {
+    const value = String(text || '');
+    if (value.length <= width) return value;
+    return value.slice(0, width - 1) + '…';
+  };
+
+  // ---------- api and jobs ----------
+  // An API answer that is not well-formed reads as no answer. The status code
+  // of the last answer is kept beside it: a machine whose door refused the visit
+  // and a machine that is absent are different facts, and pages say which happened.
+  UI.apiStatus = 0;
+  UI.apiError = '';
+  UI.api = function (path, method, body) {
+    return (async function () {
+      UI.apiStatus = 0;
+      UI.apiError = '';
+      const res = await fetch(path, {
+        method: method || 'GET',
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      });
+      UI.apiStatus = res.status;
+      // a refusal carries the reason the server gave, so a page can repeat what
+      // it said rather than guess why its own ask was turned down.
+      if (!res.ok) {
+        try {
+          const bad = await res.json();
+          UI.apiError = bad && bad.error ? String(bad.error) : '';
+        } catch (badBody) {
+        }
+        return null;
+      }
+      try {
+        return await res.json();
+      } catch (badBody) {
+        return null;
+      }
+    })();
+  };
+
+  // a door that only answers yes or no, with no job behind it: a kept recording,
+  // a name moved, a card put down. {ok: true} when the door said yes, and
+  // {ok: false, error: words} when it said no in its own words - a page repeats
+  // those rather than calling a kept recording a failure. A door that starts a
+  // job answers differently, and pages read it with postJob.
+  UI.actDoor = function (path, body) {
+    return (async function () {
+      const tooBig = UI.tooBigBody(body);
+      if (tooBig) return tooBig;
+      const res = await fetch(path, {
+        method: 'POST',
+        body: JSON.stringify(body === undefined ? {} : body),
+        headers: { 'content-type': 'application/json' },
+      });
+      if (res.ok) return { ok: true };
+      let words = '';
+      try {
+        const bad = await res.json();
+        words = bad && bad.error ? String(bad.error) : '';
+      } catch (badBody) {
+      }
+      return { ok: false, error: words, status: res.status };
+    })();
+  };
+
+  // start a job and answer with either the job id or the refusal:
+  // {job: id} on a good start, {status: code, error: text} otherwise
+  UI.postJob = function (path, body) {
+    return (async function () {
+      const tooBig = UI.tooBigBody(body);
+      if (tooBig) return tooBig;
+      const res = await fetch(path, {
+        method: 'POST',
+        body: JSON.stringify(body === undefined ? {} : body),
+        headers: { 'content-type': 'application/json' },
+      });
+      let parsed = null;
+      try {
+        parsed = await res.json();
+      } catch (badBody) {
+      }
+      if (res.ok && parsed && parsed.job_id) return { job: parsed.job_id };
+      return { status: res.status, error: parsed && parsed.error ? String(parsed.error) : '' };
+    })();
+  };
+
+  // Why an ask was refused, in words a person can act on. Doors answer with their
+  // own words most of the time; one that answers without them still states a
+  // status, and the status names what to do next.
+  UI.askWhy = function (answer) {
+    if (typeof answer === 'string') return answer || 'no reason given';
+    const said = answer && answer.error ? String(answer.error) : '';
+    if (said) return said;
+    const code = Number(answer && answer.status || 0);
+    if (code === 429) return 'the machine is busy and asked for a moment between requests';
+    if (code === 401 || code === 403) return 'this page was not let through the door of this machine';
+    if (code === 404) return 'that door is not on this machine';
+    if (code === 0) return 'the machine gave no answer at all';
+    return 'no reason given';
+  };
+
+  // The event stream of a running job: SSE frames arrive as "data: {...}"
+  // blocks until an "event: end" frame; a frame that fails to parse is skipped
+  // without losing the run. Answers false only if the stream itself is absent.
+  UI.streamEvents = function (url, onEvent) {
+    return (async function () {
+      const res = await fetch(url);
+      if (!res.ok) return false;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let raw = '';
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        raw += decoder.decode(chunk.value, { stream: true });
+        let split = raw.indexOf('\n\n');
+        while (split >= 0) {
+          const frame = raw.slice(0, split);
+          raw = raw.slice(split + 2);
+          if (frame.indexOf('event: end') === 0) return true;
+          if (frame.indexOf('data: ') === 0) {
+            try {
+              onEvent(JSON.parse(frame.slice(6)));
+            } catch (badFrame) {
+            }
+          }
+          split = raw.indexOf('\n\n');
+        }
+      }
+      return true;
+    })();
+  };
+
+  UI.sleep = function (ms) {
+    return new Promise(function (done) { setTimeout(done, ms); });
+  };
+
+  // ---------- the timed stack ----------
+  // A thing a person should see once - a hand that was refused, an engine that
+  // just opened or would not, a limit that stopped an ask - lives here rather
+  // than in a line of words that stays on the page. the stack hangs in the top
+  // -right corner, newest on top, and keeps at most a few at a time; each one
+  // carries its own countdown: a bar that empties as its time runs out, the
+  // seconds left stated beside it, and two hands of its own - one pauses the
+  // countdown, one closes it. the same words already in the stack keep their
+  // place rather than repeating, and words answered again inside a quiet window
+  // raise nothing at all, so a condition the machine keeps stating is not
+  // announced over and over - the page's own rail still holds every line.
+  UI.toastKinds = ['ok', 'warn', 'err', 'wait'];
+  UI.toastStack = null;
+  UI.toastLive = [];
+  UI.toastRecent = {};
+  UI.toastTicker = null;
+  UI.toastAt = 0;
+
+  UI.toastBuild = function () {
+    if (UI.toastStack) return;
+    const stack = document.createElement('div');
+    stack.id = 'toasts';
+    stack.setAttribute('title',
+      'what this machine told you this moment, and how long is left to read it');
+    const all = document.createElement('button');
+    all.className = 'toast-close-all';
+    all.textContent = 'close all';
+    all.setAttribute('title', 'take everything off the stack now');
+    all.addEventListener('click', function () {
+      for (const live of UI.toastLive.slice()) UI.toastClose(live);
+    });
+    stack.appendChild(all);
+    document.body.appendChild(stack);
+    UI.toastStack = stack;
+    UI.toastAt = Date.now();
+    UI.toastTicker = setInterval(UI.toastTick, 250);
+  };
+
+  UI.toastClose = function (live) {
+    if (!live || live.closing) return;
+    live.closing = Date.now();
+    live.el.classList.add('closing');
+    if (live.leftEl) live.leftEl.textContent = 'closed';
+  };
+
+  UI.toastTick = function () {
+    const now = Date.now();
+    const since = Math.max(0, now - UI.toastAt);
+    UI.toastAt = now;
+    for (const live of UI.toastLive.slice()) {
+      if (!live.closing) {
+        if (live.counted) {
+          // a job's bar counts its own steps, and its time is the job's, not a
+          // countdown: the notice stays while the work runs and is taken down
+          // when the work says it is over.
+          if (live.opened) {
+            // work that states no scale - a task waiting its turn, an engine
+            // being opened - keeps the moving bar the app draws for work that
+            // cannot be counted, and states the stage rather than a time.
+            if (live.leftEl) live.leftEl.textContent = live.paused ? 'paused' : 'waiting to start';
+          } else if (live.eta) {
+            // the bar of a running job is its estimated time left, and the
+            // estimate comes from the machine's measured rate: a page that
+            // measured none states no time.
+            if (!live.paused) live.left -= since;
+            if (live.fill) {
+              const share = live.left > 0 ? Math.round((live.left / live.total) * 100) : 0;
+              live.fill.style.width = share + '%';
+            }
+            if (live.leftEl) {
+              if (live.paused) live.leftEl.textContent = 'paused';
+              else if (live.left > 0) live.leftEl.textContent = 'about ' + Math.ceil(live.left / 1000) + 's left';
+              else live.leftEl.textContent = 'still running';
+            }
+          } else {
+            if (live.fill && live.total > 0) {
+              const share = live.done > live.total ? 100 : Math.round((live.done / live.total) * 100);
+              live.fill.style.width = share + '%';
+            }
+            if (live.leftEl) {
+              live.leftEl.textContent = live.paused ? 'paused'
+                : 'step ' + live.done + ' of ' + live.total;
+            }
+          }
+        } else {
+          if (!live.paused) live.left -= since;
+          if (live.fill) {
+            const share = live.left > 0 ? Math.round((live.left / live.total) * 100) : 0;
+            live.fill.style.width = share + '%';
+          }
+          if (live.leftEl) {
+            if (live.paused) live.leftEl.textContent = 'paused';
+            else if (live.left > 0) live.leftEl.textContent = Math.ceil(live.left / 1000) + 's left';
+            else live.leftEl.textContent = '';
+          }
+          if (live.left <= 0 && !live.paused) live.closing = now;
+        }
+        if (live.closing) live.el.classList.add('closing');
+      }
+      if (live.closing && now - live.closing > 520) {
+        UI.toastLive.splice(UI.toastLive.indexOf(live), 1);
+        if (live.el) live.el.remove();
+      }
+    }
+    if (!UI.toastLive.length) {
+      if (UI.toastTicker) clearInterval(UI.toastTicker);
+      UI.toastTicker = null;
+      const stack = UI.toastStack;
+      UI.toastStack = null;
+      if (stack) stack.remove();
+    }
+  };
+
+  // What a standing state the pages already announced: the browser keeps it, so
+  // a page opened again says nothing about a state nothing changed. a real
+  // change carries different words and so a different mark, and is announced.
+  UI.toastSeenMark = function (signature) {
+    try {
+      const key = 'ols-notice-seen';
+      const box = JSON.parse(localStorage.getItem(key) || '{}');
+      const now = Date.now();
+      for (const held in box) {
+        if (now - Number(box[held]) > 900000) delete box[held];
+      }
+      box[String(signature)] = now;
+      localStorage.setItem(key, JSON.stringify(box));
+    } catch (ignored) { }
+  };
+  UI.toastFresh = function (signature) {
+    try {
+      const box = JSON.parse(localStorage.getItem('ols-notice-seen') || '{}');
+      const seen = Number(box[String(signature)] || 0);
+      return (Date.now() - seen) > 600000;
+    } catch (ignored) { return true; }
+  };
+
+  // Put one thing on the stack. kind names only the colour the app already uses
+  // for that state; the words are the machine's or the page's own, never made up
+  // here. secs is the reading time, and a notice about something that failed
+  // keeps a little more of it.
+  UI.toastPush = function (words, kind, secs, key) {
+    const line = String(words || '');
+    if (!line) return null;
+    if (UI.toastKinds.indexOf(kind) < 0) kind = 'warn';
+    const wanted = key === null || key === undefined ? '' : String(key);
+    UI.toastBuild();
+    if (!UI.toastStack) return null;
+    const life = Math.max(2, Math.round(Number(secs) || (kind === 'err' ? 14 : 9))) * 1000;
+    if (wanted) {
+      // a job keeps one notice through its whole life: the same key updates the
+      // words and the bar rather than stacking another notice for the same work.
+      for (const live of UI.toastLive) {
+        if (live.key !== wanted || live.closing) continue;
+        live.words = line;
+        if (live.wordsEl) live.wordsEl.textContent = line;
+        live.kind = kind;
+        if (live.el) {
+          live.el.className = 'toast ' + kind + (live.paused ? ' paused' : '');
+        }
+        return live;
+      }
+    } else {
+      // The same words already on the stack keep their place rather than repeating,
+      // and words answered again inside a quiet window - twice the notice's own
+      // reading time - raise nothing at all, so a condition the machine keeps
+      // stating is not announced over and over. The window is kept as the moment it
+      // ends, and windows that have passed are dropped here, so this map stays as
+      // small as the words still quiet rather than growing with everything the
+      // machine ever stated.
+      const now = Date.now();
+      for (const quiet in UI.toastRecent) {
+        if (Number(UI.toastRecent[quiet]) <= now) delete UI.toastRecent[quiet];
+      }
+      const last = UI.toastRecent[line];
+      if (last && now < last) return null;
+      for (const live of UI.toastLive) {
+        // an outcome that is already being taken off the stack does not answer a
+        // fresh notice with the same words.
+        if (live.words !== line || live.closing) continue;
+        live.left = life;
+        live.total = life;
+        return live;
+      }
+      UI.toastRecent[line] = now + life * 2;
+    }
+    const card = document.createElement('div');
+    card.className = 'toast ' + kind;
+    const bar = document.createElement('div');
+    bar.className = 'toast-bar';
+    const fill = document.createElement('i');
+    fill.className = 'toast-fill';
+    fill.style.width = '100%';
+    bar.appendChild(fill);
+    card.appendChild(bar);
+    const said = document.createElement('span');
+    said.className = 'toast-words';
+    said.textContent = line;
+    card.appendChild(said);
+    const left = document.createElement('span');
+    left.className = 'toast-left';
+    card.appendChild(left);
+    const pause = document.createElement('button');
+    pause.className = 'toast-pause';
+    pause.setAttribute('title', 'hold this one still: its time and its bar stop moving');
+    pause.textContent = 'pause';
+    card.appendChild(pause);
+    const close = document.createElement('button');
+    close.className = 'toast-close';
+    close.setAttribute('title', 'take this one off the stack');
+    close.textContent = 'close';
+    card.appendChild(close);
+    UI.toastStack.insertBefore(card, UI.toastStack.firstChild);
+    const record = {
+      el: card, fill: fill, leftEl: left, wordsEl: said, words: line,
+      key: wanted, total: life, left: life
+    };
+    UI.toastLive.push(record);
+    pause.addEventListener('click', function () {
+      record.paused = !record.paused;
+      record.el.classList.toggle('paused', record.paused);
+      UI.toastTick();
+    });
+    close.addEventListener('click', function () {
+      UI.toastClose(record);
+    });
+    while (true) {
+      // a notice that is only worth one look is kept few; a job's own notice is
+      // kept while the job runs, since it is the running work that a person is
+      // watching. A quick batch is one notice per picture it asked for - the room
+      // is that many pictures, the biggest batch this studio asks for, plus headroom
+      // for the work another window asked for on the same machine. past a room full,
+      // the oldest of that kind is taken down.
+      // A notice already on its way off the stack is not counted and is not a
+      // candidate: taking one down only starts its closing - it leaves the list
+      // when the ticker has run past that animation - so counting the ones being
+      // taken down would keep the totals at the same number forever, and this loop
+      // would never end: the page stops answering rather than trimming the stack.
+      let notices = 0;
+      let tracked = 0;
+      for (const live of UI.toastLive) {
+        if (live.closing) continue;
+        if (live.counted) ++tracked;
+        else ++notices;
+      }
+      if (notices > 4 || tracked > 24) {
+        let oldest = null;
+        for (const live of UI.toastLive) {
+          if (live.closing) continue;
+          if (!!live.counted === (tracked > 12)) oldest = live;
+        }
+        if (!oldest) break;
+        UI.toastClose(oldest);
+        continue;
+      }
+      break;
+    }
+    return record;
+  };
+
+  // A running job lives on the stack as long as it runs: its bar counts the
+  // steps the job itself states, and its words follow the job through its life -
+  // taken, opened, steps answered, finished, refused - in the job's own record,
+  // never guessed. The notice is taken down when the job says it is over, which
+  // is the point of the record.
+  UI.toastTrack = function (key, words, kind) {
+    const wanted = key === null || key === undefined ? '' : String(key);
+    if (!wanted) return null;
+    for (const live of UI.toastLive) {
+      if (live.key !== wanted) continue;
+      if (words && live.wordsEl) live.wordsEl.textContent = String(words);
+      return live;
+    }
+    const live = UI.toastPush(String(words || 'Working'), kind || 'wait', 0, wanted);
+    if (!live) return null;
+    live.counted = true;
+    if (!live.total) live.total = 1;
+    if (!live.done) live.done = 0;
+    return live;
+  };
+
+  // Say where a tracked job stands now: its own done/max, its own state words.
+  UI.toastStep = function (live, done, max, words) {
+    if (!live || live.paused) return;
+    if (max > 0) live.total = max;
+    live.done = Math.max(0, Number(done) || 0);
+    if (live.wordsEl && words) live.wordsEl.textContent = String(words);
+    UI.toastTick();
+  };
+
+  // Work that states no scale yet: a queued task, an engine being opened. Its
+  // bar is the moving one the app already draws for work that cannot be counted,
+  // and no time is invented for it.
+  UI.toastOpen = function (live) {
+    if (!live) return;
+    live.opened = true;
+    if (live.el) live.el.classList.add('toast-open');
+    if (live.fill) live.fill.style.width = '';
+  };
+
+  // The shape a notice is drawn as: a running thing is a card with a bar and its
+  // own two hands, work that has not started is one line of a queue. The sheet
+  // decides what that class looks like; this only says which one it is.
+  UI.toastShape = function (live, queued) {
+    if (!live || !live.el) return;
+    if (queued) live.el.classList.add('queued');
+    else live.el.classList.remove('queued');
+  };
+
+  // A notice that describes a piece of work rather than a moment, drawn in the
+  // shape the model cards are drawn in: the thing it is doing named at the top in
+  // the loudest type, the words it was asked with smaller under it, the settings
+  // it runs at in italic, and its state as a line that follows it through. The
+  // sheet decides what each of those lines looks like. A line with no words in
+  // it is not drawn - a card says nothing about a thing the machine did not state.
+  UI.toastCard = function (live, lines) {
+    if (!live || !live.wordsEl) return;
+    while (live.wordsEl.firstChild) live.wordsEl.removeChild(live.wordsEl.firstChild);
+    for (const line of lines) {
+      if (!line || !line[1]) continue;
+      const row = document.createElement('div');
+      row.className = 'toast-line ' + String(line[0]);
+      row.textContent = String(line[1]);
+      live.wordsEl.appendChild(row);
+    }
+  };
+
+  // A job's own card, drawn below the rows it belongs to when a reader presses
+  // one. The card is one uniform shape whatever the job is: what it works with
+  // named at the top left in the loudest type, the job it is named by across the
+  // middle of that top line in italic, and the seconds it has stood here in the
+  // right hand - the three things a person reads first. Everything else the
+  // machine states about that job is drawn under that line as labelled fields,
+  // and a field the machine does not state is not drawn at all. The pair of hands
+  // on the top line opens or closes that body, so a reader can keep the card named
+  // while deciding how much of it to read.
+  UI.jobCard = function (host, head, fields) {
+    if (!host) return;
+    const top = document.createElement('div');
+    top.className = 'job-card-head';
+    for (const part of [['job-card-model', head.model], ['job-card-id', head.id], ['job-card-time', head.time]]) {
+      if (!part || !part[1]) continue;
+      const cell = document.createElement('span');
+      cell.className = part[0];
+      cell.textContent = String(part[1]);
+      top.appendChild(cell);
+    }
+    host.appendChild(top);
+    const body = document.createElement('div');
+    body.className = 'job-card-fields';
+    for (const field of fields) {
+      if (!field || !field[1]) continue;
+      const row = document.createElement('div');
+      row.className = 'job-card-field';
+      const label = document.createElement('span');
+      label.className = 'job-card-field-label';
+      label.textContent = String(field[0]);
+      const value = document.createElement('span');
+      value.className = 'job-card-field-value';
+      value.textContent = String(field[1]);
+      row.appendChild(label);
+      row.appendChild(value);
+      body.appendChild(row);
+    }
+    host.appendChild(body);
+    const hands = function (className, words, title, open) {
+      const hand = document.createElement('button');
+      hand.className = 'job-card-hand ' + className;
+      hand.textContent = words;
+      hand.setAttribute('title', title);
+      hand.addEventListener('click', function () {
+        body.hidden = !open;
+      });
+      top.appendChild(hand);
+    };
+    hands('job-card-open', '+', 'read the whole card: every field the machine stated', true);
+    hands('job-card-close', '-', 'keep the top line and take the rest away', false);
+  };
+
+  // The bar of running work is its estimated time left, and the estimate is a
+  // measured number: a page passes the seconds it derived from the machine's own
+  // records of this model's recent runs. A page that measured none calls this
+  // with zero, which keeps the count-only bar and says no time.
+  UI.toastEta = function (live, ms, words) {
+    if (!live) return;
+    if (words && live.wordsEl) live.wordsEl.textContent = String(words);
+    const estimate = Math.max(0, Math.round(Number(ms) || 0));
+    if (!estimate) {
+      live.eta = false;
+      live.opened = false;
+      if (live.el) live.el.classList.remove('toast-open');
+      UI.toastTick();
+      return;
+    }
+    live.eta = true;
+    live.opened = false;
+    live.total = estimate;
+    live.left = estimate;
+    if (live.el) {
+      live.el.classList.remove('toast-open');
+    }
+    UI.toastTick();
+  };
+
+  // The end of a tracked job: the running notice is taken down, and the outcome
+  // is handed to the stack as its own notice, so a person can read what the work
+  // ended as rather than watch it fade away.
+  UI.toastEnd = function (live, words, kind) {
+    if (live) {
+      if (live.wordsEl && words) live.wordsEl.textContent = String(words);
+      if (live.leftEl) live.leftEl.textContent = String(words || '');
+      live.closing = Date.now();
+      if (live.el) live.el.classList.add('closing');
+    }
+    if (!words) return;
+    if (UI.toastKinds.indexOf(kind) < 0) kind = 'ok';
+    UI.toastPush(String(words), kind);
+  };
+
+  // The self-refreshing page: read, paint, wait, repeat. A failed read calls
+  // onError with the page's own words about what is unknown; the next read is
+  // still tried.
+  UI.poll = async function (refresh, onError, intervalMs) {
+    while (true) {
+      try {
+        await refresh();
+      } catch (failed) {
+        onError(failed);
+      }
+      await UI.sleep(intervalMs);
+    }
+  };
+
+  // How often a studio re-reads the machine. A page's reading is a whole set of
+  // answers, so it waits rather than crowding the door: four seconds is soon
+  // enough to see a job start and long enough to leave the machine alone. A page
+  // that shows the machine's own live state names its own pace beside it.
+  UI.pollMs = 4000;
+
+  // ---------- progress bars ----------
+  // A bar may state its kind: "load" is indeterminate work and draws moving
+  // striping; other bars track counted steps.
+  UI.progressSet = function (panel, key, done, max, text, kind) {
+    if (!panel || !key) return;
+    let row = panel.querySelector('[data-job="' + key + '"]');
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'prog-row';
+      row.dataset.job = key;
+      const bar = document.createElement('div');
+      bar.className = 'prog-bar';
+      const fill = document.createElement('div');
+      fill.className = 'prog-fill' + (kind === 'load' ? ' loading' : '');
+      bar.appendChild(fill);
+      const label = document.createElement('div');
+      label.className = 'prog-text';
+      row.appendChild(bar);
+      row.appendChild(label);
+      panel.appendChild(row);
+    }
+    const pct = max > 0 ? Math.min(100, Math.round((done / max) * 100)) : 0;
+    row.querySelector('.prog-fill').style.width = pct + '%';
+    row.querySelector('.prog-text').textContent = text;
+  };
+
+  UI.progressClear = function (panel, key) {
+    if (!panel) return;
+    const row = panel.querySelector('[data-job="' + key + '"]');
+    if (row) panel.removeChild(row);
+  };
+
+  UI.progressClearPrefixed = function (panel, prefix) {
+    if (!panel) return;
+    for (const row of panel.querySelectorAll('[data-job]')) {
+      if (String(row.dataset.job).indexOf(prefix) === 0) panel.removeChild(row);
+    }
+  };
+
+  // ---------- replay of this browser's last reading ----------
+  // What this browser last read, so pages can paint machine state before the
+  // first live answer. Within an hour the copy still describes this machine
+  // and pages draw it as a plain valid reading; past an hour it describes
+  // nothing and is not offered. This never answers an API request — only the
+  // cache's live copy does that — so anything drawn from here is labeled with
+  // the time it was read at.
+  UI.lastReading = function (path) {
+    const hit = window.olsCache ? window.olsCache.lastCopy(path) : null;
+    if (!hit || hit.age > 3600000) return null;
+    let data;
+    try {
+      data = JSON.parse(hit.text);
+    } catch (badText) {
+      return null;
+    }
+    return { data: data, at: hit.at, readTime: UI.clockMs(hit.at), live: hit.live };
+  };
+
+  // ---------- page chrome: the header bar and the nav, defined once ----------
+  // Every page carries the same header (brand, the badges of what is open and of
+  // the work going on, running-state line) and the same nav, which also marks
+  // the page you are on. Page content itself lives in each page's own file.
+  // The home tab stands at the left, and the two studios read to its right: the
+  // machine is what a person looks at first, and the page the bare address opens.
+  const NAV = [
+    ['index.html', 'home', 'This machine: a card for every model with what it uses, and every job the engines have run.'],
+    ['imagegen.html', 'image studio', 'Generate images: models, prompts, gallery.'],
+    ['voice.html', 'voice studio', 'Speak text with the audio.cpp engines: voices, models, renders.'],
+  ];
+  // The header carries only what every page needs about the work: what the
+  // engines hold open and what they are doing. The machine's own badges - its
+  // cpu, its gpu, the code it runs - are the home page's machine panel, and
+  // that page's own markup carries them; where no such element stands, the
+  // readings for them are simply not drawn.
+  const CHIPS = [
+    ['chip-loaded', 'in memory: not read'],
+    ['chip-jobs', 'jobs: not read'],
+  ];
+
+  UI.mountPageChrome = function () {
+    if (E('topbar') || !document.body) return;
+    const at = location.pathname.lastIndexOf('/');
+    const served = at === location.pathname.length - 1 ? 'index.html' : location.pathname.slice(at + 1);
+    let chips = '';
+    for (const chip of CHIPS) {
+      const lines = chip[1].split('\n');
+      let rows = '';
+      for (const line of lines) {
+        rows += '<span class="cr">' + line + '</span>';
+      }
+      chips += '  <span class="chip" id="' + chip[0] + '">' + rows + '</span>\n';
+    }
+    let links = '';
+    for (const link of NAV) {
+      const current = link[0] === served;
+      links += '    <a' + (current ? ' class="on" title="You are here."' : ' title="' + link[2] + '"') +
+        ' href="' + link[0] + '">' + link[1] + '</a>\n';
+    }
+    document.body.insertAdjacentHTML('afterbegin',
+      '<header id="topbar">\n' +
+      '  <span class="brand">open-local-services</span>\n' +
+      chips +
+      '  <span class="head-status" id="head-status">nothing running</span>\n' +
+      '</header>\n' +
+      '<nav id="nav">\n' + links + '</nav>');
+  };
+
+  UI.mountPageChrome();
+})();
+
+// the one alias every page script uses
+const ui = window.ols;
