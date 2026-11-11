@@ -154,6 +154,8 @@ namespace ols
 #endif
     }
 
+    // Let a socket go the way a conversation ends: the words already said are
+    // finished with, and the other side hears that this side has.
     inline void closeSocket(sock_t sock)
     {
 #ifdef _WIN32
@@ -164,6 +166,9 @@ namespace ols
 #endif
     }
 
+    // Let a socket go without saying anything - for a socket this machine only
+    // ever probed with, where there is no conversation to end and a word sent
+    // would be a word about a door this machine never opened.
     inline void discardSocket(sock_t sock)
     {
 #ifdef _WIN32
@@ -231,7 +236,12 @@ namespace ols
             c == '`')
           return false;
 #else
-        if (c == '\'')
+        // The parts sit between double quotes, which on this side of the water
+        // do not hold everything in: a quote of its own ends the quoting, and a
+        // dollar, a backtick and a backslash still do their work inside it. Those
+        // are the whole of what can act from between the quotes, beside the
+        // single quote no part needs.
+        if (c == '"' || c == '\'' || c == '$' || c == '`' || c == '\\')
           return false;
 #endif
       }
