@@ -54,11 +54,9 @@ namespace ols
     void setPlain(const std::string &text, const std::string &contentType);
   };
 
-  // The one port these doors stand on, on every box. Nothing is guessed from it at
-  // the other end: a peer's word carries the address of whoever said it together
-  // with this port, and the beacon it answers on is stated in full. So a server
-  // that found this port held and stepped aside would open a door that nothing
-  // points at, and would be pointed at nothing itself - it refuses instead.
+  // The default port these doors stand on. `OLS_PORT` may ask for another one at
+  // startup, but the server never chooses another port because the first one is
+  // held. A peer's word carries the address and port it actually answered on.
   static const uint16_t kApiPort = 8765;
 
   class OpenLocalServices
@@ -104,8 +102,15 @@ namespace ols
     void preloadBackends();
     void setApiKey(const std::string &key) { m_apiKey = key; }
     std::string apiKey() const { return m_apiKey; }
-    void setRateLimit(int requestsPerMinute) { m_rateLimit = requestsPerMinute; }
-    int rateLimit() const { return m_rateLimit; }
+    void setRateLimit(int requestsPerMinute)
+    {
+      if (requestsPerMinute < 0)
+        requestsPerMinute = 600;
+      else if (requestsPerMinute > 1000000)
+        requestsPerMinute = 1000000;
+      m_rateLimit.store(requestsPerMinute);
+    }
+    int rateLimit() const { return m_rateLimit.load(); }
     // The api door: open when this machine sets no key, and otherwise answered
     // by that key alone - one credential carries a visit through both kinds of
     // door.
@@ -118,7 +123,13 @@ namespace ols
     // came: the ways it may be handed, and nothing else.
     HttpResponse authChallenge() const;
     HttpResponse noResponse() const;
+    // 0 = allow, >0 = whole seconds until this request could next be accepted.
+    // The gate consumes the request only when it allows it, so a blocked caller
+    // gets a proper 429/Retry-After response and no route side effect.
     int rateGate();
+    // Build the refusal for a rate-limited request. It carries backoff fields,
+    // including Retry-After, without using any of the caller's request input.
+    HttpResponse rateLimitAnswer(int retrySeconds) const;
     // What the two doors ask of at this moment: counts only - never a letter of
     // any credential this machine holds.
     std::string authInfoJson();
@@ -167,7 +178,9 @@ namespace ols
     std::string m_apiKey;
     std::atomic<int> m_rateLimit{600};
     std::mutex m_rateMutex;
-    std::deque<long long> m_requestTimes;
+    long long m_rateLastMs{0};
+    long long m_rateTokens{0};
+    bool m_rateInitialized{false};
     std::atomic<int> m_authFailures{0};
     std::atomic<long long> m_lastAuthFailMs{0};
   };

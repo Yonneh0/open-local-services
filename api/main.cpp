@@ -96,12 +96,23 @@ static int threadCount(const std::string &requested)
   return threads;
 }
 
+static const int kRateLimitDefault = 600;
+static const int kRateLimitMax = 1000000;
+
 static int rateLimit(const std::string &requested)
 {
   if (requested.empty())
-    return 600;
-  const int wanted = std::atoi(requested.c_str());
-  return wanted < 0 ? 0 : wanted;
+    return kRateLimitDefault;
+  unsigned long long value = 0;
+  for (const char c : requested)
+  {
+    if (c < '0' || c > '9')
+      return -1;
+    value = value * 10ull + static_cast<unsigned long long>(c - '0');
+    if (value > static_cast<unsigned long long>(kRateLimitMax))
+      return -1;
+  }
+  return static_cast<int>(value);
 }
 
 // The doors answer the same either way; what changes is whether the machine will
@@ -309,17 +320,35 @@ int main(int argc, char **argv)
   std::map<std::string, std::string> fromFile;
   readDotEnv(".env", fromFile);
   const std::string host = configValue(fromFile, "OLS_HOST", "0.0.0.0");
-  // The port is not a setting. These doors stand on one port on every box, and
-  // nothing on the machine answers on another. A .env naming another port is said
-  // out loud and then left alone.
-  const uint16_t port = ols::kApiPort;
-  const std::string askedPort = configValue(fromFile, "OLS_PORT", "");
+  // The configured port. It defaults to 8765, and the server refuses to start if
+  // that port is already in use. It never rolls over to another port.
+  const std::string requestedPort = configValue(fromFile, "OLS_PORT", "");
+  uint16_t port = ols::kApiPort;
+  if (!requestedPort.empty())
+  {
+    port = toPort(requestedPort, 0);
+    if (port == 0)
+    {
+      std::cout << "Invalid OLS_PORT=" << requestedPort
+                << ": the port must be a number from 1 to 65535." << std::endl;
+      return 1;
+    }
+  }
   const std::string weightsDir = configValue(fromFile, "OLS_WEIGHTS_DIR", "weights");
   const std::string dataDir = configValue(fromFile, "OLS_DATA_DIR", "data");
   const std::string hfToken = configValue(fromFile, "HF_TOKEN", "");
   const std::string civitaiKey = configValue(fromFile, "CIVITAI_API_KEY", "");
   const std::string apiKey = configValue(fromFile, "OLS_API_KEY", "");
-  const int rate = rateLimit(configValue(fromFile, "OLS_RATE_LIMIT", ""));
+  const std::string requestedRate = configValue(fromFile, "OLS_RATE_LIMIT", "");
+  const int rate = rateLimit(requestedRate);
+  if (rate < 0)
+  {
+    std::cout << "Invalid OLS_RATE_LIMIT=" << requestedRate
+              << ": use 0 to disable the rate limit, use a whole number from 1 to " << kRateLimitMax
+              << ", or leave it unset to use the default " << kRateLimitDefault
+              << " requests per minute." << std::endl;
+    return 1;
+  }
   const int threads = threadCount(configValue(fromFile, "OLS_THREADS", ""));
   // The kept-picture room is sized here rather than left to the module's guess,
   // because what a machine keeps is its own owner's choice; nothing named leaves
@@ -350,9 +379,6 @@ int main(int argc, char **argv)
   api.preloadBackends();
   // nothing is read here: no model is opened, no table is built, no engine is
   // stood up. the port is taken next, and the first page read asks the machine.
-  if (!askedPort.empty() && toPort(askedPort, 0) != port)
-    std::cout << "Ignoring OLS_PORT=" << askedPort << ": these doors answer on port " << port
-              << " and no other" << std::endl;
   if (!api.start(port))
   {
     const std::string why = api.startRefusal();
@@ -372,7 +398,10 @@ int main(int argc, char **argv)
   // The rooms ask of the same credential these doors do; a page that arrives
   // without one is walked to the door, so no letter of it is printed here.
   if (rate > 0)
-    std::cout << "Rate limit: " << rate << " requests per minute" << std::endl;
+    std::cout << "Rate limit: " << rate << " requests per minute (token bucket; refused requests return HTTP 429 with Retry-After)"
+              << std::endl;
+  else
+    std::cout << "Rate limit: none" << std::endl;
   while (api.isRunning())
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   api.stop();

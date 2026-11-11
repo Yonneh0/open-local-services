@@ -125,6 +125,9 @@ namespace ols
         {"OLS_API_KEY", true, true},
         {"CIVITAI_API_KEY", true, true},
         {"HF_TOKEN", true, true},
+        // The port to bind at startup. The server refuses to start if that port
+        // is already in use; it does not roll over to another port.
+        {"OLS_PORT", false, false},
         {"OLS_DATA_DIR", false, false},
         {"OLS_HOST", false, false},
         {"OLS_RATE_LIMIT", false, true},
@@ -139,9 +142,9 @@ namespace ols
         // the manager's to take. Left alone means it asks; off is the one word
         // that declines, and the door's own words then name the level it stands at.
         {"OLS_ELEVATE", false, false},
-        // No port here on purpose: these doors answer on one port on every box,
-        // so there is nothing for a page to set. A .env that still names
-        // OLS_PORT is said out loud at start and left alone.
+        // The configured port is read only at startup. It defaults to 8765 when
+        // unset, and a requested port must be free.
+
     };
 
     std::string configTrim(const std::string &text)
@@ -255,7 +258,37 @@ namespace ols
       // declines, and any other word is a maybe the machine cannot act on.
       if (key == "OLS_ELEVATE")
         return value.empty() || value == "on" || value == "off";
-      if (key == "OLS_RATE_LIMIT" || key == "OLS_THREADS")
+      if (key == "OLS_PORT")
+      {
+        if (value.empty())
+          return true;
+        unsigned long long number = 0;
+        for (char c : value)
+        {
+          if (c < '0' || c > '9')
+            return false;
+          number = number * 10ull + static_cast<unsigned long long>(c - '0');
+          if (number > 65535ull)
+            return false;
+        }
+        return number > 0;
+      }
+      if (key == "OLS_RATE_LIMIT")
+      {
+        if (value.empty())
+          return true;
+        unsigned long long number = 0;
+        for (char c : value)
+        {
+          if (c < '0' || c > '9')
+            return false;
+          number = number * 10ull + static_cast<unsigned long long>(c - '0');
+          if (number > 1000000ull)
+            return false;
+        }
+        return number >= 0;
+      }
+      if (key == "OLS_THREADS")
       {
         if (value.empty())
           return true;
@@ -268,11 +301,7 @@ namespace ols
           if (number > 4000000000000ull)
             number = 4000000000000ull;
         }
-        // a saved value the entry point would go on to ignore is refused here
-        // instead: a zero for either of these asks for nothing - no requests per
-        // minute, no threads.
-        if (number == 0)
-          return false;
+        return number > 0;
       }
       return true;
     }
@@ -855,8 +884,11 @@ namespace ols
     return r;
   }
 
-  // Rate gate: a sliding 60-second window. 0 means allowed; otherwise the
-  // value is the whole seconds until an older request leaves the window.
+  // Rate gate: a token bucket with timed refill. Each minute, the bucket refills
+  // one request for each configured request per minute. A request consumes one
+  // token only when it is allowed; a blocked request returns no operation and
+  // asks the caller to send 429/Retry-After. The value is whole seconds until
+  // enough tokens exist for one request, or 0 when this request is allowed.
   int OpenLocalServices::rateGate()
   {
     const int limit = m_rateLimit.load();
@@ -864,15 +896,70 @@ namespace ols
       return 0;
     const long long now = ols::steadyMs();
     std::lock_guard<std::mutex> lock(m_rateMutex);
-    while (!m_requestTimes.empty() && now - m_requestTimes.front() >= 60000)
-      m_requestTimes.pop_front();
-    if (static_cast<int>(m_requestTimes.size()) >= limit)
+
+    // Store tokens in thousandths so fractional refill rates can be used safely.
+    const long long capacity = static_cast<long long>(limit) * 1000LL;
+    if (!m_rateInitialized)
     {
-      const long long wait = (60000 - (now - m_requestTimes.front()) + 999) / 1000;
-      return wait > 0 ? static_cast<int>(wait) : 1;
+      m_rateInitialized = true;
+      m_rateLastMs = now;
+      m_rateTokens = capacity;
     }
-    m_requestTimes.push_back(now);
-    return 0;
+    else
+    {
+      long long elapsed = now - m_rateLastMs;
+      if (elapsed < 0)
+        elapsed = 0;
+      m_rateLastMs = now;
+
+      if (elapsed >= 60000LL)
+      {
+        m_rateTokens = capacity;
+      }
+      else
+      {
+        const long long refill = (elapsed * static_cast<long long>(limit)) / 60LL;
+        m_rateTokens += refill;
+        if (m_rateTokens > capacity)
+          m_rateTokens = capacity;
+      }
+    }
+
+    if (m_rateTokens >= 1000LL)
+    {
+      m_rateTokens -= 1000LL;
+      return 0;
+    }
+
+    const long long needed = 1000LL - m_rateTokens;
+    long long retryMs = (needed * 60LL + static_cast<long long>(limit) - 1LL) /
+                        static_cast<long long>(limit);
+    if (retryMs < 1000LL)
+      retryMs = 1000LL;
+    int retrySeconds = static_cast<int>((retryMs + 999LL) / 1000LL);
+    if (retrySeconds < 1)
+      retrySeconds = 1;
+    return retrySeconds;
+  }
+
+  // A rate refusal must not carry caller input, must not count the request, and
+  // must be machine-readable by browsers and clients. Retry-After is the standard
+  // backoff signal; the X-RateLimit headers are the common client hint set.
+  HttpResponse OpenLocalServices::rateLimitAnswer(int retrySeconds) const
+  {
+    HttpResponse r = jsonError(429, "Rate limit exceeded");
+    if (retrySeconds < 1)
+      retrySeconds = 1;
+    r.headers["Retry-After"] = std::to_string(retrySeconds);
+    r.headers["X-RateLimit-Limit"] = std::to_string(m_rateLimit.load());
+    r.headers["X-RateLimit-Remaining"] = "0";
+    const long long epochSeconds = std::chrono::duration_cast<std::chrono::seconds>(
+                                       std::chrono::system_clock::now().time_since_epoch())
+                                       .count();
+    r.headers["X-RateLimit-Reset"] = std::to_string(epochSeconds + retrySeconds);
+    r.headers["Access-Control-Allow-Headers"] = "X-Api-Key, Authorization, Content-Type, Range, If-Modified-Since, If-None-Match";
+    r.headers["Access-Control-Exposed-Headers"] = "X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-OLS-Auth";
+    return r;
   }
 
   bool OpenLocalServices::start(uint16_t port)
@@ -1196,8 +1283,7 @@ namespace ols
             }
             else if (const int retry = rateGate())
             {
-              resp = jsonError(429, "Rate limit exceeded");
-              resp.headers["Retry-After"] = std::to_string(retry);
+              resp = rateLimitAnswer(retry);
             }
             else
             {
@@ -2126,11 +2212,7 @@ namespace ols
       return noResponse();
 
     if (const int retry = rateGate())
-    {
-      HttpResponse out = jsonError(429, "Rate limit exceeded");
-      out.headers["Retry-After"] = std::to_string(retry);
-      return out;
-    }
+      return rateLimitAnswer(retry);
 
     if (get && path == "/api/models")
       return m_image ? jsonResponse(200, m_image->modelsJson())
@@ -2359,6 +2441,12 @@ namespace ols
             return jsonError(400, "Invalid value for 'OLS_STARTUP': this one is true or false"
                                   " - true sets this machine to start this server when it boots,"
                                   " false leaves it alone, and a blank leaves it unset");
+          if (name == "OLS_PORT")
+            return jsonError(400, "Invalid value for 'OLS_PORT': a blank leaves the default 8765,"
+                                  " otherwise this must be a port number from 1 to 65535.");
+          if (name == "OLS_RATE_LIMIT")
+            return jsonError(400, "Invalid value for 'OLS_RATE_LIMIT': a blank leaves the default 600,"
+                                  " 0 disables the rate limit, and otherwise this must be requests per minute from 1 to 1000000.");
           return jsonError(400, "Invalid value for '" + name +
                                     "': a blank leaves it unset, a number must be one the "
                                     "machine can use"
@@ -2395,7 +2483,7 @@ namespace ols
         }
         else if (change.first == "OLS_RATE_LIMIT")
         {
-          m_rateLimit = change.second.empty() ? 600 : std::atoi(change.second.c_str());
+          setRateLimit(change.second.empty() ? 600 : std::atoi(change.second.c_str()));
         }
       }
       // A save answers with the same rows it read: the page reads its rows back

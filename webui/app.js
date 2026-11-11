@@ -414,7 +414,7 @@ function paintModelCard(model) {
   // slowest are stated next to the average rather than hidden behind it.
   const asked = askFields(model.id, true);
   const found = costRow(asked);
-  const runMs = found ? runMsOf(found, asked.steps) : 0;
+  const runMs = found ? runMsOf(found, asked) : 0;
   addFact(box, 'what it costs here', runMs > 0
     ? costWords(runMs) + ' at these numbers · ' + Number(found.row.count) + ' run' +
     (Number(found.row.count) === 1 ? '' : 's') +
@@ -897,6 +897,29 @@ async function putInUse(model) {
   paintRunState();
 }
 
+// How many pictures one run of this machine answers for. The engine keeps a run
+// inside one model's work and makes at most kRunPictures of them at a time, and a
+// clip is already one run's whole work, so a model whose work moves answers one
+// clip to a run. Every count on the page - what it asks a run for, what it plans
+// notices for, and where a run's boundary sits - is read from this one number, so
+// the pictures the page laid out and the pictures the machine makes are the same
+// pictures.
+const kRunPictures = 4;
+
+function picturesPerRun(model) {
+  const card = findModel(String(model)) || {};
+  return card.video === true ? 1 : kRunPictures;
+}
+
+// What the ask on this page will make in one run: what its own images field
+// named, kept inside what one run carries.
+function askedPictures() {
+  const perRun = picturesPerRun(modelChoice());
+  const wanted = Math.round(Number(ui.numberField('count', 1)));
+  const chosen = wanted > 1 ? wanted : 1;
+  return chosen > perRun ? perRun : chosen;
+}
+
 function payload() {
   const size = sizePick();
   const body = {
@@ -906,7 +929,7 @@ function payload() {
     width: size.width,
     height: size.height,
     seed: ui.numberField('seed', -1),
-    count: ui.numberField('count', 1),
+    count: askedPictures(),
   };
   const steps = ui.textField('steps').trim();
   if (steps !== '') body.steps = Number(steps);
@@ -921,13 +944,12 @@ function payload() {
     const closeness = ui.selectValue('ref-strength');
     if (closeness !== '') body.strength = Number(closeness);
   }
-  // A model that moves makes one clip per run, so the count field is not offered
-  // for one; the clip's own length is asked in frames, the unit the model's card
-  // counts in. A blank leaves the length the card named, which is what the server
-  // uses - nothing is invented here.
+  // A model that moves makes one clip per run, so the ask names one clip and the
+  // clip's own length is asked in frames, the unit the model's card counts in. A
+  // blank leaves the length the card named, which is what the server uses -
+  // nothing is invented here.
   const askedModel = findModel(modelChoice()) || {};
   if (askedModel.video === true) {
-    body.count = 1;
     const frames = ui.textField('clip-length').trim();
     if (frames !== '') body.frames = Number(frames);
   }
@@ -958,28 +980,11 @@ function modelName(id) {
   return String(found.name || found.id || id);
 }
 
-// How fast a model really draws, measured from the runs this page has watched
-// end to end: steps divided by the time they took. A model with no finished run
-// here has no rate, and its notice states no time - nothing is guessed.
-const runRate = {};
+// What a run this page watched has done: the moments its own stream named, kept
+// so a rate can be measured from the steps it reported and the stack can be
+// repainted from the stream itself - the next reading of the machine would be the
+// same numbers a few seconds later.
 const jobTimes = {};
-
-function rememberRun(model, steps, ms) {
-  if (!(Number(steps) > 0) || ms <= 0) return;
-  const key = String(model);
-  if (!runRate[key]) runRate[key] = [];
-  runRate[key].push({ steps: Number(steps), ms: Number(ms) });
-  while (runRate[key].length > 8) runRate[key].shift();
-}
-
-function measuredRate(model) {
-  const runs = runRate[String(model)] || [];
-  let steps = 0;
-  let ms = 0;
-  for (const run of runs) { steps += run.steps; ms += run.ms; }
-  if (steps > 0 && ms > 0) return steps / ms;
-  return 0;
-}
 
 /* ---------- one notice per picture ----------
    A batch is watched picture by picture rather than run by run: what a person is
@@ -1094,22 +1099,30 @@ function costRow(asked) {
   return near;
 }
 
-// The whole run such a row says, and the cost of one step of it. A row that ran
-// the same steps answers with its mean; a row at another step count gives its
-// machine's own per-step cost times the steps asked for.
-function runMsOf(found, steps) {
+// The whole run such a row says, and the cost of one step of it. A row at exactly
+// these numbers answers with the mean of its runs, which is the cost of that whole
+// ask; a row at another step count prices the steps this ask asks for at its own
+// per-step cost, over the pictures the ask makes in one run, since the machine
+// charges for each of them. A row states its per-step cost over the steps it
+// sampled for all of its pictures, so a step of a run of pictures and a step of a
+// run of one are the same thing here.
+function runMsOf(found, asked) {
   if (!found) return 0;
   if (found.exact && Number(found.row.mean_ms) > 0) return Number(found.row.mean_ms);
   const perStep = Number(found.row.mean_ms_per_step);
-  if (perStep > 0 && Number(steps) > 0) return Math.round(perStep * Number(steps));
+  const steps = Number(asked.steps) > 0 ? Number(asked.steps) : 0;
+  const batch = Number(asked.batch) > 0 ? Number(asked.batch) : 1;
+  if (perStep > 0 && steps > 0) return Math.round(perStep * steps * batch);
   return 0;
 }
 function stepMsOf(found) {
   if (!found) return 0;
   if (Number(found.row.mean_ms_per_step) > 0) return Number(found.row.mean_ms_per_step);
-  if (Number(found.row.steps) > 0 && Number(found.row.mean_ms) > 0) {
-    return Number(found.row.mean_ms) / Number(found.row.steps);
-  }
+  // A row that states no per-step cost states its whole run: one of its steps is
+  // that run over the steps it sampled, which is its steps for every picture it
+  // was asked to make.
+  const steps = Number(found.row.steps) * (Number(found.row.batch) > 0 ? Number(found.row.batch) : 1);
+  if (steps > 0 && Number(found.row.mean_ms) > 0) return Number(found.row.mean_ms) / steps;
   return 0;
 }
 
@@ -1140,11 +1153,13 @@ function costWords(ms) {
   return Math.round(seconds / 60) + ' min';
 }
 let planSeq = 0;
-let lastPlan = '';
-// The nearest of another window's standing runs get their own cards; the rest are
-// counted in the position but not drawn, since the stack would otherwise fill
-// with waiting cards that all say the same thing.
-const kForeignLanesShown = 8;
+// The biggest ask this studio makes at once, and how many cards the work of
+// another window may add: the stack keeps one card per picture of this page's own
+// batch, plus the nearest of another window's standing work. The rest of that work
+// is counted in the position every card names but not drawn, since the stack would
+// otherwise fill with waiting cards that all say the same thing.
+const kMaxBatchPictures = 16;
+const kForeignPictureCards = 8;
 
 function pictureKeyFor(job, index) {
   return 'img-' + String(job) + '-' + String(index);
@@ -1186,12 +1201,28 @@ function describeAsk() {
 // Put a picture's notice on the stack as its card. The lines it carries are the
 // machine's and this page's own words, and a line with nothing in it is not
 // drawn: a card says nothing about a thing neither of them knows.
-function noticeForPicture(entry, kind, firstLine) {
-  const live = ui.toastTrack(entry.key, firstLine || '', kind);
+function trackPictureNotice(entry, firstLine) {
+  const live = ui.toastTrack(entry.key, firstLine || '', 'wait');
   if (!live) return null;
   ui.toastShape(live, true);
-  paintPictureCard(live, entry, 'not asked for yet', 0, 0, '');
   pictureNotices.set(entry.key, live);
+  return live;
+}
+
+// The card a picture lives on now. A picture whose card the stack had to take
+// down is stood up again rather than left out of the queue, since the queue is
+// the only thing that says what that picture is doing.
+function standingNotice(entry) {
+  const held = pictureNotices.get(entry.key);
+  if (ui.toastStanding(held)) return held;
+  return trackPictureNotice(entry, modelName(entry.model));
+}
+
+// A picture planned but not yet asked for: its card, standing where its turn
+// will come.
+function noticeForPicture(entry, firstLine) {
+  const live = trackPictureNotice(entry, firstLine);
+  if (live) paintPictureCard(live, entry, 'not asked for yet', 0, 0, '');
   return live;
 }
 
@@ -1219,48 +1250,57 @@ function askedSteps(model) {
 
 // The pictures this page is going to ask for, in the order it asks for them: the
 // whole batch is put on the stack at once, so the run that has not been asked
-// yet is visible as a queue rather than appearing only when its turn comes.
-function planPictures(model, pictures, runs) {
+// yet is visible as a queue rather than appearing only when its turn comes. The
+// run boundaries and how many pictures a run carries are the model's own, so the
+// notice of a picture names the run it will really be drawn in.
+function planPictures(model, pictures) {
   const batch = 'b' + (++planSeq);
-  lastPlan = batch;
+  const perRun = picturesPerRun(model);
+  const runs = Math.ceil(pictures / perRun);
   const steps = askedSteps(model);
   const ask = describeAsk();
   for (let n = 0; n < pictures; ++n) {
-    const run = Math.floor(n / kRunPictures) + 1;
+    const run = Math.floor(n / perRun) + 1;
     const entry = {
       key: 'pic-' + batch + '-' + n, batch: batch, n: n, of: pictures,
-      runs: runs, run: run, inRun: Math.min(kRunPictures, pictures - (run - 1) * kRunPictures),
+      runs: runs, run: run, inRun: Math.min(perRun, pictures - (run - 1) * perRun),
       model: String(model), job: '', index: -1, asked: false, steps: steps,
       dropped: false, prompt: ask.prompt, settings: ask.settings,
     };
     plannedPictures.push(entry);
-    noticeForPicture(entry, 'wait', modelName(model));
+    noticeForPicture(entry, modelName(model));
   }
   return batch;
 }
 
 // A batch that will not continue leaves the pictures it never asked for off the
 // plan: they were planned, and saying so once is enough, and keeping them would
-// read as pictures still to come.
+// read as pictures still to come. A picture whose card was already taken down had
+// its outcome read from the machine, so it is not described a second time here;
+// a picture a run was asked for is not one that was never asked for, and what
+// stopped was that run.
 function finishPlan(batch, words) {
   if (!batch) return;
   for (const entry of plannedPictures) {
     if (String(entry.batch) !== String(batch)) continue;
     entry.dropped = true;
-    if (pictureNotices.has(entry.key)) endPictureNotice(entry, words, 'warn');
+    if (!pictureNotices.has(entry.key)) continue;
+    endPictureNotice(entry, entry.asked ? 'its run did not come out' : words, 'warn');
   }
 }
 
 // The run the machine just took carries the next of the pictures this page planned
-// - the newest batch it laid out, which is the only one that can still be asking:
-// the machine's own job id is what ties them to it from here on, so a page reload
-// finds the same pictures at the same notices through the machine's records.
-function bindPlannedPictures(jobId, asked) {
+// for the batch that ask laid out - an ask names its own batch, so two asks
+// standing on the machine at once each keep their own pictures rather than one
+// taking the other's place in the queue. The machine's own job id is what ties
+// them to it from here on, so a page reload finds the same pictures at the same
+// notices through the machine's records.
+function bindPlannedPictures(batch, jobId, asked) {
   let bound = 0;
   const want = Math.max(1, Math.round(Number(asked) || 1));
   for (const entry of plannedPictures) {
     if (bound >= want) break;
-    if (String(entry.batch) !== String(lastPlan)) continue;
+    if (String(entry.batch) !== String(batch)) continue;
     if (String(entry.job) !== '' || entry.asked) continue;
     entry.job = String(jobId);
     entry.asked = true;
@@ -1270,11 +1310,12 @@ function bindPlannedPictures(jobId, asked) {
   return bound;
 }
 
+// Take a picture's card down and hand its outcome to the stack as its own line.
 function endPictureNotice(entry, words, kind) {
-  const live = pictureNotices.get(entry.key) || ui.toastTrack(entry.key, '', kind);
-  if (!live) return;
-  ui.toastEnd(live, words, kind);
+  const live = pictureNotices.get(entry.key);
   pictureNotices.delete(entry.key);
+  if (ui.toastStanding(live)) ui.toastEnd(live, words, kind);
+  else ui.toastPush(words, kind);
 }
 
 // The pictures a named run carries, in the order they will be drawn.
@@ -1328,10 +1369,14 @@ function repaintPictures() {
     if (seen[id]) continue;
     const live = liveProgress[id];
     // A run this page is following that the last reading did not know about is the
-    // newest thing standing here, which is where its order puts it.
+    // newest thing standing here, and its start is the ask that started it - named
+    // in the same whole seconds the machine names its own starts in, so the order
+    // the notices are painted in is one order over both.
+    const asked = jobTimes['job-' + id] || null;
     merged.push({
       id: id, kind: 'generate', state: 'running', model: live.model,
-      started_at: Number.MAX_SAFE_INTEGER, done: live.done, max: live.max
+      started_at: asked && asked.start ? Math.floor(asked.start / 1000) : Math.floor(Date.now() / 1000),
+      done: live.done, max: live.max
     });
   }
   paintPictureNotices(merged);
@@ -1355,21 +1400,96 @@ function aggregateRateFor(model) {
   return 0;
 }
 
-// The words a time estimate was built on, so the number is never read as a guess.
+// What the steps of a run this page watched cost, kept as the machine counts them:
+// the steps between the first and the last its stream named over the time between
+// those two. A run that named only one moment measured nothing, and nothing is
+// kept for it.
+function rememberMeasuredRun(model, times) {
+  if (!times) return;
+  const ticks = Number(times.tickDone) - Number(times.firstTicks || 0);
+  const ms = Number(times.tickAt) - Number(times.firstAt);
+  if (ticks > 0 && ms > 0) rememberAggregate(model, ticks, ms);
+}
+
+// The words a time estimate was built on, so a number is never read as a guess.
 // The machine's own ledger comes first: it was written by a run that finished at
-// these settings on this machine, and it survives the page. A run's own rate is the
-// closest thing there is, and the page's tally of the runs it watched is below both.
-function etaBasis(liveRate, model, single, found) {
+// these settings on this machine, and it survives the page. A run's own rate is
+// nearer, and the rate the runs this page watched held is what is left when the
+// machine has no row for these settings.
+function rateBasis(liveRate, model, found) {
   if (liveRate > 0) return "at this run's own rate";
-  if (found && Number(found.count) > 0) {
+  if (found && Number(found.row.count) > 0) {
     return found.exact
-      ? 'at the cost ' + Number(found.count) + ' run' + (Number(found.count) === 1 ? '' : 's') +
+      ? 'at the cost ' + Number(found.row.count) + ' run' + (Number(found.row.count) === 1 ? '' : 's') +
       ' of these settings had here'
       : 'at the per-step cost its runs here showed';
   }
   if (aggregateRateFor(model) > 0) return 'at the rate its runs here held';
-  if (single && measuredRate(model) > 0) return 'at the rate it drew here';
   return '';
+}
+
+// The settings a standing run is working at, as the machine states them beside
+// the job it is working. A row of the machine's own cost ledger is keyed by
+// exactly these, so a run's own words are the match; where a record states none,
+// what this page would ask of that model is the nearest it can honestly say.
+function standingAskOf(record) {
+  const stated = record.settings;
+  if (!stated || typeof stated !== 'object') return askFields(record.model);
+  return {
+    model: String(record.model),
+    width: Number(stated.width),
+    height: Number(stated.height),
+    steps: Number(stated.steps),
+    guidance: Number(stated.guidance),
+    sampler: String(stated.sampler || 'engine default'),
+    scheduler: String(stated.scheduler || 'engine default'),
+    cache: stated.cache === true,
+    device: String(stated.device || 'card'),
+    offload: stated.offload === true,
+    sage_attn: stated.sage_attn === true,
+    batch: Number(stated.batch) > 0 ? Number(stated.batch) : 1,
+    refs: Number(stated.refs) || 0,
+    frames: Number(stated.frames) || 0,
+    fps: Number(stated.fps) || 0,
+  };
+}
+
+// What one picture of a run costs, in the machine's own count of its work: the
+// steps it samples for one picture. The record states them; a model's card
+// states what its runs take; a window that divides between the pictures the run
+// was asked for says it itself.
+function pictureStepsOf(record, cards) {
+  const stated = record.settings;
+  if (stated && Number(stated.steps) > 0) return Number(stated.steps);
+  const card = findModel(String(record.model));
+  if (card && Number(card.steps) > 0) return Number(card.steps);
+  const max = Number(record.max) || 0;
+  if (max > 0 && cards > 0 && max % cards === 0) return max / cards;
+  return 0;
+}
+
+// How many pictures a standing run was asked for. The record states the batch it
+// is answering; a window that divides by the steps a picture takes says it
+// itself; a run that states neither is not split, and one card says so.
+function picturesOfRun(record) {
+  const stated = record.settings;
+  if (stated && Number(stated.batch) > 0) return Math.round(Number(stated.batch));
+  const max = Number(record.max) || 0;
+  const card = findModel(String(record.model));
+  const steps = card && Number(card.steps) > 0 ? Number(card.steps) : 0;
+  if (max > 0 && steps > 0 && max % steps === 0) return max / steps;
+  return 0;
+}
+
+// What a run's own steps cost, from the two moments its stream named: the ticks
+// it reported at its first step and the ticks it reported at its last. The open
+// of the model, the file written after, and the wait between runs are none of
+// the run's steps, so none of them belongs in this measure.
+function runRateOf(times) {
+  if (!times || !(times.firstAt > 0) || !(times.tickAt > times.firstAt)) return 0;
+  const steps = Number(times.tickDone) - Number(times.firstTicks || 0);
+  if (!(steps > 0)) return 0;
+  return steps / (times.tickAt - times.firstAt);
 }
 
 // Draw what this machine states about every picture that stands here. This runs
@@ -1377,11 +1497,15 @@ function etaBasis(liveRate, model, single, found) {
 // the first one, which is what keeps the notices true across a page reload, after
 // a job finishes, and after another window asked for work of its own.
 function paintPictureNotices(jobs) {
-  // A picture whose notice the stack no longer carries is not carried in the plan
+  // A picture whose card the stack no longer carries is not carried in the plan
   // either: what is planned is only what is still standing or still to be asked.
+  // A card the stack took down is taken out of the kept map with it, so a picture
+  // is never left pointing at a notice that is no longer on the stack.
   const still = [];
   for (const entry of plannedPictures) {
-    if (pictureNotices.has(entry.key) || (!entry.asked && !entry.dropped)) still.push(entry);
+    const held = pictureNotices.get(entry.key);
+    if (held && !ui.toastStanding(held)) pictureNotices.delete(entry.key);
+    if (ui.toastStanding(held) || (!entry.asked && !entry.dropped)) still.push(entry);
   }
   if (still.length !== plannedPictures.length) {
     plannedPictures.length = 0;
@@ -1416,81 +1540,62 @@ function paintPictureNotices(jobs) {
 
   // The pictures of every standing run, in the order they will be drawn.
   const lanes = [];
-  let foreignShown = 0;
+  let foreignCards = 0;
   for (const record of standing) {
     const id = String(record.id);
-    const entries = [];
-    for (const entry of plannedPictures) {
-      if (String(entry.job) === id) entries.push(entry);
-    }
-    entries.sort(function (a, b) { return a.index - b.index; });
+    const entries = boundPictures(id);
     if (entries.length) {
       lanes.push({ record: record, entries: entries, count: entries.length });
       continue;
     }
-    if (foreignShown >= kForeignLanesShown) {
-      // The stack draws the nearest of the work other windows asked for and counts
-      // the rest in the position, since a wall of identical waiting cards says
-      // nothing the nearest ones have not already said.
-      lanes.push({ record: record, entries: [], count: 1 });
-      continue;
-    }
-    ++foreignShown;
-    // Work another window asked for: the machine states its window, and a model's
-    // card states the steps its runs take, so the run's pictures are counted from
-    // those two rather than from a number this page made up. A window that does
-    // not divide is kept as one notice that says it cannot be split.
-    const card = findModel(String(record.model));
-    const steps = card && Number(card.steps) > 0 ? Number(card.steps) : 0;
-    const max = Number(record.max) || 0;
-    const count = steps > 0 && max > 0 && max % steps === 0 ? max / steps : 0;
+    // Work another window asked for: the machine states the batch it is answering
+    // and the window it works in, so its pictures are counted from its own words.
+    // Only the nearest of them get cards, since a wall of identical waiting cards
+    // says nothing the nearest ones have already not said - the rest are still
+    // counted in the position every drawn card names.
+    const named = picturesOfRun(record);
+    const cards = named > 0 ? named : 1;
+    const room = kForeignPictureCards - foreignCards;
+    const drawn = named > 0 ? (cards < room ? cards : (room > 0 ? room : 0)) : (room > 0 ? 1 : 0);
+    foreignCards += drawn;
     const own = [];
-    if (count >= 1) {
-      for (let i = 0; i < count; ++i) {
-        const key = pictureKeyFor(id, i);
-        const entry = {
-          key: key, batch: '', n: i, of: count, runs: 1, run: 1,
-          inRun: count, model: String(record.model), job: id, index: i, asked: true,
-          steps: steps, prompt: '', settings: ''
-        };
-        plannedPictures.push(entry);
-        const live = pictureNotices.get(key) || noticeForPicture(entry, 'wait');
-        if (live) pictureNotices.set(key, live);
-        own.push(entry);
-      }
-    } else {
-      const key = pictureKeyFor(id, 0);
-      let entry = null;
-      for (const planned of plannedPictures) {
-        if (planned.key === key) entry = planned;
-      }
-      if (!entry) {
-        entry = {
-          key: key, batch: '', n: 0, of: 0, runs: 1, run: 1, inRun: 0,
-          model: String(record.model), job: id, index: 0, asked: true, steps: 0,
-          prompt: '', settings: ''
-        };
-        plannedPictures.push(entry);
-      }
-      const live = pictureNotices.get(key) || noticeForPicture(entry, 'wait');
-      if (live) pictureNotices.set(key, live);
+    for (let at = 0; at < drawn; ++at) {
+      const key = pictureKeyFor(id, at);
+      const entry = {
+        key: key, batch: '', n: at, of: named, runs: 1, run: 1,
+        inRun: cards, model: String(record.model), job: id, index: at, asked: true,
+        steps: pictureStepsOf(record, cards), prompt: '', settings: ''
+      };
+      plannedPictures.push(entry);
       own.push(entry);
     }
-    lanes.push({ record: record, entries: own, count: own.length });
+    lanes.push({ record: record, entries: own, count: cards });
   }
 
   // What stands here, counted in pictures, is the position every notice names.
   let standingPictures = 0;
   for (const lane of lanes) standingPictures += lane.count;
 
-  let seenTicksAhead = 0;
+  // The work ahead is counted in the machine's own steps, and a picture's own
+  // place in its run is counted with it: the pictures of a run that come after a
+  // picture are not that picture's wait, so a queued card names the part of the
+  // work that really is before it rather than the whole of every run standing.
+  let workAhead = 0;
   let positionBase = 0;
   for (const lane of lanes) {
     const record = lane.record;
     const id = String(record.id);
-    const started = record.done !== undefined && record.done !== null;
     const done = Number(record.done) || 0;
     const max = Number(record.max) || 0;
+    // A run that has stated no step has not begun the window it states: the model
+    // may still be opening, and nothing is being sampled here yet. Its card says
+    // the run has not started rather than counting a step that has not happened.
+    const sampling = done > 0;
+    // A run whose record states no count at all - the machine states these while
+    // its own work runs, and a page following such a run before its first step
+    // answers gets only that the run stands here - is not a run that has not
+    // started: its count is nothing this page was told, so its card says so.
+    const unmeasured = record.done === undefined || record.done === null;
     // The window a run takes, in the machine's own count: what it states while it
     // works, otherwise what this page asked it for.
     let window = max;
@@ -1501,68 +1606,74 @@ function paintPictureNotices(jobs) {
       }
       window = nominal;
     }
-    const remaining = started && max > 0 ? Math.max(0, max - done)
+    const remaining = max > 0 ? Math.max(0, max - done)
       : (window > 0 ? window : 0);
-    for (const entry of lane.entries) {
-      const live = pictureNotices.get(entry.key);
+    const model = String(record.model);
+    // What a step of this run costs is one answer for the whole run, not one per
+    // card: the machine's ledger at the settings this run is working at, or the
+    // rate this very run has held since its first step.
+    const times = jobTimes['job-' + id] || null;
+    const runRate = runRateOf(times);
+    const found = costRow(standingAskOf(record));
+    const stepMs = found ? stepMsOf(found) : 0;
+    const heldRate = aggregateRateFor(model);
+    const rate = runRate > 0 ? runRate
+      : (stepMs > 0 ? 1 / stepMs : (heldRate > 0 ? heldRate : 0));
+    const basis = rateBasis(runRate, model, found);
+    // What one picture of this run is worth, so a picture's estimate stops at
+    // the picture it stands for rather than at the end of the run.
+    const perPicture = pictureStepsOf(record, lane.count);
+    const cards = lane.entries;
+    for (let at = 0; at < cards.length; ++at) {
+      const entry = cards[at];
+      const live = standingNotice(entry);
       if (!live) continue;
-      const single = lane.entries.length === 1;
-      const times = jobTimes['job-' + id] || null;
-      let liveRate = 0;
-      if (times && times.tickAt && times.tickDone > 0) {
-        const over = Date.now() - times.tickAt;
-        if (over > 0) liveRate = times.tickDone / over;
-      }
-      // The machine's ledger comes before anything the page measured: a run of these
-      // very settings was timed on this machine when it finished, and its per-step
-      // cost is what the work ahead of this picture costs. A run that is already
-      // going answers with its own rate, which is nearer than any ledger row.
-      const found = costRow(askFields(entry.model));
-      const stepMs = found ? stepMsOf(found) : 0;
-      const loggedRate = stepMs > 0 ? 1 / stepMs : 0;
-      const rate = liveRate > 0 ? liveRate
-        : (loggedRate > 0 ? loggedRate
-          : (aggregateRateFor(entry.model) > 0 ? aggregateRateFor(entry.model)
-            : (single && measuredRate(entry.model) > 0 ? measuredRate(entry.model) : 0)));
-      const basis = etaBasis(liveRate, entry.model, single,
-        found && Number(found.row.count) > 0
-          ? { count: Number(found.row.count), exact: found.exact } : null);
-      const left = seenTicksAhead + remaining;
-      const position = lane.entries.indexOf(entry) + 1;
-      // A picture whose run has not come yet still gets a time: the work ahead of
-      // it on this machine plus its own run's window, at the rate this machine
-      // showed. That is what its place in the queue means in seconds.
-      const estimateMs = rate > 0 ? Math.round(left / rate) : 0;
-      if (!started) {
+      const position = positionBase + at + 1;
+      const behind = perPicture > 0 ? (cards.length - 1 - at) * perPicture : 0;
+      const untilItLands = remaining > behind ? remaining - behind : 0;
+      const estimateMs = rate > 0 ? Math.round((workAhead + untilItLands) / rate) : 0;
+      // Which part of the run this picture is at, in the machine's own count: a
+      // picture costs its own steps, so the run's count says which of them the
+      // machine has already sampled, which one it is sampling now, and which one
+      // has not come to yet - the cards of one run are not all "drawing".
+      const split = perPicture > 0;
+      const own = split ? at * perPicture : 0;
+      const stage = unmeasured ? 'its steps are not counted here'
+        : (!sampling ? 'its run has not started'
+          : (split && done <= own ? 'its turn has not come' : ''));
+      if (stage) {
         ui.toastShape(live, true);
         if (estimateMs > 0) {
-          paintPictureCard(live, entry, 'waiting its turn', positionBase + position,
-            standingPictures, basis);
+          paintPictureCard(live, entry, stage, position, standingPictures, basis);
           ui.toastEta(live, estimateMs, '');
         } else {
-          paintPictureCard(live, entry, 'waiting its turn', positionBase + position,
-            standingPictures, 'its time is not measured here yet');
+          paintPictureCard(live, entry, stage, position, standingPictures,
+            'its time is not measured here yet');
           ui.toastOpen(live);
         }
-      } else if (done >= max && max > 0) {
+      } else if (split ? done >= own + perPicture : (max > 0 && done >= max)) {
         ui.toastShape(live, false);
         paintPictureCard(live, entry, 'its steps are drawn · waiting for the picture',
-          positionBase + position, standingPictures, basis);
+          position, standingPictures, basis);
+        // a countdown from an earlier reading is not this picture's stage: its
+        // steps are over, and what waits for now is the file.
+        ui.toastEta(live, 0, '');
         ui.toastStep(live, done, max, '');
       } else {
         ui.toastShape(live, false);
         if (estimateMs > 0) {
-          paintPictureCard(live, entry, 'drawing', positionBase + position, standingPictures, basis);
+          paintPictureCard(live, entry, 'drawing', position, standingPictures, basis);
           ui.toastEta(live, estimateMs, '');
         } else {
-          paintPictureCard(live, entry, 'drawing', positionBase + position, standingPictures,
+          paintPictureCard(live, entry, 'drawing', position, standingPictures,
             'its time is not measured here yet');
+          ui.toastEta(live, 0, '');
           ui.toastStep(live, done, max, '');
         }
       }
     }
     positionBase += lane.count;
-    seenTicksAhead += remaining;
+    workAhead += remaining;
   }
 }
 
@@ -1584,46 +1695,45 @@ function handleEvent(event, model, key) {
     setProgress(Number(event.done), Number(event.max), 'drawing', model);
     const done = Number(event.done);
     const max = Number(event.max);
+    const times = jobTimes[key] || (jobTimes[key] = { start: Date.now() });
+    // The two moments a rate is measured from: the first step the machine reported
+    // and the last, since the steps between those two over the time between them
+    // are the run's work and nothing else is.
+    if (!times.firstAt) {
+      times.firstAt = Date.now();
+      times.firstTicks = done;
+    }
+    times.max = max > 0 ? max : times.max;
+    times.tickAt = Date.now();
+    times.tickDone = done;
     if (mine.length) {
-      // The machine's own ticks of this run are what a rate is measured from, and
-      // they are kept so the stack can be repainted from the stream itself - the
-      // next reading of the machine would be the same numbers a few seconds later.
-      const times = jobTimes[key] || (jobTimes[key] = { start: Date.now() });
-      if (!times.firstStepAt) times.firstStepAt = Date.now();
-      times.max = max > 0 ? max : times.max;
-      times.tickAt = Date.now();
-      times.tickDone = done;
+      // The machine's own ticks of this run are kept so the stack is repainted
+      // from the stream itself - the next reading of the machine would state the
+      // same numbers a few seconds later.
       liveProgress[jobId] = { model: String(model), done: done, max: max };
       repaintPictures();
       return;
     }
     const live = ui.toastTrack(key, '', 'wait');
-    const times = jobTimes[key] || (jobTimes[key] = { start: Date.now() });
-    if (!times.firstStepAt) times.firstStepAt = Date.now();
-    times.max = max > 0 ? max : times.max;
-    // The estimate comes from what the machine has really done: this run's own
-    // steps per second once it has taken any, otherwise the model's measured rate
-    // from runs that finished here. Neither is a guess.
-    let rate = 0;
-    const sinceRun = Date.now() - times.firstStepAt;
-    if (done > 0 && sinceRun > 0) rate = done / sinceRun;
-    // A run that has not taken a step yet still gets a rate: what this machine
-    // measured for a run of these settings, which is a fact about this machine
-    // rather than a wish. Only when the machine has no such row does the page fall
-    // back to what it watched itself.
+    // The estimate comes from what this machine has really done: this run's own
+    // rate once it has taken more than one step, otherwise the cost it measured
+    // for a run of these settings, otherwise the rate the runs this page watched
+    // held. None of them is a wish.
+    let rate = runRateOf(times);
     if (rate <= 0) {
       const found = costRow(askFields(model));
       const stepMs = found ? stepMsOf(found) : 0;
       if (stepMs > 0) rate = 1 / stepMs;
     }
-    if (rate <= 0) rate = measuredRate(model);
-    let words = 'Working ' + modelName(model) +
-      (max > 0 ? ' - step ' + done + ' of ' + max : '');
-    if (rate > 0 && max > done) {
+    if (rate <= 0) rate = aggregateRateFor(model);
+    let words = 'Working ' + modelName(model);
+    if (max > 0 && done > 0) words += ' - step ' + done + ' of ' + max;
+    if (rate > 0 && max > done && done > 0) {
       ui.toastEta(live, Math.round(((max - done) / rate)), words);
     } else {
       ui.toastStep(live, done, max, words);
-      if (!max) ui.toastOpen(live);
+      // work that has stated no step yet states no scale either: it waits.
+      if (!max || done <= 0) ui.toastOpen(live);
     }
     return;
   }
@@ -1663,20 +1773,30 @@ function handleEvent(event, model, key) {
     tray.appendChild(shot);
     log('Render saved: ' + String(event.clip || event.url), 'ok');
     if (key) {
-      const times = jobTimes[key] || {};
-      rememberRun(model, Number(event.steps || 0), Date.now() - (times.start || Date.now()));
-      const picture = mine.length ? pictureByIndex(jobId, pictureIndexOfUrl(String(event.clip || event.url || ''))) : null;
+      // What the run's steps cost is kept from the moments its own stream named.
+      // A picture's event names no steps at all, so the run's own count is the
+      // only honest source of what its steps cost.
+      rememberMeasuredRun(model, jobTimes[key]);
+      // Which picture this frame is: the machine names the file it wrote by the
+      // index of the picture it drew.
+      const picture = mine.length
+        ? pictureByIndex(jobId, pictureIndexOfUrl(String(event.clip || event.url || '')))
+        : null;
+      const drawn = (moving ? 'its clip is drawn' : 'its picture is drawn') + ' · kept in the gallery';
       if (picture) {
-        endPictureNotice(picture,
-          (moving ? 'its clip is drawn' : 'its picture is drawn') + ' · kept in the gallery', 'ok');
+        endPictureNotice(picture, drawn, 'ok');
       } else if (mine.length) {
-        // A frame the machine did not name is still one picture of this run: the
-        // first of its pictures that is still standing is the one it drew.
+        // A frame the machine did not name is still one picture of this run, and
+        // the machine draws them in the order it was asked, so it is the first of
+        // them that still stands.
         let first = null;
         for (const entry of mine) {
-          if (pictureNotices.has(entry.key)) first = entry;
+          if (ui.toastStanding(pictureNotices.get(entry.key))) {
+            first = entry;
+            break;
+          }
         }
-        if (first) endPictureNotice(first, (moving ? 'its clip is drawn' : 'its picture is drawn') + ' · kept in the gallery', 'ok');
+        if (first) endPictureNotice(first, drawn, 'ok');
       } else {
         ui.toastEnd(ui.toastTrack(key, (moving ? 'Clip done: ' : 'Image done: ') + modelName(model), 'ok'),
           (moving ? 'Clip done: ' : 'Image done: ') + modelName(model), 'ok');
@@ -1738,13 +1858,16 @@ function handleEvent(event, model, key) {
 async function streamJob(job, model, action) {
   const key = 'job-' + String(job);
   jobTimes[key] = { start: Date.now() };
+  // The card of the model this work is on: what is already on this machine and
+  // what its opens cost on this one are stated there, not by a model's name.
+  const card = findModel(String(model)) || {};
   // A model whose bytes are already on this machine is not fetched again: the job
   // reads them and stands a voucher under them. Calling that "Downloading" over a
   // bar that never moved a byte made every check look like a re-fetch of the file
   // it had just found, which is how a download that was not one came to be
   // described as a broken download.
-  const checking = action !== 'generate' && action !== 'load' && !!model &&
-    (model.unchecked === true || Number(model.present_bytes) > 0);
+  const checking = action !== 'generate' && action !== 'load' &&
+    (card.unchecked === true || Number(card.present_bytes) > 0);
   if (action !== 'generate') {
     const live = ui.toastTrack(key,
       action === 'load' ? 'Loading ' + modelName(model)
@@ -1756,7 +1879,7 @@ async function streamJob(job, model, action) {
       // 2 GB one are not the same wait, and the pair of numbers is what a person
       // watching the bar wants. An open nobody has timed here keeps the open-ended
       // bar and says no time.
-      const open = openCost(model.id, model.uses_quant || model.asked_quant || '');
+      const open = openCost(card.id, card.uses_quant || card.asked_quant || '');
       if (Number(open.ms) > 0) {
         ui.toastEta(live, open.ms, 'Loading ' + modelName(model) + ' · ' + open.count +
           ' open' + (open.count === 1 ? '' : 's') + ' of this form here cost about ' +
@@ -1788,13 +1911,10 @@ async function streamJob(job, model, action) {
       (action === 'load' ? 'Model loaded: ' : (checking ? 'Checked: ' : 'File ready: ')) + modelName(model), 'ok');
   }
   finishJob();
-  // The run's whole window over the time it took: the machine's own count and the
-  // page's own clock. This is what the estimate of a picture whose turn has not
-  // come is built from, so a queued notice names a rate this machine showed.
-  const runTimes = jobTimes[key] || null;
-  if (runTimes && Number(runTimes.max || 0) > 0 && runTimes.start) {
-    rememberAggregate(model, Number(runTimes.max), Date.now() - runTimes.start);
-  }
+  // What the run's steps cost is kept from the moments its own stream named - its
+  // whole window over the ask's wall time would count the open of a model and the
+  // wait before a run as the run's steps, which they are not.
+  rememberMeasuredRun(model, jobTimes[key]);
   delete jobTimes[key];
   delete liveProgress[String(job)];
   await refresh();
@@ -1822,7 +1942,7 @@ async function streamJob(job, model, action) {
   return ended;
 }
 
-async function startJob(model, action, extra) {
+async function startJob(model, action, extra, batch) {
   // Downloads go to the model's own route, like loads: there is no bare
   // /api/download in the API, so a bare path would 404.
   const path = action === 'download' ? '/api/models/' + model + '/download'
@@ -1838,15 +1958,16 @@ async function startJob(model, action, extra) {
       (started.error ? ': ' + started.error : ''), 'err');
     ui.toastNo(action === 'generate' ? 'start the image'
       : (action === 'load' ? 'load that model' : 'download that model'), started);
-    if (action === 'generate') finishPlan(lastPlan, 'the ask was refused here');
-    return;
+    if (action === 'generate') finishPlan(batch, 'the ask was refused here');
+    return 'error';
   }
   lastJob = started.job;
   if (action === 'generate') {
     running = started.job;
     // The run the machine just took carries the next of the pictures this page
-    // planned, and the machine's own job id is what ties them to it from here on.
-    bindPlannedPictures(started.job, Number(body.count || 1));
+    // planned for the batch this ask laid out, and the machine's own job id is
+    // what ties them to it from here on.
+    bindPlannedPictures(batch, started.job, Number(body.count || 1));
     const cancelBtn = E('cancel-btn');
     cancelBtn.disabled = false;
     cancelBtn.title = 'Stop this render at the next sampling step.';
@@ -1858,45 +1979,61 @@ async function startJob(model, action, extra) {
   return await streamJob(started.job, model, action);
 }
 
-// How many pictures one run of this machine makes: its own cap, the same four
-// the images field on this page states as its maximum. A batch bigger than that
-// is several runs, one after another, rather than one ask the machine would
-// answer with fewer pictures than were asked for.
-const kRunPictures = 4;
+// The room the timed stack keeps for this page's own work: one card per picture
+// of the biggest ask this studio makes, plus the nearest of another window's work.
+// Below the room a picture of this page's own batch can be taken off the stack
+// while its run still has not come, which is how a batch came to read as pictures
+// that were lost.
+ui.toastTrackedCap = kMaxBatchPictures + kForeignPictureCards + 4;
 
-// The quick batches: the same ask, drawn again and again, in runs of what one run
-// carries. These are asked for in the same words as a single generate, so they
-// carry the same cost per picture and say so - four runs of four is four times
-// one run - and the chain stops at the first run that fails or is stopped,
-// because a run nobody explained is not a reason to start another.
-async function generateMany(pictures) {
-  const model = modelChoice();
-  if (!model) {
-    log('Pick a model first.', 'warn');
-    return;
-  }
+// What an ask needs before it runs: the model the page picked has to be on this
+// machine. A model the machine does not name is refused at its own door, so there
+// is nothing to say about it here.
+function readyToDraw(model) {
   for (const entry of models) {
     if (entry.id !== model) continue;
     if (entry.on_disk !== true) {
       log(entry.name + ' is not downloaded yet: press download on its card.', 'warn');
       ui.toastPush('That model is not on the machine yet. Press download on its card.', 'warn');
-      return;
+      return false;
     }
-    break;
+    return true;
   }
-  const runs = Math.ceil(pictures / kRunPictures);
-  log('A batch of ' + pictures + ' with ' + modelName(model) + ': ' + runs +
-    (runs === 1 ? ' run of ' : ' runs of ') + kRunPictures + ' pictures each.', 'ok');
-  // The batch is put on the stack as one notice per picture before any of it is
-  // asked for, so the pictures that have not been asked for yet are visible as a
-  // queue with their place in it, and are not drawn into being only when their
-  // turn comes.
-  const batch = planPictures(model, pictures, runs);
+  return true;
+}
+
+// The ask every generate hand takes: one picture, or the quick batches, which are
+// the same ask drawn in runs. A run is asked for what it can carry - what the
+// model itself carries per run - so a batch is runs one after another rather than
+// one run the machine would answer with fewer pictures than were asked for, and
+// the pictures the notices name are the pictures the machine makes. The chain
+// stops at the first run that failed or was stopped, since a run nobody explained
+// is not a reason to start another, and what is left of the batch says so.
+// The model this ask draws with is the one this page has picked: the ask's own
+// words name that pick, so the hand carries no model that another pick would
+// answer for.
+async function drawAsk(pictures) {
+  const model = modelChoice();
+  if (!model) {
+    log('Pick a model first.', 'warn');
+    return;
+  }
+  if (!(pictures > 0) || !readyToDraw(model)) return;
+  // The ask a run takes is the ask this model keeps: what the controls hold now
+  // is written down for it, so a reload of this page opens on what was last asked
+  // of this model rather than on a card's opening words.
+  keepAsk(model);
+  const batch = planPictures(model, pictures);
+  const perRun = picturesPerRun(model);
+  const runs = Math.ceil(pictures / perRun);
+  log('An ask of ' + pictures + ' picture' + (pictures === 1 ? '' : 's') + ' with ' + modelName(model) +
+    (runs === 1 ? ' in one run.' : ': ' + runs + ' runs, ' + perRun + ' picture' +
+      (perRun === 1 ? '' : 's') + ' each.'), 'ok');
   for (let run = 1; run <= runs; ++run) {
-    const ask = Math.min(kRunPictures, pictures - (run - 1) * kRunPictures);
-    const ended = await startJob(model, 'generate', { count: ask });
+    const carry = pictures - (run - 1) * perRun;
+    const ended = await startJob(model, 'generate', { count: carry > perRun ? perRun : carry }, batch);
     if (ended === 'cancelled') {
-      log('The batch stopped where it was: ' + (run - 1) * kRunPictures + ' of ' + pictures +
+      log('The batch stopped where it was: ' + ((run - 1) * perRun) + ' of ' + pictures +
         ' asked for were drawn.', 'warn');
       finishPlan(batch, 'never asked for: the batch stopped before this one');
       return;
@@ -1907,36 +2044,19 @@ async function generateMany(pictures) {
       finishPlan(batch, 'never asked for: the batch stopped at run ' + run);
       return;
     }
-    if (run < runs) {
-      log('Run ' + run + ' of ' + runs + ' is drawn; starting the next.', 'ok');
-    }
+    if (run < runs) log('Run ' + run + ' of ' + runs + ' is drawn; starting the next.', 'ok');
   }
-  log('The batch is drawn: ' + pictures + ' pictures in the gallery.', 'ok');
+  log('The ask is drawn: ' + pictures + ' pictures in the gallery.', 'ok');
 }
 
+// One picture of the current ask, on the stack before the machine is asked for it.
 async function generate() {
-  const model = modelChoice();
-  if (!model) {
-    log('Pick a model first.', 'warn');
-    return;
-  }
-  for (const entry of models) {
-    if (entry.id !== model) continue;
-    if (entry.on_disk !== true) {
-      log(entry.name + ' is not downloaded yet: press download on its card.', 'warn');
-      ui.toastPush('That model is not on the machine yet. Press download on its card.', 'warn');
-      return;
-    }
-    break;
-  }
-  // The ask a run takes is the ask this model keeps: what the controls hold now
-  // is written down for it, so a reload of this page opens on what was last
-  // asked of this model rather than on a card's opening words.
-  keepAsk(model);
-  // One picture, put on the stack before the ask: the notice is there the moment
-  // the hand is pressed, and follows the run through the machine's records after.
-  planPictures(model, 1, 1);
-  await startJob(model, 'generate');
+  await drawAsk(askedPictures());
+}
+
+// The quick batches: the same ask, drawn again and again.
+async function generateMany(pictures) {
+  await drawAsk(pictures);
 }
 
 // The machine's state is drawn first, from one snapshot: /api/monitor returns
@@ -2523,11 +2643,11 @@ function indexOfShown(id) {
 // the same card, exactly as it did before the seed stopped mattering here.
 function stackKeyFor(item) {
   return [String(item.model), String(item.prompt || ''), String(item.width) + 'x' + String(item.height),
-    // The length of a clip is part of the ask the same way its size is: two runs
-    // of one prompt at different clip lengths are two different amounts of work,
-    // not one ask explored at another chance, so they do not belong on one card.
-    String(item.steps || ''), String(item.guidance || ''), String(item.negative_prompt || ''),
-    String(item.frames || ''), String(item.fps || '')].join('\u0001');
+  // The length of a clip is part of the ask the same way its size is: two runs
+  // of one prompt at different clip lengths are two different amounts of work,
+  // not one ask explored at another chance, so they do not belong on one card.
+  String(item.steps || ''), String(item.guidance || ''), String(item.negative_prompt || ''),
+  String(item.frames || ''), String(item.fps || '')].join('\u0001');
 }
 
 // The runs are grouped in the order the screen already shows them, newest first,
@@ -3694,7 +3814,9 @@ async function main() {
   // same price as the picture a single generate draws, and no setting makes a
   // batch cheaper per picture than one run.
   ui.onPress(E('gen-4x'), function () { generateMany(4); });
-  ui.onPress(E('gen-16x'), function () { generateMany(16); });
+  // The deepest quick batch and the room the stack keeps are one number, so a
+  // whole ask is never trimmed for want of space.
+  ui.onPress(E('gen-16x'), function () { generateMany(kMaxBatchPictures); });
   ui.onPress(E('cancel-btn'), function () {
     if (!lastJob) { log('No render was asked from this page: there is nothing here to stop.', 'warn'); return; }
     void (async function () {

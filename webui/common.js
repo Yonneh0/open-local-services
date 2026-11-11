@@ -792,6 +792,9 @@
   UI.toastRecent = {};
   UI.toastTicker = null;
   UI.toastAt = 0;
+  // The room the stack keeps for work that lives as long as it runs - a page
+  // that lays out a batch of its own raises this to the room its batch needs.
+  UI.toastTrackedCap = 24;
 
   UI.toastBuild = function () {
     if (UI.toastStack) return;
@@ -855,8 +858,12 @@
               live.fill.style.width = share + '%';
             }
             if (live.leftEl) {
+              // work whose scale nothing stated is not counted as a step of zero:
+              // it says its stage, which is all the machine stated about it.
               live.leftEl.textContent = live.paused ? 'paused'
-                : 'step ' + live.done + ' of ' + live.total;
+                : (live.total > 0
+                  ? 'step ' + live.done + ' of ' + live.total
+                  : 'waiting to start');
             }
           }
         } else {
@@ -1019,11 +1026,15 @@
         if (live.counted) ++tracked;
         else ++notices;
       }
-      if (notices > 4 || tracked > 24) {
+      if (notices > 4 || tracked > UI.toastTrackedCap) {
         let oldest = null;
+        // past half the room for one kind, that kind is the one over-represented,
+        // and its oldest notice is taken down; a page that raised the room for its
+        // own batch keeps that batch whole.
+        const overTracked = tracked * 2 > UI.toastTrackedCap;
         for (const live of UI.toastLive) {
           if (live.closing) continue;
-          if (!!live.counted === (tracked > 12)) oldest = live;
+          if (!!live.counted === overTracked) oldest = live;
         }
         if (!oldest) break;
         UI.toastClose(oldest);
@@ -1037,8 +1048,8 @@
   // A running job lives on the stack as long as it runs: its bar counts the
   // steps the job itself states, and its words follow the job through its life -
   // taken, opened, steps answered, finished, refused - in the job's own record,
-  // never guessed. The notice is taken down when the job says it is over, which
-  // is the point of the record.
+  // never guessed. Work that has stated no scale yet states its stage rather than
+  // a step count nothing stated.
   UI.toastTrack = function (key, words, kind) {
     const wanted = key === null || key === undefined ? '' : String(key);
     if (!wanted) return null;
@@ -1050,15 +1061,34 @@
     const live = UI.toastPush(String(words || 'Working'), kind || 'wait', 0, wanted);
     if (!live) return null;
     live.counted = true;
-    if (!live.total) live.total = 1;
-    if (!live.done) live.done = 0;
+    live.opened = true;
+    live.done = 0;
     return live;
+  };
+
+  // Whether a notice the browser kept is still on the stack: a record on its way
+  // off, or one the ticker has already taken off, is not a card a page can draw
+  // on. A page that paints work as its notices hold it asks this before it writes,
+  // so work is never described where nothing describes it any more - and a page
+  // that keeps its own map of these records drops the entry with the record, which
+  // is how a batch came to lose pictures at random and to describe one picture on
+  // two cards.
+  UI.toastStanding = function (live) {
+    return !!live && !live.closing && UI.toastLive.indexOf(live) >= 0;
   };
 
   // Say where a tracked job stands now: its own done/max, its own state words.
   UI.toastStep = function (live, done, max, words) {
     if (!live || live.paused) return;
-    if (max > 0) live.total = max;
+    if (max > 0) {
+      live.total = max;
+      // a stated scale replaces the stage: the count bar is what the work costs
+      // now, and the moving bar of work that states no scale is not drawn for it.
+      if (live.opened) {
+        live.opened = false;
+        if (live.el) live.el.classList.remove('toast-open');
+      }
+    }
     live.done = Math.max(0, Number(done) || 0);
     if (live.wordsEl && words) live.wordsEl.textContent = String(words);
     UI.toastTick();

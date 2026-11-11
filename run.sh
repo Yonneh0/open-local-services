@@ -18,9 +18,26 @@ envval() {
   [ -f .env ] && sed -n "s/^$1=//p" .env | head -n 1
 }
 HOST=$(envval OLS_HOST); [ -n "$HOST" ] || HOST=0.0.0.0
-# The port is not a setting: one port on every box, and nothing on the machine
-# answers on another. The server refuses to run when it is held.
-PORT=8765
+# The port defaults to 8765. OLS_PORT may ask for another port from the
+# environment or .env. If that port is in use, the server refuses to start.
+PORT=$(envval OLS_PORT)
+if [ -z "$PORT" ]; then
+  PORT=8765
+fi
+case "$PORT" in
+  *[!0-9]*)
+    echo "Invalid OLS_PORT=$PORT: use a number from 1 to 65535."
+    exit 1
+    ;;
+  0)
+    echo "Invalid OLS_PORT=$PORT: use a number from 1 to 65535."
+    exit 1
+    ;;
+esac
+if [ "$PORT" -gt 65535 ]; then
+  echo "Invalid OLS_PORT=$PORT: use a number from 1 to 65535."
+  exit 1
+fi
 LINK=$HOST
 [ "$HOST" = 0.0.0.0 ] && LINK=127.0.0.1
 # what the words ask for, in any order: "build" builds and installs without
@@ -46,7 +63,7 @@ echo "open-local-services"
 echo "==================="
 echo "Builds only what is missing, then starts the server."
 echo "The pages will be at:  http://$LINK:$PORT/"
-echo "That port is the only one these doors answer on. If another server holds it,"
+echo "The configured port is the only one these doors answer on. If another server holds it,"
 echo "this one says so and does not start; the running one is stopped for you when"
 echo "this script has built what was missing."
 echo ""
@@ -416,7 +433,8 @@ fi
 echo ""
 echo "Starting open-local-services"
 echo "The server names the address it answers at on the lines below: the port it"
-echo "asks for when that port is free, the next one when another server holds it."
+echo "asks for. If that port is not free, this script reports the refusal; it never"
+echo "rolls the server over to another port."
 echo "It links to the home page, the image studio, and the voice studio. The server"
 echo "runs in this terminal; close it to stop."
 echo ""

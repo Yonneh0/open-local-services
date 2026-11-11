@@ -233,8 +233,8 @@
     }
     if (service && service.running) {
       serviceHand(acts, 'shutdown service',
-        'Stop this server: the machine\'s manager is asked to stop it and this process lets go of port' +
-        ' 8765. This page stops answering the moment it is pressed.',
+        'Stop this server: the machine\'s manager is asked to stop it and this process lets go of its' +
+        ' listening port. This page stops answering the moment it is pressed.',
         'shutdown');
     }
     panel.appendChild(acts);

@@ -91,11 +91,11 @@ namespace ols
     // The listening socket is made so that it does not outlive the process that
     // opened it. Engines are started with std::system, which hands this process's
     // handles to the child on Windows and its file descriptors on the other side
-    // unless they are marked otherwise, so an engine left running keeps 8765 open
-    // after the server it came from is gone. Measured on X1 2026-10-28: the server
-    // was stopped, a llama-server.exe still standing held the port, and the next
-    // start said 8765 is taken and refused to run - the refusal this server exists
-    // to make, turned against itself.
+    // unless they are marked otherwise, so an engine left running can keep the
+    // requested port open after the server it came from is gone. Measured on X1
+    // 2026-10-28: the server was stopped, a `llama-server.exe` still standing held
+    // the requested port, and the next start said the port was taken and refused
+    // to run.
     inline int listenSocket(sock_t sock, int backlog)
     {
 #ifdef _WIN32

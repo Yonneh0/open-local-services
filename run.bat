@@ -23,9 +23,31 @@ rem the config panel at the next start. a value the environment already carries 
 rem a person's own choice and is left in place, the same as run.sh does.
 set "SRV_HOST=%OLS_HOST%"
 if not defined SRV_HOST set SRV_HOST=0.0.0.0
-rem the port is not a setting: one port on every box, and nothing on the machine
-rem answers on another. the server refuses to run when it is held.
-set SRV_PORT=8765
+rem The port defaults to 8765. OLS_PORT may ask for another port from the
+rem environment or .env. If that port is in use, the server refuses to start.
+set "SRV_PORT=%OLS_PORT%"
+if not defined SRV_PORT (
+  if exist .env (
+    for /f "usebackq tokens=1,* delims==" %%P in (".env") do (
+      if /i "%%P"=="OLS_PORT" set "SRV_PORT=%%Q"
+    )
+  )
+)
+if not defined SRV_PORT set SRV_PORT=8765
+set "BAD_PORT="
+for /f "delims=0123456789" %%V in ("!SRV_PORT!") do set "BAD_PORT=1"
+if defined BAD_PORT (
+  echo Invalid OLS_PORT=!SRV_PORT!: use a number from 1 to 65535.
+  exit /b 1
+)
+if !SRV_PORT! LEQ 0 (
+  echo Invalid OLS_PORT=!SRV_PORT!: use a number from 1 to 65535.
+  exit /b 1
+)
+if !SRV_PORT! GTR 65535 (
+  echo Invalid OLS_PORT=!SRV_PORT!: use a number from 1 to 65535.
+  exit /b 1
+)
 rem 0.0.0.0 binds every address of the machine; the words people open name one of
 rem them, the same link run.sh prints.
 set SRV_LINK=!SRV_HOST!
@@ -404,6 +426,11 @@ if not exist "!API_ROOT!\CMakeCache.txt" (
       if errorlevel 1 exit /b 1
     )
 )
+rem The api build is MSVC-compiled. If this shell did not stand the studio
+rem environment before run.bat, the compiler cannot open its own headers and
+rem ninja reports errors like 'atomic' or 'string' missing. The incremental
+rem build path below needs the same environment the configure path used above.
+if defined VS_ROOT call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
 rem cmake recompiles nothing when everything is current, so this is quick.
 rem a build that does not finish is a build that says so: a source that
 rem does not compile, or a download the network refused, leaves the tree
@@ -477,8 +504,8 @@ rem no copy here installs one, and the server starts. a crash still prints its
 rem own words, in the same line the failing check names.
 set "GGML_NO_BACKTRACE=1"
 echo The server names the address it answers at as it starts - the line that reads
-echo "API server on http://0.0.0.0:[port]". The port is !SRV_PORT! and no other: when
-echo another server already holds it, this one says so and does not start.
+echo "API server on http://0.0.0.0:[port]". The configured port is !SRV_PORT!; if another
+echo server already holds it, this one says so and does not start.
 echo.
 echo The first thing the server does is stand at the level this machine's manager
 echo works at, because a boot entry, a task ended, a service started are the

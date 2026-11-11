@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <cstdint>
+#include <cstddef>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -41,6 +42,7 @@
 // this build links the CUDA runtime, so its own question about the GPU can be
 // asked directly; the attribute numbers are part of the runtime's stable ABI
 extern "C" int cudaDeviceGetAttribute(int *value, int attr, int device);
+extern "C" int cudaMemGetInfo(std::size_t *free, std::size_t *total);
 #endif
 
 namespace ols
@@ -89,8 +91,8 @@ namespace ols
       // engine's family default standing - set_flow_shift answers with
       // default_flow_shift when it is handed INFINITY
       // (src/pipeline/diffusion_engine.cpp:3187-3188) - and that default is 3.0
-      // for qwen-image, z-image and SD3.5, 6.93 for FLUX.3, and for FLUX and
-      // FLUX.2 a 1.0 the engine's own source marks "TODO: validate"
+      // for z-image and the Qwen image flow families, 6.93 for FLUX.3, and for
+      // older FLUX families a 1.0 the engine's own source marks "TODO: validate"
       // (diffusion_engine.cpp:1531). A model that ships a scheduler config
       // naming its shift says it here, because the family default is a guess
       // the engine has not validated.
@@ -123,17 +125,16 @@ namespace ols
           {"z-image-turbo", "cinematic photoreal shots in eight steps, with legible signage"},
           {"qwen-image-2.1", "clean illustration, comics, and long legible text, including Chinese"},
           {"qwen-image-2.1-turbo", "the same legible text and illustration in eight steps"},
-          {"qwen-image", "legible text, handwriting, and Chinese characters"},
+
           {"sdxl-turbo", "fast product, food, and cartoon shapes in one or four steps"},
           {"realvisxl-v5-lightning", "photoreal portraits and candid photos in four steps, honest skin"},
           {"pony-diffusion-v6", "anime and game illustration written in tag style"},
           {"cyberrealistic-xl", "photoreal people, portraits and full body"},
           {"animagine-xl-3.1", "anime illustration in several genres, with score tags"},
           {"lustify-sdxl", "photoreal women; guided, SFW photography, objects, animals, fantasy"},
-          {"majicmix-realistic-v7", "photoreal skin and faces, dark low-key scenes"},
+
           {"juggernaut-xl-v9", "photoreal portrait, architecture, car, food, interior, landscape"},
-          {"sd35-medium", "typography, diagrams, and short legible words"},
-          {"flux-2-klein-4b", "photoreal images and multi-reference editing in four steps"},
+
           // MiniMax H3's card is a video model: "MiniMax H3 is an omni-modal
           // generative system ... up to 15 seconds at 24 FPS with 32 kHz stereo
           // audio" (the words unsloth carries beside the very bytes here), and the
@@ -149,9 +150,7 @@ namespace ols
     // the pictures in the order they are handed to it, and the caps below are
     // the numbers the model's own card states - the Qwen Image 2.1 card says
     // "up to 10 reference images", the FLUX.3 Image Klein docs say the same,
-    // the FLUX.2 klein card states multi-reference editing without naming a
-    // number so it is held to the same ten, and the original Qwen Image Edit
-    // is shown with one input picture. a redraw model takes one picture and
+    // and a redraw model takes one picture and
     // changes it.
     static const std::vector<std::tuple<std::string, std::string, int>> &kCapability()
     {
@@ -159,8 +158,7 @@ namespace ols
           {"flux-3-klein", "edit", 10},
           {"qwen-image-2.1", "edit", 10},
           {"qwen-image-2.1-turbo", "edit", 10},
-          {"qwen-image", "edit", 1},
-          {"flux-2-klein-4b", "edit", 10},
+
           {"z-image-turbo", "redraw", 1},
           {"sdxl-turbo", "redraw", 1},
           {"realvisxl-v5-lightning", "redraw", 1},
@@ -168,9 +166,9 @@ namespace ols
           {"cyberrealistic-xl", "redraw", 1},
           {"animagine-xl-3.1", "redraw", 1},
           {"lustify-sdxl", "redraw", 1},
-          {"majicmix-realistic-v7", "redraw", 1},
+
           {"juggernaut-xl-v9", "redraw", 1},
-          {"sd35-medium", "redraw", 1},
+
           // MiniMax H3's fl2va checkpoint takes "text, plus zero, one or two frames"
           // (unsloth's own words beside the files), and the engine reads them in
           // order: the first as the frame the clip starts from, the second as the
@@ -253,17 +251,6 @@ namespace ols
           // this transformer.
           {"qwen-image-2.1", 1024, 1024, "euler", "", false},
           {"qwen-image-2.1-turbo", 1024, 1024, "euler", "", false},
-          // Qwen Image: its card's quick start runs num_inference_steps 50 with
-          // true_cfg_scale 4.0, an empty negative prompt, and a 1:1 frame of
-          // 1328x1328; the released ComfyUI workflow for the fp8 bytes on this machine
-          // ships the same 1328x1328 with "euler" and "simple" and switches steps 20 /
-          // cfg 4, carrying the note "Try 50 steps, if you want original qwen image's
-          // setting, but it will takes longer". 20 at cfg 4 is what the released
-          // workflow runs on this quantisation, and its own note frames 50 as the slow
-          // option. Its strength is complex text rendering, "especially for Chinese".
-          // These bytes are the heaviest here - 19.03 GB of model beside an 8.74 GB
-          // encoder, past a 24 GB card - so it runs with the offload switch on.
-          {"qwen-image", 1328, 1328, "euler", "simple", false},
           // RealVisXL V5 Lightning: the card's own parameters — "Sampling Steps: 5",
           // "Sampling Method: DPM++ SDE Karras / DPM++ SDE", "CFG Scale: 1.0-2.0" — at
           // the square an SDXL checkpoint is trained at. It is a Lightning distillation
@@ -319,21 +306,6 @@ namespace ols
           // already inside, so nothing extra is loaded. clip skip is not named; SDXL's
           // family default of 2 stands.
           {"lustify-sdxl", 832, 1152, "dpm++2m_sde", "karras", true},
-          // MajicMix Realistic v7 (CivitAI model 43331, version v7 = 176425, baseModels
-          // ["SD 1.5"], and the file on disk is that version's pruned fp16
-          // majicmixRealistic_v7.safetensors). Its "推荐参数 Recommended Parameters for V7"
-          // names "Sampler: Euler a, Euler, restart" and "Steps: 20~40", the CFG scale
-          // paragraph gives 6-8, and the same block states "clip skip 2" - which is the
-          // one setting the engine cannot answer by itself here: its family default is 2
-          // for SDXL and SD2 and 1 for SD 1.5, and this is an SD 1.5 UNet, so the card's
-          // number has to be written down. The size is the 512 square SD 1.5 trains at,
-          // not the 1024x1536 the showcase hangs at - those went through the "Hires
-          // upscale: 2+" the card names, a stage this app does not run. No scheduler is
-          // named for V7, so the engine's own choice for a UNet stands. The card's
-          // negative is "use ng_deepnegative_v1_75t and badhandv4 in negative prompt":
-          // those are textual-inversion embeddings and this app ships neither, so no
-          // negative text is invented to stand in for them.
-          {"majicmix-realistic-v7", 512, 512, "euler_a", "", true, 2},
           // Juggernaut XL v9 (RunDiffusion/Juggernaut-XL-v9, base_model
           // stabilityai/stable-diffusion-xl-base-1.0, the file on disk being the card's
           // own "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"). Its "Recommended
@@ -350,59 +322,6 @@ namespace ols
           // reads off the file. clip skip is not named for an SDXL and the engine's
           // family default is already 2, so nothing is written.
           {"juggernaut-xl-v9", 832, 1216, "dpm++2m", "karras", true},
-          // Stable Diffusion 3.5 Medium. Stability's own card cannot be read from this
-          // machine: https://huggingface.co/stabilityai/stable-diffusion-3.5-medium/raw/main/README.md
-          // answers 401 "Access to model ... is restricted. You must have access to it and
-          // be authenticated", so the settings come from the two sources that can be read
-          // and that this app's files come from. ComfyUI ships the SD3.5 workflow beside
-          // the very repo these text encoders were downloaded from
-          // (Comfy-Org/stable-diffusion-3.5-fp8): its KSampler passes 20 steps, cfg 4.01,
-          // "euler" on the "sgm_uniform" scheduler, its EmptySD3LatentImage is 1024x1024,
-          // and its negative prompt is the empty string. This engine's own SD3 page
-          // (docs/sd3.md:17) runs the family with --sampling-method euler at 1024x1024 and
-          // a cfg in the fives, naming no scheduler, which is the engine's own default
-          // (src/pipeline/request.cpp:57 - a DiT that is not flux, flux2, qwen-2.1, ltx or
-          // ideogram gets discrete). euler + sgm_uniform at 1024 square is the combination
-          // that ships, so it is the one written down; 4.0 sits between ComfyUI's 4.01 and
-          // the doc's 4.5. No cache: docs/caching.md scopes the step caches to UNet models
-          // and the library refuses them for the DiT families by itself.
-          {"sd35-medium", 1024, 1024, "euler", "sgm_uniform", false},
-          // FLUX.2 Klein 4B. Black Forest Labs' own card (black-forest-labs/FLUX.2-klein-4B)
-          // gives the numbers in code: guidance_scale=1.0, num_inference_steps=4,
-          // height=1024, width=1024 - already what this app ships - and this engine's FLUX.2
-          // page (docs/flux2.md:45) runs the same checkpoint at "--cfg-scale 1.0 --steps 4",
-          // naming euler in the editing example, so the sampler is written down and the
-          // scheduler is left to the engine, which knows flux2 by itself
-          // (src/pipeline/request.cpp:70). No cache: four steps, and docs/caching.md starts
-          // a step cache at fifteen percent of them. "Runs on consumer hardware, with as
-          // little as 13GB VRAM" and "accessible on NVIDIA RTX 3090/4070 and above" is why
-          // no offload is asked for: the files here are the 7.22 GB bf16 transformer, the
-          // 7.49 GB bf16 Qwen3 4B text encoder and the 0.31 GB flux2 VAE - 15.0 GB against
-          // 24 GB - and the full-precision encoder is kept because it fits; the fp4 variant
-          // in the ComfyUI repo (qwen_3_4b_fp4_flux2.safetensors) is the option if the card
-          // is ever shared. What the card warns about is why the built-in prompt no longer
-          // asks for words: "While the model can output text, text rendered may be
-          // inaccurate or subject to distortion" - a legible sign is SD3.5's showpiece and
-          // this model's weak spot, so the demo is a photograph, not a typography test. The
-          // strength the card states is what the model page says it for: "Text-to-image and
-          // image-to-image multi-reference editing in a single unified model", which is the
-          // "edit" flag with ten reference pictures this row already carries.
-          // Its time shift is written down because the family default is not trustworthy:
-          // the engine answers 1.0 for FLUX and FLUX.2 with the words "TODO: validate"
-          // beside it (src/pipeline/diffusion_engine.cpp:1531), raising it to 1.15 only for
-          // a file carrying guidance_in.in_layer.weight - and this file's header has no
-          // guidance_in tensor at all, so on the family default it would sample at 1.0.
-          // The maker settles it: the repo ships scheduler/scheduler_config.json, a
-          // FlowMatchEulerDiscreteScheduler with "use_dynamic_shifting": true,
-          // "base_shift": 0.5, "max_shift": 1.15, "base_image_seq_len": 256,
-          // "max_image_seq_len": 4096 and "time_shift_type": "exponential" (its static
-          // "shift": 3.0 is what applies only when dynamic shifting is off). At this row's
-          // 1024x1024 the latent sequence is (1024/16)^2 = 4096, exactly max_image_seq_len,
-          // so the maker's own pipeline samples at max_shift - **1.15** - and that is what
-          // this model asks for. Other models leave the field alone: the engine's defaults
-          // for qwen-image, z-image and SD3.5 are 3.0, and docs/qwen_image.md:17 passes
-          // --flow-shift 3, the same number, which is the engine answering its family right.
-          {"flux-2-klein-4b", 1024, 1024, "euler", "", false, -1, 1.15f},
           // MiniMax H3. The numbers are unsloth's own example run beside the very GGUF
           // bytes this machine downloads: "Example UD-Q2_K_XL, the smallest rung here,
           // at 960x544, 124 frames, 24 FPS, 8 steps, guidance 1.0, seed 11, on a
@@ -492,15 +411,6 @@ namespace ols
             {{"diffusion_model", "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors"},
              {"vae", "vae/qwen_image_2.1_vae_bf16.safetensors"},
              {"llm", "text_encoders/qwen3vl_8b_int8_convrot.safetensors"}});
-        add(out, "qwen-image", "Qwen Image", "Comfy-Org/Qwen-Image_ComfyUI", 20, 4.0f,
-            "a Chinese woman in a t-shirt wearing the word QWEN, smiling at the camera while "
-            "holding a "
-            "black marker; behind her a glass board handwritten in Chinese reading Qwen-Image "
-            "复杂字体渲染",
-            "", "", 0,
-            {{"diffusion_model", "split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors"},
-             {"vae", "split_files/vae/qwen_image_vae.safetensors"},
-             {"llm", "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"}});
         add(out, "sdxl-turbo", "SDXL Turbo", "stabilityai/sdxl-turbo", 4, 0.0f,
             "a single red apple centered on a rustic wooden table, macro photo, one soft window "
             "light from the left, dark neutral background, shallow depth of field, no other "
@@ -568,32 +478,10 @@ namespace ols
             "slipped to her hip, pale window light from the left, hair loose, natural skin, "
             "(cinematic lighting:1.1), 50mm film photograph",
             "airbrushed, blurry", "", 638929, {{"model", "lustifyNSFWCheckpoint_v10Alpha.safetensors"}});
-        add(out, "majicmix-realistic-v7", "MajicMix Realistic v7", "digiplay/majicMIX_realistic_v7", 28, 7.0f,
-            "Best quality, masterpiece, ultra high res, (photorealistic:1.4), close-up portrait of "
-            "an elderly fisherman mending a net on a boat, weathered hands, grey sky, deep shadow",
-            "", "", 0, {{"model", "majicmixRealistic_v7.safetensors"}});
         add(out, "juggernaut-xl-v9", "Juggernaut XL v9", "RunDiffusion/Juggernaut-XL-v9", 35, 5.0f,
             "Cinematic mid shot photo of an astronaut walking through a neon-lit Tokyo alley at "
             "night, hyperdetailed photography, skin details, shallow depth of field",
             "", "", 0, {{"model", "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"}});
-        add(out, "sd35-medium", "Stable Diffusion 3.5 Medium", "stabilityai/stable-diffusion-3.5-medium", 20, 4.0f, "a lovely cat holding a sign says \"Stable Diffusion 3.5 Medium\", "
-                                                                                                                    "plain "
-                                                                                                                    "warm-grey studio "
-                                                                                                                    "backdrop, soft side light, the words crisp and legible",
-            "",
-            "", 0,
-            {{"model", "sd3.5_medium.safetensors"},
-             {"clip_l", "hf:Comfy-Org/stable-diffusion-3.5-fp8/text_encoders/clip_l.safetensors"},
-             {"clip_g", "hf:Comfy-Org/stable-diffusion-3.5-fp8/text_encoders/clip_g.safetensors"},
-             {"t5xxl", "hf:Comfy-Org/stable-diffusion-3.5-fp8/text_encoders/t5xxl_fp8_e4m3fn.safetensors"}});
-        add(out, "flux-2-klein-4b", "FLUX.2 Klein 4B", "Comfy-Org/vae-text-encorder-for-flux-klein-4b", 4, 1.0f,
-            "a weathered fisherman mending a net on a rolling deck at dawn, spray in the air, wool "
-            "sweater, salt on the rails, natural light, photorealistic photograph, shallow depth of field",
-            "", "",
-            0,
-            {{"diffusion_model", "split_files/diffusion_models/flux-2-klein-4b.safetensors"},
-             {"vae", "split_files/vae/flux2-vae.safetensors"},
-             {"llm", "split_files/text_encoders/qwen_3_4b.safetensors"}});
         // MiniMax H3 - the first video model this machine offers, so its row states
         // what a clip costs rather than what a picture costs. Every file is named
         // where it is actually kept: the denoiser and the text encoder come from
@@ -686,6 +574,9 @@ namespace ols
     // other one gets its weights moved: drawing on the context that is standing
     // would answer the run with a device it did not ask for.
     static std::map<std::string, bool> gCtxCpu;
+    // The form each standing context was opened as. A later ask for another form
+    // must get those files moved, not be answered from the weights already there.
+    static std::map<std::string, std::string> gCtxForm;
     static uint64_t gUseTick = 0;
 
     // The working-set ceiling for image models: a standing three quarters of the
@@ -694,7 +585,24 @@ namespace ols
     // number rather than a reading of the machine - what a machine can actually
     // hold is answered when a context is opened, where the engine asks its own
     // allocator for room and this module closes the models it must to make room.
-    static long long memoryBudgetBytes() { return 25769803776LL; }
+    static long long gpuTotalBytes()
+    {
+#ifdef OLS_CUDART_LINKED
+      std::size_t freeBytes = 0;
+      std::size_t totalBytes = 0;
+      if (cudaMemGetInfo(&freeBytes, &totalBytes) != 0)
+        return 0;
+      return static_cast<long long>(totalBytes);
+#else
+      return 0;
+#endif
+    }
+
+    static long long memoryBudgetBytes()
+    {
+      const long long gpu = gpuTotalBytes();
+      return gpu > 0 ? gpu : 25769803776LL;
+    }
     static std::map<std::string, std::vector<std::string>> gEvents;
     static std::map<std::string, bool> gEnded;
     static std::map<std::string, bool> gCancel;
@@ -915,7 +823,7 @@ namespace ols
       return found != gGenerating.end() && found->second > 0;
     }
 
-    static void touchContext(const std::string &modelId);
+    static void touchContext(const std::string &modelId, const std::string &form);
     static std::string lruVictimLocked(const std::string &keep);
     static void closeContextLocked(const std::string &modelId);
 
@@ -1637,12 +1545,17 @@ namespace ols
         // encoder while the denoiser stays the row's. It is not-for-all-audiences,
         // which is said on the card rather than hidden here.
         std::vector<ModelForm> h3;
-        for (const char *rung : {"Q2_K", "Q4_K", "Q8_0"})
+        for (const char *rung : {"Q2_K", "Q3_K", "Q4_K", "Q5_0", "Q6_K", "Q8_0"})
         {
-          h3.push_back(ModelForm{
-              rung,
-              {{"diffusion_model",
-                std::string("hf:unsloth/MiniMax-H3-GGUF/minimax_h3_fl2va_pruned-") + rung + ".gguf"}}});
+          const bool smallRung = std::string(rung) == "Q2_K" || std::string(rung) == "Q3_K";
+          std::vector<std::pair<std::string, std::string>> form{
+              {"diffusion_model",
+               std::string("hf:unsloth/MiniMax-H3-GGUF/minimax_h3_fl2va_pruned-") + rung + ".gguf"}};
+          if (smallRung)
+          {
+            form.push_back({"llm", "hf:unsloth/MiniMax-H3-GGUF/qwen3vl_32b_minimax_h3-Q2_K_M.gguf"});
+          }
+          h3.push_back(ModelForm{rung, form});
         }
         h3.push_back(ModelForm{"Sakura-Q4_K_M",
                                {{"llm", "hf:webmp3/Sakura-MiniMax-H3-Uncensored-GGUF/"
@@ -1867,13 +1780,13 @@ namespace ols
       return fallback;
     }
 
-    static long long weightsBytesOf(const std::string &modelId)
+    static long long weightsBytesOf(const std::string &modelId, const std::string &form)
     {
       const ImageModelDef *def = findModel(modelId);
       long long bytes = 0;
       if (!def)
         return 0;
-      for (const auto &file : modelFiles(def, std::string()))
+      for (const auto &file : modelFiles(def, form))
       {
         const std::string path = ols::modelFilePath(gWeightsDir, modelId, localNameOf(file.second));
         std::error_code ec{};
@@ -1885,11 +1798,12 @@ namespace ols
     }
 
     // Caller holds gCtxMutex.
-    static void touchContext(const std::string &modelId)
+    static void touchContext(const std::string &modelId, const std::string &form)
     {
       ++gUseTick;
       gCtxUse[modelId] = gUseTick;
-      gCtxBytes[modelId] = weightsBytesOf(modelId);
+      gCtxBytes[modelId] = weightsBytesOf(modelId, form);
+      gCtxForm[modelId] = form;
     }
 
     // Caller holds gCtxMutex. The idle model whose weights were used least recently
@@ -1945,6 +1859,7 @@ namespace ols
       gCtxUse.erase(modelId);
       gCtxBytes.erase(modelId);
       gCtxCpu.erase(modelId);
+      gCtxForm.erase(modelId);
       gPendingErase.erase(modelId);
     }
 
@@ -1966,6 +1881,33 @@ namespace ols
 #endif
     }
 
+    static std::string currentChosenQuant(const std::string &modelId)
+    {
+      std::lock_guard<std::mutex> lock(gMutex);
+      const auto found = gChosenQuant.find(modelId);
+      return found == gChosenQuant.end() ? std::string() : found->second;
+    }
+
+    static bool clearOtherModelsLocked(const std::string &modelId, std::string &why)
+    {
+      std::vector<std::string> others;
+      for (const auto &entry : gCtx)
+      {
+        if (entry.first != modelId)
+          others.push_back(entry.first);
+      }
+      for (const std::string &other : others)
+      {
+        if (busyModel(other))
+        {
+          why = "Another model is still processing: " + other;
+          return false;
+        }
+      }
+      for (const std::string &other : others)
+        closeContextLocked(other);
+      return true;
+    }
     static sd_ctx_t *openContext(const std::string &modelId, bool offload, bool sage, bool cpu,
                                  std::string &error)
     {
@@ -1975,15 +1917,29 @@ namespace ols
         error = "unknown model";
         return nullptr;
       }
+      if (cpu)
+      {
+        error = "image models here are kept in card memory only; the cpu path is not allowed for them";
+        return nullptr;
+      }
+      const std::string chosen = currentChosenQuant(modelId);
       const std::string base = ols::modelFileDir(gWeightsDir, modelId);
       sd_ctx_params_t params;
       sd_ctx_params_init(&params);
-      std::vector<std::pair<std::string, std::string>> wantedFiles = modelFiles(def, std::string());
+      std::vector<std::pair<std::string, std::string>> wantedFiles = modelFiles(def, chosen);
       std::vector<std::string> paths;
       paths.reserve(wantedFiles.size());
       for (const auto &file : wantedFiles)
       {
         paths.push_back(base + localNameOf(file.second));
+      }
+      for (size_t i = 0; i < paths.size(); ++i)
+      {
+        if (!ols::fileExists(paths[i]))
+        {
+          error = "the file for " + modelId + " (" + localNameOf(wantedFiles[i].second) + ") is not here";
+          return nullptr;
+        }
       }
       for (size_t i = 0; i < wantedFiles.size(); ++i)
       {
@@ -2033,17 +1989,16 @@ namespace ols
       // then works where the threads are, which is what a machine asks when the
       // card is busy with something else - and with no device named the engine
       // keeps its own cpu path, so nothing of the card is opened for it.
-      const std::string gpu = cpu ? std::string() : gpuDeviceName();
-      if (!gpu.empty())
+      const std::string gpu = gpuDeviceName();
+      if (gpu.empty())
       {
-        params.backend = gpu.c_str();
-        params.params_backend = gpu.c_str();
-        params.auto_fit = true;
+        error = "image models here are kept in card memory only; no card was found to load them on";
+        return nullptr;
       }
-      else if (offload)
-      {
-        params.auto_fit = true;
-      }
+      params.backend = gpu.c_str();
+      params.params_backend = gpu.c_str();
+      params.auto_fit = true;
+      (void)offload;
 
       std::shared_ptr<std::mutex> guard;
       {
@@ -2052,10 +2007,16 @@ namespace ols
         if (standing != gCtx.end())
         {
           const bool stands_on = gCtxCpu.count(modelId) ? gCtxCpu[modelId] : false;
-          if (stands_on != cpu)
+          const auto openForm = gCtxForm.find(modelId);
+          const std::string openedForm = openForm == gCtxForm.end() ? std::string() : openForm->second;
+          if (stands_on != cpu || openedForm != chosen)
           {
-            std::fprintf(stderr, "[image] %s stands open on the %s and this asks the %s: the weights are moved\n",
-                         modelId.c_str(), stands_on ? "cpu" : "card", cpu ? "cpu" : "card");
+            std::fprintf(stderr, "[image] %s stands open on %s and as %s, and this asks for %s and as %s: the weights are moved\n",
+                         modelId.c_str(),
+                         stands_on ? "cpu" : "card",
+                         openedForm.empty() ? "its default" : openedForm.c_str(),
+                         cpu ? "cpu" : "card",
+                         chosen.empty() ? "its default" : chosen.c_str());
             std::fflush(stderr);
             closeContextLocked(modelId);
           }
@@ -2066,7 +2027,7 @@ namespace ols
         const auto found = gCtx.find(modelId);
         if (found != gCtx.end())
         {
-          touchContext(modelId);
+          touchContext(modelId, chosen);
           return found->second;
         }
         const auto existing = gLoadGuards.find(modelId);
@@ -2084,10 +2045,20 @@ namespace ols
         const auto found = gCtx.find(modelId);
         if (found != gCtx.end())
         {
-          touchContext(modelId);
+          touchContext(modelId, chosen);
           return found->second;
         }
       }
+      std::string roomWhy;
+      {
+        std::lock_guard<std::mutex> lock(gCtxMutex);
+        if (!clearOtherModelsLocked(modelId, roomWhy))
+        {
+          error = roomWhy;
+          return nullptr;
+        }
+      }
+      params.max_vram = nullptr;
       sd_ctx_t *ctx = new_sd_ctx(&params);
       bool freed = false;
       while (!ctx)
@@ -2114,8 +2085,7 @@ namespace ols
         std::lock_guard<std::mutex> lock(gCtxMutex);
         gCtx[modelId] = ctx;
         gCtxCpu[modelId] = cpu;
-        touchContext(modelId);
-        trimOverBudgetLocked(modelId);
+        touchContext(modelId, chosen);
       }
       return ctx;
     }
@@ -3514,6 +3484,10 @@ namespace ols
         // can reach the part it wants rather than the whole clip: a card draws
         // the poster, moves the preview, and offers the clip and the sound to a
         // person. What is absent is said as absent rather than guessed at.
+        const json posterValue = posterWritten ? json(posterName) : json(nullptr);
+        const json previewValue = previewWritten ? json(previewName) : json(nullptr);
+        const json audioValue = trackWritten ? json(trackName) : json(nullptr);
+        const json rawValue = rawWritten ? json(rawName) : json(nullptr);
         json record = {{"id", base},
                        {"file", clipName},
                        {"kind", "video"},
@@ -3528,21 +3502,21 @@ namespace ols
                        {"frames", produced},
                        {"fps", rate},
                        {"duration_ms", static_cast<long long>(produced) * 1000 / rate},
-                       {"poster", posterWritten ? posterName : nullptr},
-                       {"preview", previewWritten ? previewName : nullptr},
-                       {"audio", trackWritten ? trackName : nullptr},
-                       {"raw", rawWritten ? rawName : nullptr},
+                       {"poster", posterValue},
+                       {"preview", previewValue},
+                       {"audio", audioValue},
+                       {"raw", rawValue},
                        {"channels", clipAudio ? static_cast<long long>(clipAudio->channels) : 0},
                        {"sample_rate", clipAudio ? static_cast<long long>(clipAudio->sample_rate) : 0},
                        {"references", json(sources)}};
         writeFileText(gOutputDir + "/" + clipName + ".json", record.dump());
         noteResult(job, "/files/outputs/" + clipName);
         json event = {{"type", "video"},
-                      {"clip", "/files/outputs/" + clipName},
-                      {"poster", posterWritten ? "/files/outputs/" + posterName : nullptr},
-                      {"preview", previewWritten ? "/files/outputs/" + previewName : nullptr},
-                      {"audio", trackWritten ? "/files/outputs/" + trackName : nullptr},
-                      {"raw", rawWritten ? "/files/outputs/" + rawName : nullptr},
+                      {"clip", json("/files/outputs/" + clipName)},
+                      {"poster", posterWritten ? json("/files/outputs/" + posterName) : json(nullptr)},
+                      {"preview", previewWritten ? json("/files/outputs/" + previewName) : json(nullptr)},
+                      {"audio", trackWritten ? json("/files/outputs/" + trackName) : json(nullptr)},
+                      {"raw", rawWritten ? json("/files/outputs/" + rawName) : json(nullptr)},
                       {"frames", produced},
                       {"fps", rate}};
         pushEvent(job, event.dump());
@@ -3731,14 +3705,19 @@ namespace ols
           continue;
         const long long total = row.value("total_ms", 0LL);
         row["mean_ms"] = total / count;
-        // one step of the window is what the whole run costs divided by the steps
-        // it asked for: a page measures the work left in a run with this, and the
-        // division belongs here, where the step count is known, not where a page
-        // would have to guess it.
+        // what one sampling step costs is the whole run over the steps the run
+        // really sampled: a run asked for its steps for every picture it was
+        // asked to make in one call, so the window of one step is the mean
+        // divided by the steps across all of them - dividing by one picture's
+        // steps stated a step four times its cost for a run of four, and a
+        // page's estimate of a batch was wrong by that same factor. the
+        // division belongs here, where both counts are known, not where a page
+        // would have to guess either of them.
         const long long steps = row.value("steps", 0LL);
-        if (steps > 0)
-          row["mean_ms_per_step"] = row["mean_ms"].get<long long>() / steps;
         const long long pictures = row.value("batch", 1LL);
+        const long long samples = steps * (pictures > 0 ? pictures : 1);
+        if (samples > 0)
+          row["mean_ms_per_step"] = row["mean_ms"].get<long long>() / samples;
         if (pictures > 1)
           row["mean_ms_per_picture"] = row["mean_ms"].get<long long>() / pictures;
         row["key"] = entry.first;
