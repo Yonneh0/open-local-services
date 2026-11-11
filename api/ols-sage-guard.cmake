@@ -18,13 +18,40 @@
 # this pair runs changes shape.
 #
 # The guard marks the file it edited, so a reconfigure is a no-op and a moved pin
-# that no longer matches simply goes unedited rather than half-written.
-set(OLS_SAGE_MATH "vendor/stable-diffusion.cpp/ggml/src/ggml-cuda/sageattention/math.cuh")
+# that no longer matches goes unedited rather than half-written - and says so,
+# because a build that dies two files away with words about an identifier gives
+# nobody a reason to look here.
+#
+# The file is looked for where the api folder keeps its vendored engine, then at
+# the two other shapes a tree may take: a guard that finds nothing used to say
+# nothing, and that is what this one did for a directory's worth of difference.
+set(OLS_SAGE_REL "ggml/src/ggml-cuda/sageattention/math.cuh")
 get_filename_component(OLS_ROOT "${CMAKE_CURRENT_LIST_DIR}" DIRECTORY)
-set(OLS_SAGE_MATH "${OLS_ROOT}/${OLS_SAGE_MATH}")
+set(OLS_SAGE_TRIES
+    "${OLS_ROOT}/api/vendor/stable-diffusion.cpp/${OLS_SAGE_REL}"
+    "${OLS_ROOT}/vendor/stable-diffusion.cpp/${OLS_SAGE_REL}")
+set(OLS_SAGE_TRIED_SOURCE "")
+if(CMAKE_SOURCE_DIR)
+  list(APPEND OLS_SAGE_TRIES "${CMAKE_SOURCE_DIR}/${OLS_SAGE_REL}")
+  set(OLS_SAGE_TRIED_SOURCE ", and the project being configured")
+endif()
+set(OLS_SAGE_MATH "")
+foreach(OLS_SAGE_TRY ${OLS_SAGE_TRIES})
+  if(EXISTS "${OLS_SAGE_TRY}")
+    set(OLS_SAGE_MATH "${OLS_SAGE_TRY}")
+    break()
+  endif()
+endforeach()
 set(OLS_SAGE_MARK "OLS rsqrt guard")
 set(OLS_SAGE_OLD "__forceinline__ __device__ float rsqrt(float x) {")
-if(EXISTS "${OLS_SAGE_MATH}")
+if(OLS_SAGE_MATH STREQUAL "")
+  # Named where it is heard: nothing is edited and nothing is failed, but a box
+  # that passes this guard and has no engine tree where any of these say is a box
+  # whose pin moved, and its build will say so in words about an identifier.
+  message(WARNING
+    "no image engine found for the rsqrt guard: nothing was guarded.\n"
+    "Looked under ${OLS_ROOT}/api/vendor, ${OLS_ROOT}/vendor${OLS_SAGE_TRIED_SOURCE}.")
+elseif(EXISTS "${OLS_SAGE_MATH}")
   file(READ "${OLS_SAGE_MATH}" OLS_SAGE_TEXT)
   if(NOT OLS_SAGE_TEXT MATCHES "${OLS_SAGE_MARK}")
     string(FIND "${OLS_SAGE_TEXT}" "${OLS_SAGE_OLD}" OLS_SAGE_AT REVERSE)
@@ -42,6 +69,15 @@ if(EXISTS "${OLS_SAGE_MATH}")
         file(WRITE "${OLS_SAGE_MATH}" "${OLS_SAGE_NEW}")
         message(STATUS "the sageattention rsqrt wrapper is guarded against this box's header state")
       endif()
+    else()
+      # The file stands here, carries no mark, and is not the text this guard
+      # knows: the pin moved under it. Silence here is what makes that expensive -
+      # the build then dies at sage-attn.cu with words about an identifier, on the
+      # card generations where these kernels are compiled at all, and nothing in
+      # that message names the file to look at. Say it where it is heard.
+      message(WARNING
+        "the pinned image engine declares its rsqrt wrapper in words this guard does not know: ${OLS_SAGE_MATH}\n"
+        "It was left as upstream wrote it. Where this box's header maps that name, the sage kernels will not compile - re-read api/ols-sage-guard.cmake against the new pin.")
     endif()
   endif()
 endif()
