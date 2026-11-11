@@ -45,7 +45,6 @@ if(NOT OLS_NO_DEVICE)
   endif()
 else()
   message(STATUS "no device backend in this target: the voice engine carries the cpu backend only")
-  target_compile_definitions(open-local-services PRIVATE OLS_NO_DEVICE_BACKEND)
 endif()
 add_subdirectory("${PROJECT_SOURCE_DIR}/vendor/audio.cpp" "${CMAKE_BINARY_DIR}/audio-engine")
 
@@ -148,10 +147,12 @@ function(ols_write_webui_embedded out_file)
         string(APPEND one_file "  \"${piece}\",\n")
       endwhile()
     else()
-      # The bytes of a picture or an icon become three-digit octal escapes, taken
-      # a whole byte at a time and closed when the bytes run out - a loop that
-      # counts the bytes it has read, never one that counts the bytes left
-      # standing.
+      # The bytes of a picture or an icon become octal escapes, taken a whole
+      # byte at a time and closed when the bytes run out - a loop that counts the
+      # bytes it has read, never one that counts the bytes left standing. A byte
+      # costs four characters of source - a backslash and three digits - so the
+      # ceiling the words above ask for is three and a half thousand bytes, and a
+      # count in bytes that forgot the cost would pass it more than once over.
       file(READ "${src}" page_hex HEX)
       string(LENGTH "${page_hex}" hex_len)
       set(hex_pos 0)
@@ -166,7 +167,7 @@ function(ols_write_webui_embedded out_file)
         string(APPEND accum "\\${oct_a}${oct_b}${oct_c}")
         math(EXPR accum_bytes "${accum_bytes} + 1")
         math(EXPR hex_pos "${hex_pos} + 2")
-        if(accum_bytes GREATER_EQUAL 8000)
+        if(accum_bytes GREATER_EQUAL 3500)
           string(APPEND one_file "  \"${accum}\",\n")
           set(accum "")
           set(accum_bytes 0)
