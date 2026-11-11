@@ -1385,8 +1385,9 @@ namespace ols
 
     if (req.method == "HEAD")
     {
+      // A HEAD asks for the answer a GET would give, without its body: the
+      // length a reader would find there is the point of asking.
       resp.body.clear();
-      resp.headers["Content-Length"] = "0";
     }
 
     std::string out = "HTTP/1.1 " + statusLine(resp.status) + "\r\n";

@@ -81,19 +81,33 @@ static uint16_t toPort(const std::string &text, uint16_t fallback)
   return value == 0 ? fallback : static_cast<uint16_t>(value);
 }
 
+// How many of this machine's threads a run may use. The launcher's own rule is
+// 1..4096, and the config door refuses anything else; this is the same rule for
+// the one way a value still reaches here - a file edited by hand. A figure read
+// off a line of digits that went on being something else ("12 of them, please")
+// is not taken for the number it starts with.
+static const int kThreadCap = 4096;
+
 static int threadCount(const std::string &requested)
 {
   const unsigned int hardware = std::thread::hardware_concurrency();
   int threads = hardware == 0 ? 4 : static_cast<int>(hardware);
   if (threads > 12)
     threads = 12;
-  if (!requested.empty())
+  if (requested.empty())
+    return threads;
+  long long wanted = 0;
+  for (const char c : requested)
   {
-    const int wanted = std::atoi(requested.c_str());
-    if (wanted > 0)
-      threads = wanted;
+    if (c < '0' || c > '9')
+      return threads;
+    wanted = wanted * 10 + (c - '0');
+    if (wanted > kThreadCap)
+      return threads;
   }
-  return threads;
+  if (wanted < 1)
+    return threads;
+  return static_cast<int>(wanted);
 }
 
 static const int kRateLimitDefault = 600;
@@ -275,12 +289,32 @@ static void ensureElevated(int argc, char **argv)
 // How many of this machine's own pictures it keeps on disk. Nothing named leaves
 // zero here, and zero is the module's own default standing; a number named is a
 // room set for that many. The same number is the deepest a gallery page can be
-// asked for, so a reader is never offered a page the machine cannot fill.
-static int keptRenders(const std::string &requested)
+// asked for, so a reader is never offered a page the machine cannot fill - which
+// is why a figure that is not a count of pictures is refused rather than taken:
+// a negative one would leave a room that holds nothing at all.
+static const int kKeptRendersCap = 1000000;
+
+static int keptRenders(const std::string &requested, std::string &refusal)
 {
+  refusal.clear();
   if (requested.empty())
     return 0;
-  return std::atoi(requested.c_str());
+  long long wanted = 0;
+  for (const char c : requested)
+  {
+    if (c < '0' || c > '9')
+    {
+      refusal = "a count of pictures, or nothing at all";
+      return 0;
+    }
+    wanted = wanted * 10 + (c - '0');
+    if (wanted > kKeptRendersCap)
+    {
+      refusal = "at most " + std::to_string(kKeptRendersCap) + " pictures";
+      return 0;
+    }
+  }
+  return static_cast<int>(wanted);
 }
 
 int main(int argc, char **argv)
@@ -352,8 +386,14 @@ int main(int argc, char **argv)
   const int threads = threadCount(configValue(fromFile, "OLS_THREADS", ""));
   // The kept-picture room is sized here rather than left to the module's guess,
   // because what a machine keeps is its own owner's choice; nothing named leaves
-  // the module's own default standing.
-  const int keptMax = keptRenders(configValue(fromFile, "OLS_GALLERY_MAX", ""));
+  // the module's own default standing. A figure that cannot be a count of
+  // pictures is said out loud and left at that default: a server that will not
+  // start over the size of one room is harder to notice than a room that is.
+  std::string keptRefusal;
+  const int keptMax = keptRenders(configValue(fromFile, "OLS_GALLERY_MAX", ""), keptRefusal);
+  if (!keptRefusal.empty())
+    std::cout << "Ignoring OLS_GALLERY_MAX=" << configValue(fromFile, "OLS_GALLERY_MAX", "")
+              << ": it holds " << keptRefusal << "." << std::endl;
 
   ols::imagegen::ImageService images(weightsDir, dataDir + "/outputs", threads, hfToken, civitaiKey,
                                      keptMax);

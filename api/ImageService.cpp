@@ -621,7 +621,12 @@ namespace ols
     static std::map<std::string, bool> gPendingErase;
     static std::mutex gGenerationMutex;
     static std::deque<std::string> gJobOrder;
-    static std::string gEngineError;
+    // Why the last call this thread made was refused. It is read on the thread
+    // that made the call - the door asks for the reason in the breath after the
+    // work was refused - so it stands one per thread: held in one place for the
+    // whole machine, two requests refused at the same moment wrote over each
+    // other's words while a third was still copying them.
+    static thread_local std::string gEngineError;
 
     // where a running job began, in whole milliseconds: the home page measures
     // a run's steps-per-second against how long it took, and whole seconds of a
@@ -1203,7 +1208,6 @@ namespace ols
       const json meta = json::parse(header, nullptr, false);
       if (meta.is_discarded() || !meta.is_object())
         return false;
-      const std::uintmax_t fileSize = std::filesystem::file_size(path);
       uint64_t highest = 0;
       for (const auto &entry : meta.items())
       {
@@ -1215,10 +1219,25 @@ namespace ols
         const json offsets = value.value("data_offsets", json::array());
         if (!offsets.is_array() || offsets.size() < 2)
           continue;
+        // A header that words an offset as anything but a whole number says
+        // nothing about where its bytes end: this asks the question on a thread
+        // serving a page, and an answer that throws takes the whole page down.
+        if (!offsets[1].is_number_unsigned())
+          continue;
         const uint64_t to = offsets[1].get<uint64_t>();
         if (to > highest)
           highest = to;
       }
+      std::error_code measured{};
+      const std::uintmax_t fileSize = std::filesystem::file_size(path, measured);
+      if (measured)
+        return false;
+      // An offset is added to the header's own length before it is weighed
+      // against the bytes on disk, so a figure past any file this machine could
+      // hold is refused here: added to, one that big becomes a small one.
+      constexpr uint64_t kPastAnyFile = 1ull << 48;
+      if (highest > kPastAnyFile)
+        return false;
       return highest + 8ull + headerSize <= static_cast<uint64_t>(fileSize);
     }
 
@@ -1276,7 +1295,10 @@ namespace ols
       // 07 00 00 00 and one byte, no; general.tags by 09 00 00 00, the element tag
       // in the same four bytes and a count of one. Reading any of these as a single
       // byte loses three bytes at every entry and answers about the wrong ones.
-      const uint64_t widths[10] = {1, 1, 2, 2, 4, 4, 4, 1, 0, 0};
+      // The bytes each type is carried in. GGUF's third wording adds three wide
+      // types (uint64, int64, float64), and a value of one of them is a value: a
+      // header that met one used to be answered as a file that was not whole.
+      const uint64_t widths[13] = {1, 1, 2, 2, 4, 4, 4, 1, 0, 0, 8, 8, 8};
       auto readU64 = [&in](uint64_t &v)
       {
         in.read(reinterpret_cast<char *>(&v), 8);
@@ -1328,7 +1350,7 @@ namespace ols
         }
         default:
         {
-          if (type > 9)
+          if (type > 12)
             return false;
           const uint64_t w = widths[type];
           if (w == 0)
@@ -1339,7 +1361,10 @@ namespace ols
         }
       };
       // The metadata keys and the counts of every array are read as they are
-      // written; the values only walk.
+      // written; the values only walk. One of them is read for what it says: the
+      // bytes of a file begin at the end of its header padded up to the alignment
+      // the file names, and a file that names none stands on 32.
+      uint64_t alignment = 32;
       for (uint64_t i = 0; i < nKV; ++i)
       {
         std::string key;
@@ -1348,6 +1373,15 @@ namespace ols
         uint32_t type = 0;
         if (!readTag(type))
           return false;
+        if (key == "general.alignment" && type == 4)
+        {
+          uint32_t stated = 0;
+          in.read(reinterpret_cast<char *>(&stated), 4);
+          if (!in || stated == 0)
+            return false;
+          alignment = stated;
+          continue;
+        }
         if (!skipValue(type))
           return false;
       }
@@ -1387,10 +1421,11 @@ namespace ols
       const auto fileSize = static_cast<uint64_t>(std::filesystem::file_size(path, ec));
       if (ec || headerEnd == 0 || fileSize <= headerEnd)
         return false;
-      // The data block starts where the header's own count of its records ends,
-      // padded up to the alignment the writer uses; this file's bytes sit at the
-      // GGUF default of 32.
-      const uint64_t dataStart = (headerEnd + 31ull) & ~31ull;
+      // The bytes of the file stand after the header, padded up to the alignment
+      // the file itself named above (32 when it named none). Reading a file that
+      // stands on 64 or 418 as one that stands on 32 starts the data early, and a
+      // file truncated at the end still answers as whole.
+      const uint64_t dataStart = (headerEnd + alignment - 1) / alignment * alignment;
       return highestOffset > 0 && dataStart + highestOffset < fileSize;
     }
 
@@ -1478,8 +1513,12 @@ namespace ols
 
     static bool integrityOk(const std::string &path, const json &spec, const std::string &got)
     {
+      std::error_code measured{};
+      const std::uintmax_t onDisk = std::filesystem::file_size(path, measured);
       const long long wantSize = spec.value("size", 0LL);
-      if (wantSize > 0 && wantSize != static_cast<long long>(std::filesystem::file_size(path)))
+      if (measured)
+        return false;
+      if (wantSize > 0 && wantSize != static_cast<long long>(onDisk))
       {
         return false;
       }
@@ -1490,11 +1529,37 @@ namespace ols
         // whichever dialect it keeps: safetensors and GGUF state the same
         // sentence in different shapes, and both of them say a file is whole
         // before a byte of its data is read.
+        //
+        // And a file that keeps neither dialect - a config, a tokenizer, the
+        // vocabulary a pipeline reads beside the weights - has no header to read
+        // that sentence from. Asking it whether it is a whole safetensors file
+        // answers no, and a model with such a side file on its card, from a
+        // source that states a sum only for the big files, then never reads as
+        // installed. What such a file can be asked is its length, and that was
+        // asked above.
         std::ifstream probe{path, std::ios::binary};
-        char magic[4] = {};
-        if (probe && probe.read(magic, 4) && std::string(magic, 4) == "GGUF")
+        if (!probe)
+          return false;
+        char head[9] = {};
+        const std::streamsize headBytes = probe.read(head, 9).gcount();
+        if (headBytes < 4)
+          return false;
+        if (std::string(head, 4) == "GGUF")
           return ggufComplete(path);
-        return safetensorsComplete(path);
+        uint64_t headerSize = 0;
+        if (headBytes == 9)
+        {
+          for (int i = 0; i < 8; ++i)
+            headerSize |= static_cast<uint64_t>(static_cast<unsigned char>(head[i])) << (i * 8);
+        }
+        // The eight bytes that open a safetensors file count its own json header,
+        // which then opens with a brace. A small json file that is not weights at
+        // all reads as one of these only if its first eight bytes say a length and
+        // its ninth is a brace - and then the reading below answers about it
+        // honestly, as about any file whose bytes are shorter than its header.
+        if (headerSize >= 1 && headerSize <= 0x4000000ull && head[8] == '{')
+          return safetensorsComplete(path);
+        return true;
       }
       return got == want;
     }
@@ -2485,12 +2550,19 @@ namespace ols
 
     static std::uint32_t pngCrc(const std::string &bytes)
     {
+      // The sum a PNG chunk stands under, bit at a time, with the reversed
+      // polynomial the format names. A bit set stands for "add the polynomial",
+      // which is what the mask below turns the low bit into.
+      constexpr std::uint32_t polynomial = 0xEDB88320u;
       std::uint32_t crc = 0xFFFFFFFFu;
       for (char c : bytes)
       {
         crc ^= static_cast<unsigned char>(c);
         for (int bit = 0; bit < 8; ++bit)
-          crc = (crc >> 1) ^ (0xEDB88320u & ~(crc & 1u) + 1u);
+        {
+          const std::uint32_t mask = (crc & 1u) ? polynomial : 0u;
+          crc = (crc >> 1) ^ mask;
+        }
       }
       return ~crc;
     }
@@ -2625,12 +2697,21 @@ namespace ols
         return false;
       // Frames are thinned evenly across the clip rather than only every Nth one,
       // so a preview shows the whole of a clip's motion at its own length rather
-      // than its first second.
+      // than its first second. A frame that does not stand at the size the others
+      // do is left out here rather than in the writing below: the count the header
+      // of the animation states is the number of frames it goes on to carry, and a
+      // frame passed over after that number was written leaves the two disagreeing.
       const int shown = count < kPreviewFrames ? count : kPreviewFrames;
       std::vector<int> picks;
       picks.reserve(static_cast<std::size_t>(shown));
       for (int at = 0; at < shown; ++at)
-        picks.push_back(static_cast<int>((static_cast<long long>(at) * count) / shown));
+      {
+        const sd_image_t &frame = frames[static_cast<std::size_t>((static_cast<long long>(at) * count) / shown)];
+        if (frame.width == srcW && frame.height == srcH && frame.data)
+          picks.push_back(static_cast<int>((static_cast<long long>(at) * count) / shown));
+      }
+      if (picks.empty())
+        return false;
 
       std::string out = "\x89PNG\r\n\x1a\n";
       std::string head;
@@ -2643,7 +2724,7 @@ namespace ols
       head.push_back('\x00'); // interlace: none
       pngChunk(out, "IHDR", head);
       std::string control;
-      putBE32(control, static_cast<std::uint32_t>(shown));
+      putBE32(control, static_cast<std::uint32_t>(picks.size()));
       putBE32(control, 0u); // forever
       pngChunk(out, "acTL", control);
 
@@ -2651,8 +2732,6 @@ namespace ols
       for (int index : picks)
       {
         const sd_image_t &frame = frames[index];
-        if (frame.width != srcW || frame.height != srcH)
-          continue;
         // fcTL and fdAT share one ascending sequence with no gaps (the words the
         // format carries: "the sequence numbers in the remaining fcTL and fdAT
         // chunks shall be in ascending order, with no gaps or duplicates"), so the
@@ -2664,10 +2743,10 @@ namespace ols
         putBE32(control2, tall);
         putBE32(control2, 0u);
         putBE32(control2, 0u);
-        control2.push_back('\x00'); // the frame is complete: nothing is kept from
-        control2.push_back('\x01'); // a whole second is divided into previewFps
-        putBE16(control2, static_cast<std::uint16_t>(previewFps));
-        putBE16(control2, 0u);
+        control2.push_back('\x00'); // the frame stands for one part of a second:
+        control2.push_back('\x01'); // a numerator of one over the rate below
+        putBE16(control2, static_cast<std::uint16_t>(previewFps)); // the denominator
+        putBE16(control2, 0u); // dispose: nothing to undo; blend: over, not replace
         pngChunk(out, "fcTL", control2);
         ++sequence;
 
@@ -2702,8 +2781,6 @@ namespace ols
           ++sequence;
         }
       }
-      if (sequence < 1u)
-        return false;
       std::string end;
       pngChunk(out, "IEND", end);
       return writeFileText(path, out);
@@ -2783,12 +2860,48 @@ namespace ols
       const std::uint32_t rowStride = (wide * 3u + 3u) & ~3u;
       const std::uint32_t frameBytes = rawFrames ? rowStride * tall : wide * tall * 3u;
 
+      // Every frame is stood for itself before a single header byte is written. The
+      // headers name how many frames the clip carries, so a frame that cannot be
+      // made has to be known about first: passed over after the headers were
+      // written, it would leave the clip saying one thing and holding another.
+      std::vector<std::string> payloads;
+      payloads.reserve(static_cast<std::size_t>(count));
+      for (int at = 0; at < count; ++at)
+      {
+        const sd_image_t &frame = frames[at];
+        if (frame.width != wide || frame.height != tall || !frame.data)
+          continue;
+        std::string body;
+        if (rawFrames)
+        {
+          appendRawFrameBytes(body, frame, rowStride);
+        }
+        else
+        {
+          std::vector<std::uint8_t> jpeg;
+          if (!stbi_write_jpg_to_func(appendJpegBytes, &jpeg, static_cast<int>(wide),
+                                      static_cast<int>(tall), static_cast<int>(frame.channel),
+                                      frame.data, 90))
+            return false;
+          body.append(reinterpret_cast<const char *>(jpeg.data()), jpeg.size());
+        }
+        payloads.push_back(std::move(body));
+      }
+      if (payloads.empty())
+        return false;
+      const std::uint32_t made = static_cast<std::uint32_t>(payloads.size());
+      // A frame of plain pixels is written as an uncompressed chunk: that is what
+      // tells a reader to take the bytes as they stand rather than hand them to a
+      // codec, which is the whole point of the plain copy.
+      const char *const chunkKind = rawFrames ? "00db" : "00dc";
+      const std::uint32_t chunkFlags = rawFrames ? 0u : 0x10u;
+
       std::string avih;
       putLE32(avih, static_cast<std::uint32_t>(1000000 / fps));
       putLE32(avih, hasAudio ? align * rate : 0u);
       putLE32(avih, 0u);
       putLE32(avih, 0x110u);
-      putLE32(avih, static_cast<std::uint32_t>(count));
+      putLE32(avih, made);
       putLE32(avih, 0u);
       putLE32(avih, hasAudio ? 2u : 1u);
       putLE32(avih, frameBytes);
@@ -2813,7 +2926,7 @@ namespace ols
       putLE32(video, 1u);
       putLE32(video, static_cast<std::uint32_t>(fps));
       putLE32(video, 0u);
-      putLE32(video, static_cast<std::uint32_t>(count));
+      putLE32(video, made);
       putLE32(video, frameBytes);
       putLE32(video, static_cast<std::uint32_t>(-1));
       putLE32(video, 0u);
@@ -2824,9 +2937,10 @@ namespace ols
       std::string videoFormat;
       putLE32(videoFormat, 0x28u);
       putLE32(videoFormat, wide);
-      // plain pixels stand bottom row up, which is how the height is said; JPEG
-      // frames carry their own order.
-      putLE32(videoFormat, rawFrames ? 0u - tall : tall);
+      // Plain pixels are written from the bottom row up, which is what a positive
+      // height says; a JPEG frame carries its own order and its height is the
+      // picture's, not a statement about the rows.
+      putLE32(videoFormat, tall);
       putLE16(videoFormat, 1u);
       putLE16(videoFormat, 24u);
       if (rawFrames)
@@ -2847,27 +2961,31 @@ namespace ols
 
       if (hasAudio)
       {
-        // The sound stream is PCM at the rate the model carried it at. The numbers
-        // are the ones the writers this container is read by stand here: the type is
-        // uncompressed PCM, the rate, the whole count of samples, the ceiling of one
-        // chunk, and the block alignment - the count and the alignment are what let a
-        // reader seek to a moment of a clip without walking it.
+        // The sound stream is PCM at the rate the model carried it at, and each
+        // number stands where the container says it stands. A block is one frame of
+        // sound across every channel, so `align` bytes pass for one sample of the
+        // stream: that is what a reader multiplies to reach a moment of the clip,
+        // and how many of them there are is how long the clip's sound runs. Say the
+        // rate where the rate belongs and the count where the count belongs, and a
+        // reader that asks the header for a length is told one.
         std::string audioHead;
         audioHead += "auds";
-        putLE32(audioHead, 1u);
+        putLE32(audioHead, 0u); // no codec: the words say uncompressed PCM
+        putLE32(audioHead, 0u); // flags
+        putLE16(audioHead, 0u); // priority
+        putLE16(audioHead, 0u); // language
+        putLE32(audioHead, 0u); // nothing stands before the first sample
+        putLE32(audioHead, align); // one block of sound
+        putLE32(audioHead, align * rate); // passes every second
+        putLE32(audioHead, 0u); // starts at the beginning
+        putLE32(audioHead, static_cast<std::uint32_t>(pcm.size() / align)); // runs this long
+        putLE32(audioHead, static_cast<std::uint32_t>(pcm.size())); // one chunk holds it all
+        putLE32(audioHead, static_cast<std::uint32_t>(-1)); // quality: the default
+        putLE32(audioHead, align); // a block is this wide
         putLE16(audioHead, 0u);
         putLE16(audioHead, 0u);
-        putLE32(audioHead, 0u);
-        putLE32(audioHead, 0u);
-        putLE32(audioHead, 1u);
-        putLE32(audioHead, rate);
-        putLE32(audioHead, 0u);
-        putLE32(audioHead, static_cast<std::uint32_t>(pcm.size() / align));
-        putLE32(audioHead, 8192u);
-        putLE32(audioHead, static_cast<std::uint32_t>(-1));
-        putLE32(audioHead, align);
-        putLE32(audioHead, 0u);
-        putLE32(audioHead, 0u);
+        putLE16(audioHead, 0u);
+        putLE16(audioHead, 0u);
 
         std::string audioFormat;
         putLE16(audioFormat, 1u);
@@ -2905,55 +3023,37 @@ namespace ols
         std::uint32_t size;
       };
       std::vector<ClipIndexEntry> index;
-      index.reserve(static_cast<std::size_t>(count) + 1u);
+      index.reserve(static_cast<std::size_t>(made) + 1u);
+      // An index entry names its chunk from where the clip's own bytes begin, not
+      // from where the file begins: the header, the list that carries it, the four
+      // letters naming the list and the four naming its contents all stand before
+      // that. A reader adds an entry to the start of the clip's bytes to reach a
+      // frame, so a number measured from the file walks it past the clip and leaves
+      // it to hunt through the bytes for itself.
+      const std::size_t moviDataAt = moviSizeAt + 8u;
 
-      std::vector<std::uint8_t> jpeg;
-      std::string raw;
-      for (int at = 0; at < count; ++at)
+      for (const std::string &body : payloads)
       {
-        const sd_image_t &frame = frames[at];
-        if (frame.width != wide || frame.height != tall)
-          continue;
-        const char *payload;
-        std::size_t payloadSize = 0u;
-        if (rawFrames)
-        {
-          raw.clear();
-          appendRawFrameBytes(raw, frame, rowStride);
-          payload = raw.data();
-          payloadSize = raw.size();
-        }
-        else
-        {
-          jpeg.clear();
-          if (!stbi_write_jpg_to_func(appendJpegBytes, &jpeg, static_cast<int>(wide),
-                                      static_cast<int>(tall), static_cast<int>(frame.channel),
-                                      frame.data, 90))
-            return false;
-          payload = reinterpret_cast<const char *>(jpeg.data());
-          payloadSize = jpeg.size();
-        }
-        ClipIndexEntry entry{"00dc", 0x10u, static_cast<std::uint32_t>(out.size()),
-                             static_cast<std::uint32_t>(payloadSize)};
+        ClipIndexEntry entry{chunkKind, chunkFlags,
+                             static_cast<std::uint32_t>(out.size() - moviDataAt),
+                             static_cast<std::uint32_t>(body.size())};
         out += entry.kind;
         putLE32(out, entry.size);
-        out.append(payload, payloadSize);
+        out += body;
         index.push_back(entry);
-        if (payloadSize % 2u != 0u)
+        if (entry.size % 2u != 0u)
           out.push_back('\0');
       }
-      if (index.empty())
-        return false;
 
       if (hasAudio)
       {
-        ClipIndexEntry entry{"01wb", 0u, static_cast<std::uint32_t>(out.size()),
+        ClipIndexEntry entry{"01wb", 0u, static_cast<std::uint32_t>(out.size() - moviDataAt),
                              static_cast<std::uint32_t>(pcm.size())};
         out += entry.kind;
         putLE32(out, entry.size);
         out += pcm;
         index.push_back(entry);
-        if (pcm.size() % 2u != 0u)
+        if (entry.size % 2u != 0u)
           out.push_back('\0');
       }
 
