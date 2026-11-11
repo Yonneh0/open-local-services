@@ -1984,7 +1984,7 @@ namespace ols
       const ImageModelDef *def = findModel(modelId);
       if (!def)
       {
-        error = "unknown model";
+        error = "that model is not one this machine knows: " + modelId;
         return nullptr;
       }
       if (cpu)
@@ -3288,11 +3288,22 @@ namespace ols
       std::vector<float> sigmas;
       if (!def->sigmas.empty())
       {
+        // The steps a model asks for stand in this machine's own table, and a
+        // table is a thing hands edit. A row that words one of them as something
+        // other than a number says nothing about the steps it meant; it must not
+        // end the run, nor the server, on a thread that is nobody's to end.
         std::istringstream parts(def->sigmas);
         std::string part;
         while (std::getline(parts, part, ','))
-          sigmas.push_back(std::stof(part));
-        sample.custom_sigmas = sigmas.data();
+        {
+          const char *where = part.c_str();
+          char *stops = nullptr;
+          const float value = std::strtof(where, &stops);
+          if (stops == where)
+            break;
+          sigmas.push_back(value);
+        }
+        sample.custom_sigmas = sigmas.empty() ? nullptr : sigmas.data();
         sample.custom_sigmas_count = static_cast<int>(sigmas.size());
       }
 
@@ -3673,7 +3684,7 @@ namespace ols
         const json probe = json::parse(payloadJson, nullptr, false);
         if (probe.is_discarded())
         {
-          gEngineError = "Invalid request body";
+          gEngineError = "the body of the ask is not one this machine can read";
           return std::string();
         }
         if (wanted.empty())
@@ -4429,7 +4440,7 @@ namespace ols
       {
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "Could not make a place for the kept picture";
+          gRefError = "this machine could not make a place for the kept picture";
         }
         return false;
       }
@@ -4439,7 +4450,7 @@ namespace ols
       {
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "Could not copy the picture into the references folder: " +
+          gRefError = "this machine could not carry the picture into the kept-picture room: " +
                       copyEc.message();
         }
         return false;
@@ -4453,7 +4464,7 @@ namespace ols
       {
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "Could not write the record next to the kept picture";
+          gRefError = "this machine could not write the record that stands beside the kept picture";
         }
         return false;
       }
@@ -4484,7 +4495,7 @@ namespace ols
       {
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "Unsupported format: expected png, jpg, or webp";
+          gRefError = "a kept picture comes as a png, a jpg or a webp";
         }
         return false;
       }
@@ -4493,7 +4504,7 @@ namespace ols
       {
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "No image bytes received";
+          gRefError = "no picture came with the ask";
         }
         return false;
       }
@@ -4517,7 +4528,7 @@ namespace ols
       {
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "Could not write the picture into the references folder";
+          gRefError = "this machine could not write the kept picture";
         }
         return false;
       }
@@ -4531,7 +4542,7 @@ namespace ols
         std::filesystem::remove(file, ec);
         {
           std::lock_guard<std::mutex> lock(gRefErrorMutex);
-          gRefError = "Could not write the record next to the kept picture";
+          gRefError = "this machine could not write the record that stands beside the kept picture";
         }
         return false;
       }

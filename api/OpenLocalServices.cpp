@@ -2184,11 +2184,16 @@ namespace ols
   HttpResponse OpenLocalServices::route(const HttpRequest &req)
   {
     const std::string path = req.path;
-    const bool get = req.method == "GET";
+    // A HEAD is a GET asked without its body, so it is read by the very doors a
+    // GET is read by - a reader that asks only how long an answer is, or whether
+    // it stands at all, is turned away by a door that would have answered it. The
+    // body is taken off the answer afterwards, by the one place that writes an
+    // answer out.
+    const bool get = req.method == "GET" || req.method == "HEAD";
     const bool head = req.method == "HEAD";
     const bool post = req.method == "POST";
     const bool del = req.method == "DELETE";
-    const bool fetch = get || head;
+    const bool fetch = get;
 
     // The one address that stands open to nothing it asks of, so a visit reaches
     // it before anything else can: the bare address of this machine, where a

@@ -535,7 +535,7 @@ namespace ols
     // of the answer are written first, and this process waits for the child until
     // that child stops, which is what keeps the window that started it honest.
     static std::vector<std::string> startWords;
-    static bool pendingHand = false;
+    static std::atomic<bool> pendingHand{false};
 
     void rememberStart(const std::vector<std::string> &args)
     {
@@ -675,12 +675,8 @@ namespace ols
             // out of a message that says it worked.
             said << "asking this machine for leave to do it; ";
             std::string why{};
-#ifdef _WIN32
             if (!raisedScript(createLine, why))
-              said << why << "; ";
-#else
-            said << why << "; ";
-#endif
+              said << (why.empty() ? "this machine would not ask" : why) << "; ";
             const Answer after = ask("schtasks /query /tn " + name + " /fo LIST");
             done = after.code == 0;
             said << (done ? "the entry stands now; " : "the entry does not stand; ");
