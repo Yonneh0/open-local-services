@@ -447,10 +447,10 @@ namespace ols
     // capability question is asked before a session is made, so a task this
     // build has no loader for is never asked for, and says so. Sessions are
     // kept per model per task, so a model asked again for the same kind of work
-    // does not build its weights and graphs again. The engine is asked for the
-    // GPU first; a family that has no GPU implementation of this task says so
-    // itself, and the session is made again on the CPU - the decision comes from
-    // the engine's refusal, never from a guess here.
+    // does not build its weights and graphs again. The engine is asked for this
+    // build's device backend first; when the family has no device implementation
+    // of the task, the engine says so and the session is made again on the CPU.
+    // The choice comes from the engine's answer, not from a guess here.
     static audiocpp_session *sessionFor(const std::string &id,
                                         const std::vector<std::string> &wanted,
                                         const json &sessionValues)
@@ -481,7 +481,11 @@ namespace ols
           optionWords += it.key() + "=" + (it->is_string() ? it->get<std::string>() : it->dump());
         }
       }
-      audiocpp_backend_config gpu = {"vulkan", 0, static_cast<int>(gThreads)};
+      // The device this build runs on, asked in the engine's own words: "best"
+      // resolves to whatever device backend this binary was compiled with (the
+      // CUDA device or the Vulkan device, whichever it carries), so a session is
+      // never tied to a backend named here that the build does not hold.
+      audiocpp_backend_config device = {"best", 0, static_cast<int>(gThreads)};
       audiocpp_backend_config cpu = {"cpu", 0, static_cast<int>(gThreads)};
       for (const auto &want : wanted)
       {
@@ -507,15 +511,15 @@ namespace ols
         }
         audiocpp_session *session = nullptr;
         audiocpp_options *options = makeOptions(sessionValues);
-        if (audiocpp_session_create(model->second, want.c_str(), "offline", &gpu, options, &session) ==
-            AUDIOCPP_OK)
+        if (audiocpp_session_create(model->second, want.c_str(), "offline", &device, options,
+                                    &session) == AUDIOCPP_OK)
         {
           if (options)
             audiocpp_options_free(options);
           gSessions[key] = session;
           return session;
         }
-        gLoadErrors[key + " (gpu)"] = lastEngineError();
+        gLoadErrors[key + " (device)"] = lastEngineError();
         session = nullptr;
         if (audiocpp_session_create(model->second, want.c_str(), "offline", &cpu, options, &session) ==
             AUDIOCPP_OK)
@@ -930,8 +934,32 @@ namespace ols
       return false;
     }
 
-    // The engine's own model specs, in the vendored tree this build came from.
-    static std::string specsDir() { return "vendor/audio.cpp/model_specs"; }
+    // Where the engine's own tree stands. The server runs from the folder that
+    // holds its .env, so in this tree the engine sits under api/. A tree that
+    // was copied or installed without that folder has the engine one step
+    // shallower, beside the binary. The first place that holds the specs wins,
+    // and the answer is kept for the life of the process: this tree does not
+    // move while the server runs.
+    static const std::string &audioTreeDir()
+    {
+      static const std::string tree = []() -> std::string {
+        std::error_code ec;
+        for (const char *place : {"api/vendor/audio.cpp", "vendor/audio.cpp"})
+        {
+          if (std::filesystem::is_directory(std::string(place) + "/model_specs", ec))
+            return std::string(place);
+        }
+        return std::string();
+      }();
+      return tree;
+    }
+
+    // The engine's own model specs, or empty when this machine has no engine tree.
+    static std::string specsDir()
+    {
+      const std::string &tree = audioTreeDir();
+      return tree.empty() ? std::string() : tree + "/model_specs";
+    }
 
     static void buildCards()
     {
@@ -939,10 +967,11 @@ namespace ols
       gNoLoaderFamilies.clear();
       gNoLoaderPackages = 0;
       std::error_code ec;
-      if (!std::filesystem::is_directory(specsDir(), ec))
+      const std::string specs = specsDir();
+      if (specs.empty() || !std::filesystem::is_directory(specs, ec))
         return;
       std::vector<std::string> specFiles;
-      for (const auto &item : std::filesystem::directory_iterator(specsDir(), ec))
+      for (const auto &item : std::filesystem::directory_iterator(specs, ec))
       {
         if (item.path().extension().string() == ".json")
           specFiles.push_back(item.path().string());
@@ -975,7 +1004,14 @@ namespace ols
         for (const auto &want : specArray(spec, "tasks"))
         {
           const char *token = audiocpp_task_from_spec_name(want.c_str());
-          tasks.push_back(token ? std::string(token) : want);
+          const std::string named = token ? std::string(token) : want;
+          if (named.empty())
+            continue;
+          // Several of a family's spec names can stand for one task - ACE-Step
+          // names "music" and "edit", both of which are the engine's "gen" - and
+          // a card names each task once.
+          if (std::find(tasks.begin(), tasks.end(), named) == tasks.end())
+            tasks.push_back(named);
         }
         const json ui = specChild(spec, "ui");
         std::vector<std::string> presets = specArray(ui, "builtin_voices");
@@ -1060,16 +1096,16 @@ namespace ols
           gCardList.push_back(def);
         }
       }
-      // The engine's own bundled models: small assets that ship inside the tree
-      // the engine was built in and that no spec names, so a table built from
-      // specs alone leaves them out - and a family with no card is a task no
-      // page can reach. They are offered at the path the engine keeps them at,
-      // marked with '@' so the weights room is not searched for something a
-      // person was never meant to download.
+      // The engine's bundled models: small models that ship inside the engine
+      // tree and that no spec names, so a table built from the specs alone would
+      // leave them out - and a family with no card is a task no page can reach.
+      // They are offered at their own path, marked with '@' so the weights room
+      // is not searched for something a person was never meant to download.
       {
-        const std::string bundledRoot = "vendor/audio.cpp/assets/framework/models";
+        const std::string tree = audioTreeDir();
+        const std::string bundledRoot = tree.empty() ? std::string() : tree + "/assets/framework/models";
         std::error_code bundledEc;
-        if (std::filesystem::is_directory(bundledRoot, bundledEc))
+        if (!bundledRoot.empty() && std::filesystem::is_directory(bundledRoot, bundledEc))
         {
           std::vector<std::string> bundledNames;
           for (const auto &item : std::filesystem::directory_iterator(bundledRoot, bundledEc))
@@ -2867,7 +2903,6 @@ namespace ols
     }
 
     // A package's own files, put in place: every file its spec names is fetched
-
     // from the repo its own spec names, into that package's place in the weights
     // room. Nothing is invented here - a package that names no repo has nothing
     // to fetch, and the fetch answers which file failed.
@@ -2897,9 +2932,21 @@ namespace ols
         {
           pushEvent(id, json{{"type", "file"}, {"name", named}}.dump());
           const std::string url = "https://huggingface.co/" + def->repo + "/resolve/main/" + named;
-          if (ols::platform::curlFetch(full, url, gHfToken) != 0)
+          if (const int answer = ols::platform::curlFetch(full, url, gHfToken); answer != 0)
           {
-            noteError(id, "the fetch failed for " + named);
+            // What a stopped fetch leaves behind is a file that is not the file,
+            // and nothing here can tell it from the real thing later: a package's
+            // spec names its files but states no size and no sum for them. So the
+            // half-file goes, and the next fetch starts that file again rather
+            // than finding a weight standing there and calling the package whole.
+            std::error_code ignored{};
+            std::filesystem::remove(full, ignored);
+            noteError(id, answer == -1
+                               ? "this machine would not fetch " + named +
+                                     ": its name or its address holds characters a command line "
+                                       "cannot carry"
+                               : "the fetch failed for " + named + " (curl answered " +
+                                     std::to_string(answer) + ")");
             markState(id, ols::kStateError);
             return;
           }

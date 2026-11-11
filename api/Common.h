@@ -1,276 +1,13 @@
 #pragma once
-// The shapes an answer may be asked to come in, and the reading that takes
-// those words out of what a model answered. A model that was asked for one run
-// of words sometimes answers with it split over lines, wrapped in quotes, put
-// behind a bullet, or fenced as a code block: the shape says which of those
-// marks belong to the answer's layout rather than to its words, and this takes
-// them off. An answer asked for as a run of labelled fields may carry the same
-// marks and be wrapped in sentences: only the lines that name a field are
-// fields, and the first line that names one is what stands. A shape that is not
-// one the machine names asks nothing of the answer, and an answer that comes
-// out with no words in it after the reading says so - a shape never invents
-// words a model did not write.
-#ifndef OLS_ANSWER_SHAPE_H
-#define OLS_ANSWER_SHAPE_H
+// The helpers every module of this server shares: reading words out of a json
+// value, base64 decoding, asking what a file is, reading and replacing a text
+// file, the job clock and the state words a job wears, SHA-256 over a file, and
+// where a model's files stand in the weights tree.
 
-#include <string>
-#include <vector>
-
-namespace ols
-{
-  // One run of words, as a prompt is written: one line, with the marks a model
-  // used to lay its answer out taken off.
-  inline constexpr const char *kShapeOnePrompt = "one-prompt";
-
-  // A run of labelled fields: one thing per line, each line naming what it
-  // states.
-  inline constexpr const char *kShapeLabelledFields = "labelled-fields";
-
-  // One tool call: the same labelled reading, read by the words a call is
-  // written in - the thing named on a line of its own, and each argument the
-  // call needs named under "arg".
-  inline constexpr const char *kShapeToolCall = "tool-call";
-
-  namespace
-  {
-    inline bool isSpace(char c)
-    {
-      return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    }
-
-    // How many characters the layout mark at the front of a line is, or nought
-    // when none is there. A bullet, and a number followed by a dot or a
-    // bracket, are marks; a number that is part of a word is not.
-    inline size_t layoutMarkAt(const std::string &line, size_t at)
-    {
-      if (at >= line.size())
-        return 0;
-      const unsigned char c = static_cast<unsigned char>(line[at]);
-      if (c == '-' || c == '*' || c == '+')
-        return at + 1 < line.size() && isSpace(line[at + 1]) ? 2 : 0;
-      // one of the characters the list bullets are written with
-      if (c == 0xE2 && at + 2 < line.size() && static_cast<unsigned char>(line[at + 1]) == 0x80)
-      {
-        const unsigned char last = static_cast<unsigned char>(line[at + 2]);
-        if (last >= 0xA0 && last <= 0xAF)
-          return at + 3 < line.size() && isSpace(line[at + 3]) ? 4 : 0;
-      }
-      size_t digits = 0;
-      while (at + digits < line.size() && line[at + digits] >= '0' && line[at + digits] <= '9')
-        ++digits;
-      if (digits == 0 || digits > 3)
-        return 0;
-      const char after = line[at + digits];
-      if ((after == '.' || after == ')') && at + digits + 1 < line.size() &&
-          isSpace(line[at + digits + 1]))
-        return digits + 2;
-      return 0;
-    }
-
-    // How many characters a quote that opens this line's words is, or nought.
-    inline size_t quoteOpenAt(const std::string &text, size_t at)
-    {
-      if (at >= text.size())
-        return 0;
-      const unsigned char c = static_cast<unsigned char>(text[at]);
-      if (c == '"' || c == '\'')
-        return 1;
-      if (c != 0xE2 || at + 2 >= text.size())
-        return 0;
-      const unsigned char mid = static_cast<unsigned char>(text[at + 1]);
-      const unsigned char last = static_cast<unsigned char>(text[at + 2]);
-      if ((mid == 0x9C || mid == 0x80) &&
-          (last == 0x98 || last == 0x99 || last == 0x9C || last == 0x9D))
-        return 3;
-      return 0;
-    }
-
-    // How many characters a quote that closes at this place is, or nought.
-    inline size_t quoteCloseBefore(const std::string &text, size_t end)
-    {
-      if (end == 0)
-        return 0;
-      const unsigned char c = static_cast<unsigned char>(text[end - 1]);
-      if (c == '"' || c == '\'')
-        return 1;
-      if (c != 0x9D && c != 0x99)
-        return 0;
-      if (end < 3)
-        return 0;
-      const unsigned char mid = static_cast<unsigned char>(text[end - 2]);
-      const unsigned char first = static_cast<unsigned char>(text[end - 3]);
-      if (first == 0xE2 && (mid == 0x9C || mid == 0x80))
-        return 3;
-      return 0;
-    }
-
-    // The words of one line with the marks a model used to lay it out taken
-    // off: a bullet or a number that leads the line, quotes wrapped around the
-    // whole line, and runs of blanks inside it. A fence line is layout, so it
-    // leaves no words. Words are returned in place, with nothing added.
-    inline std::string cleanLine(const std::string &line)
-    {
-      size_t lead = 0;
-      while (lead < line.size() && isSpace(line[lead]))
-        ++lead;
-      if (lead + 3 <= line.size() && line[lead] == '`' && line[lead + 1] == '`' && line[lead + 2] == '`')
-        return std::string();
-      lead += layoutMarkAt(line, lead);
-      size_t tail = line.size();
-      while (tail > lead && isSpace(line[tail - 1]))
-        --tail;
-      const size_t open = quoteOpenAt(line, lead);
-      const size_t close = quoteCloseBefore(line, tail);
-      if (open > 0 && close > 0 && tail - lead > open + close)
-      {
-        lead += open;
-        tail -= close;
-      }
-      std::string words;
-      bool pending = false;
-      for (size_t i = lead; i < tail; ++i)
-      {
-        if (!isSpace(line[i]))
-        {
-          if (pending && !words.empty())
-            words += ' ';
-          pending = false;
-          words.push_back(line[i]);
-          continue;
-        }
-        pending = !words.empty();
-      }
-      return words;
-    }
-
-    // A line that names a field, taken apart: the name it states in lower case
-    // with one blank between its words, and the words after it. A name is a
-    // short run of letters; nothing else is a field.
-    inline bool fieldAtLine(const std::string &line, std::string &name, std::string &value)
-    {
-      size_t at = 0;
-      while (at < line.size() && isSpace(line[at]))
-        ++at;
-      std::string letters;
-      bool pendingBlank = false;
-      while (at < line.size())
-      {
-        const char c = line[at];
-        if (c >= 'A' && c <= 'Z')
-        {
-          if (pendingBlank && !letters.empty())
-            letters.push_back(' ');
-          pendingBlank = false;
-          letters.push_back(static_cast<char>(c - 'A' + 'a'));
-          ++at;
-          continue;
-        }
-        if (c >= 'a' && c <= 'z')
-        {
-          if (pendingBlank && !letters.empty())
-            letters.push_back(' ');
-          pendingBlank = false;
-          letters.push_back(c);
-          ++at;
-          continue;
-        }
-        if (c == ' ' || c == '\t')
-        {
-          pendingBlank = !letters.empty();
-          ++at;
-          continue;
-        }
-        break;
-      }
-      if (letters.empty() || letters.size() > 24)
-        return false;
-      if (at >= line.size() || line[at] != ':')
-        return false;
-      ++at;
-      std::string rest;
-      while (at < line.size())
-      {
-        rest.push_back(line[at]);
-        ++at;
-      }
-      // A field asked for with nothing after its name is a field the model
-      // answered as empty, which is a fact and not a missing field. The blanks a
-      // model put between its field's name and its words are layout, so the words
-      // are returned in place with those taken off; the reading that asks whether
-      // a value was stated reads the same words every field carries.
-      name = letters;
-      size_t from = 0;
-      while (from < rest.size() && isSpace(rest[from]))
-        ++from;
-      size_t to = rest.size();
-      while (to > from && isSpace(rest[to - 1]))
-        --to;
-      value = rest.substr(from, to - from);
-      return true;
-    }
-  } // unnamed
-
-  // What the shape asked for, out of what a model answered.
-  inline std::string applyShape(const std::string &shape, const std::string &text)
-  {
-    if (shape != kShapeOnePrompt && shape != kShapeLabelledFields && shape != kShapeToolCall)
-      return text;
-    std::string joined;
-    std::string out;
-    std::vector<std::string> seen;
-    size_t at = 0;
-    while (at < text.size())
-    {
-      const size_t lineEnd = text.find('\n', at);
-      const size_t stop = lineEnd == std::string::npos ? text.size() : lineEnd;
-      const std::string words = cleanLine(text.substr(at, stop - at));
-      at = lineEnd == std::string::npos ? text.size() : lineEnd + 1;
-      if (words.empty())
-        continue;
-      if (shape == kShapeOnePrompt)
-      {
-        if (!joined.empty())
-          joined += ' ';
-        joined += words;
-        continue;
-      }
-      std::string name;
-      std::string value;
-      if (!fieldAtLine(words, name, value))
-        continue;
-      bool already = false;
-      for (const std::string &held : seen)
-        if (held == name)
-          already = true;
-      if (already)
-        continue;
-      seen.push_back(name);
-      size_t from = 0;
-      while (from < value.size() && isSpace(value[from]))
-        ++from;
-      size_t to = value.size();
-      while (to > from && isSpace(value[to - 1]))
-        --to;
-      if (!out.empty())
-        out += '\n';
-      out += name + ": " + value.substr(from, to - from);
-    }
-    if (shape == kShapeOnePrompt)
-      return joined;
-    return out;
-  }
-} // namespace ols
-
-#endif // OLS_ANSWER_SHAPE_H
-#pragma once
-// The words taken out of an answer or a request. A page's own words and an
-// engine's answer are read the same way by every module: a stated string comes
-// out of a json value only when that value really holds words - a value of
-// another shape reads as nothing, since a read runs on its own thread and a
-// throw there would end the whole server - and a model's answer is handed over
-// without the blanks it padded its own lines with.
-#ifndef OLS_ANSWERWORDS_H
-#define OLS_ANSWERWORDS_H
+// Reading words out of a json value. A page's words and an engine's answer are
+// read the same way everywhere: a string comes out only when the value really
+// holds words, because these reads run on the thread serving a request and a
+// thrown json error there would end the whole server.
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -296,13 +33,6 @@ namespace ols
     return at.at(key).get<long long>();
   }
 
-  // Is that whole number stated at all? A record keeps a count only when
-  // something stated it; a nought never stands in for one.
-  inline bool statedCountPresent(const nlohmann::json &at, const char *key)
-  {
-    return at.is_object() && at.contains(key) && at.at(key).is_number_integer();
-  }
-
   // A count that may carry a fraction - seconds of speech, a rate.
   inline double statedMeasure(const nlohmann::json &at, const char *key)
   {
@@ -311,75 +41,13 @@ namespace ols
     return at.at(key).get<double>();
   }
 
-  // Is this one of the characters that pad the edges of a line? The blanks inside
-  // a word are its own, so they are not named here.
-  inline bool isPaddingSpace(char c)
-  {
-    return c == ' ' || c == '\n' || c == '\t' || c == '\r';
-  }
-
-  // A model pads the ends of its own lines with blanks, whole runs of them,
-  // including the blank characters that are not the ordinary space; the line
-  // breaks a model put in its answer are its own and kept, while the padding at
-  // their edges is not part of the words.
-  inline std::string trimLineEdges(const std::string &text)
-  {
-    auto blankAt = [](const std::string &s, size_t i) -> size_t
-    {
-      if (i >= s.size())
-        return 0;
-      const unsigned char c = (unsigned char)s[i];
-      if (c == ' ' || c == '\t')
-        return 1;
-      if (c == 0xC2 && i + 1 < s.size() && (unsigned char)s[i + 1] == 0xA0)
-        return 2;
-      if (c == 0xE2 && i + 2 < s.size() && (unsigned char)s[i + 1] == 0x80 &&
-          (unsigned char)s[i + 2] >= 0x89 && (unsigned char)s[i + 2] <= 0x8F)
-        return 3;
-      return 0;
-    };
-    std::string out;
-    out.reserve(text.size());
-    for (size_t i = 0; i < text.size();)
-    {
-      const size_t run = blankAt(text, i);
-      if (run == 0)
-      {
-        out.push_back(text[i]);
-        ++i;
-        continue;
-      }
-      size_t j = i;
-      while (j < text.size())
-      {
-        const size_t next = blankAt(text, j);
-        if (next == 0)
-          break;
-        j += next;
-      }
-      const bool opensLine = out.empty() || out.back() == '\n' || out.back() == '\r';
-      const bool endsLine = j == text.size() || text[j] == '\n' || text[j] == '\r';
-      if (opensLine || endsLine)
-      {
-        i = j;
-        continue;
-      }
-      out.append(text.begin() + i, text.begin() + j);
-      i = j;
-    }
-    return out;
-  }
 } // namespace ols
 
-#endif // OLS_ANSWERWORDS_H
-#pragma once
 // Base64 decoding for two paths: the voice module reads audio a page sends as
 // base64, and the image studio reads back a picture the browser kept (a dragged
 // file or a pasted screenshot), which has no path on this machine and arrives
 // as bytes only. Characters outside the alphabet are skipped, so input broken
 // over lines still decodes.
-#ifndef OLS_BASE64_H
-#define OLS_BASE64_H
 
 #include <string>
 
@@ -439,308 +107,9 @@ namespace ols
   }
 }
 
-#endif // OLS_BASE64_H
-#pragma once
-// The words a model names its own work with: one string of pieces separated by
-// single spaces, as the model table carries it. The pages are shown that list as
-// the model names it, and a door asks it whether one piece names the work it is
-// about - a piece counts only whole, so a short piece cannot answer for a longer
-// one that begins with it.
-#ifndef OLS_CAPABILITY_WORDS_H
-#define OLS_CAPABILITY_WORDS_H
-
-#include <nlohmann/json.hpp>
-#include <string>
-
-namespace ols
-{
-  // Is this piece named whole among the words?
-  inline bool hasWord(const std::string &words, const char *want)
-  {
-    const std::string needle(want);
-    size_t at = 0;
-    while (at < words.size())
-    {
-      const size_t space = words.find(' ', at);
-      const size_t end = space == std::string::npos ? words.size() : space;
-      if (end - at == needle.size() && words.compare(at, needle.size(), needle) == 0)
-        return true;
-      at = end + 1;
-    }
-    return false;
-  }
-
-  // The pieces as a list, in the order the model names them.
-  inline nlohmann::json wordsAsList(const std::string &words)
-  {
-    nlohmann::json out = nlohmann::json::array();
-    size_t at = 0;
-    while (at < words.size())
-    {
-      const size_t space = words.find(' ', at);
-      const size_t end = space == std::string::npos ? words.size() : space;
-      if (end > at)
-        out.push_back(words.substr(at, end - at));
-      at = end + 1;
-    }
-    return out;
-  }
-} // namespace ols
-
-#endif // OLS_CAPABILITY_WORDS_H
-#pragma once
-// What a page asks of an engine process this machine opened on its own port:
-// whether the engine is awake, and one request answered back in full. The
-// engines in this tree frame an answer with chunked pieces, though a promised
-// length is read as well, so one answer cannot be read differently by one
-// module than by another.
-#ifndef OLS_ENGINESOCKET_H
-#define OLS_ENGINESOCKET_H
-
-#include <cctype>
-#include <chrono>
-#include <cstdint>
-#include <iomanip>
-#include <mutex>
-#include <random>
-#include <sstream>
-#include <string>
-#include <thread>
-
-#include "Platform.h"
-
-namespace ols
-{
-  // One fresh key shared by every engine this server opens, for when the server
-  // itself runs without a key: the pages show it so other tools can reach an
-  // engine directly, and an engine only ever answers with the key it was
-  // started with. Made once, behind a lock, because engines are opened from
-  // more than one thread.
-  inline std::string sharedEngineKey()
-  {
-    static std::mutex keyMutex;
-    static std::string fresh;
-    std::lock_guard<std::mutex> lock(keyMutex);
-    if (fresh.empty())
-    {
-      std::ostringstream name;
-      std::random_device seed;
-      name << "local-" << std::hex << std::setw(8) << std::setfill('0')
-           << static_cast<uint32_t>(seed()) << std::setw(8) << std::setfill('0')
-           << static_cast<uint32_t>(seed());
-      fresh = name.str();
-    }
-    return fresh;
-  }
-
-  // Plain socket check of an engine: /health needs no key, and the answer text
-  // says whether the server on that port is awake.
-  inline bool engineHealthOn(uint16_t port)
-  {
-    if (!ols::platform::initSockets())
-      return false;
-    const auto address = ols::platform::endpointFor(port, true);
-    const auto sock = ols::platform::newStreamSocket();
-    if (sock == ols::platform::kBadSocket)
-      return false;
-    if (ols::platform::connectSocket(sock, address) != 0)
-    {
-      ols::platform::discardSocket(sock);
-      return false;
-    }
-    ols::platform::setReadTimeout(sock, 2000);
-    static const char request[] = "GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    if (ols::platform::sendBytes(sock, request, static_cast<int>(sizeof(request) - 1), 0) <= 0)
-    {
-      ols::platform::discardSocket(sock);
-      return false;
-    }
-    char buffer[512] = {};
-    int got = 0;
-    for (int tries = 0; tries < 4 && got < static_cast<int>(sizeof(buffer)) - 1; ++tries)
-    {
-      const int n = ols::platform::receiveBytes(sock, buffer + got,
-                                                static_cast<int>(sizeof(buffer)) - 1 - got, 0);
-      if (n <= 0)
-        break;
-      got += n;
-      buffer[got] = '\0';
-      if (std::string(buffer, static_cast<size_t>(got)).find("\"status\":\"ok\"") != std::string::npos)
-        break;
-    }
-    ols::platform::closeSocket(sock);
-    return std::string(buffer, static_cast<size_t>(got)).find("\"status\":\"ok\"") != std::string::npos;
-  }
-
-  // One request to an engine with a readable answer: a fresh socket to the port,
-  // carrying the key the engine was started with. Only the body of a complete
-  // answer is returned, so callers can read the engine's own timings.
-  inline bool engineAskWithKey(uint16_t port, const std::string &key,
-                               const std::string &method, const std::string &path,
-                               const std::string &body, std::string &answer,
-                               int timeoutMs)
-  {
-    if (!ols::platform::initSockets())
-      return false;
-    const auto address = ols::platform::endpointFor(port, true);
-    const auto sock = ols::platform::newStreamSocket();
-    if (sock == ols::platform::kBadSocket)
-      return false;
-    if (ols::platform::connectSocket(sock, address) != 0)
-    {
-      ols::platform::discardSocket(sock);
-      return false;
-    }
-    std::string request = method + " " + path + " HTTP/1.1\r\n";
-    request += "Host: localhost\r\n";
-    if (!key.empty())
-      request += "X-Api-Key: " + key + "\r\n";
-    if (method == "POST")
-    {
-      request += "Content-Type: application/json\r\n";
-      request += "Content-Length: " + std::to_string(body.size()) + "\r\n";
-    }
-    request += "\r\n";
-    request += body;
-    // the words of a question can be pages long, so the write is given the same
-    // patience as the read: a full request would otherwise come back as a
-    // zero-length write, which is not a refusal - it is the socket saying it has
-    // not taken the bytes yet.
-    ols::platform::setWriteTimeout(sock, timeoutMs);
-    size_t sentSoFar = 0;
-    int sendTries = 0;
-    while (sentSoFar < request.size())
-    {
-      const size_t rest = request.size() - sentSoFar;
-      const int chunk = rest > 1024u ? 1024 : static_cast<int>(rest);
-      const int sent = ols::platform::sendBytes(sock, request.c_str() + sentSoFar, chunk, 0);
-      if (sent > 0)
-      {
-        sentSoFar += static_cast<size_t>(sent);
-        sendTries = 0;
-        continue;
-      }
-      if (++sendTries > 400)
-      {
-        ols::platform::discardSocket(sock);
-        return false;
-      }
-    }
-    // a slow answer is not a closed connection: these engines send nothing until
-    // the whole answer is ready, so the ask waits for as long as its own door
-    // allows and gives up only past that limit.
-    ols::platform::setReadTimeout(sock, 2000);
-    const auto askDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-    std::string all;
-    char buffer[8192];
-    while (all.size() < 4u * 1024u * 1024u)
-    {
-      const int got = ols::platform::receiveBytes(sock, buffer, static_cast<int>(sizeof(buffer)), 0);
-      if (got <= 0)
-      {
-        if (std::chrono::steady_clock::now() >= askDeadline)
-          break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        continue;
-      }
-      all.append(buffer, static_cast<size_t>(got));
-      const size_t head = all.find("\r\n\r\n");
-      if (head == std::string::npos)
-        continue;
-      // a lowercase copy of the headers answers one question: how the body is
-      // framed - a promised length, or chunked pieces.
-      std::string headers = all.substr(0, head);
-      for (char &c : headers)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-      const size_t atLength = headers.find("content-length:");
-      const bool chunked = headers.find("transfer-encoding: chunked") != std::string::npos;
-      if (chunked)
-      {
-        // walk the pieces: a size line in hex, its bytes, and the end at the
-        // zero-size piece; a piece not fully arrived waits for more.
-        std::string body2;
-        size_t at = head + 4;
-        bool complete = false;
-        bool broken = false;
-        while (!complete)
-        {
-          const size_t lineEnd = all.find("\r\n", at);
-          if (lineEnd == std::string::npos)
-            break;
-          size_t from = at;
-          unsigned long long size = 0;
-          bool digits = false;
-          while (from < lineEnd && std::isxdigit(static_cast<unsigned char>(all[from])))
-          {
-            const unsigned char c = static_cast<unsigned char>(
-                std::tolower(static_cast<unsigned char>(all[from])));
-            const unsigned value = std::isdigit(c) ? static_cast<unsigned>(c - '0')
-                                                   : static_cast<unsigned>(c - 'a' + 10);
-            size = size * 16ull + value;
-            digits = true;
-            ++from;
-          }
-          if (!digits || from != lineEnd)
-          {
-            broken = true;
-            break;
-          }
-          const size_t dataStart = lineEnd + 2;
-          if (size == 0)
-          {
-            complete = true;
-            break;
-          }
-          if (dataStart + static_cast<size_t>(size) + 2 > all.size())
-            break;
-          body2.append(all.data() + dataStart, static_cast<size_t>(size));
-          at = dataStart + static_cast<size_t>(size) + 2;
-        }
-        if (broken)
-          break;
-        if (complete)
-        {
-          answer = body2;
-          break;
-        }
-        continue;
-      }
-      if (atLength == std::string::npos || atLength > head)
-        break;
-      long long promised = -1;
-      {
-        size_t from = atLength + 15;
-        while (from < all.size() && all[from] == ' ')
-          ++from;
-        size_t digitCount = 0;
-        while (from + digitCount < all.size() &&
-               std::isdigit(static_cast<unsigned char>(all[from + digitCount])))
-          ++digitCount;
-        if (digitCount > 0)
-          promised = std::stoll(all.substr(from, digitCount));
-      }
-      if (promised < 0)
-        break;
-      if (all.size() >= head + 4 + static_cast<size_t>(promised))
-      {
-        answer = all.substr(head + 4, static_cast<size_t>(promised));
-        break;
-      }
-    }
-    ols::platform::closeSocket(sock);
-    if (!answer.empty())
-      return answer.size() > 2;
-    return false;
-  }
-} // namespace ols
-
-#endif // OLS_ENGINESOCKET_H
-#pragma once
 // What a file this machine holds is asked: whether an ordinary file is there,
 // and how many bytes it holds. Every module reads these the same way, so a
 // model's files cannot be seen as present on one page and missing on another.
-#ifndef OLS_FILEPROBE_H
-#define OLS_FILEPROBE_H
 
 #include <filesystem>
 #include <system_error>
@@ -767,15 +136,11 @@ namespace ols
   }
 } // namespace ols
 
-#endif // OLS_FILEPROBE_H
-#pragma once
 // Read a small text file, and replace one atomically: the server keeps its own
 // records (jobs, sessions, prefs) in plain text files beside the
 // things they describe. Writing goes through a temporary file and a rename, so
 // the final name is settled in one move and a record written by one user stays
 // replaceable while another process is serving.
-#ifndef OLS_FILETEXT_H
-#define OLS_FILETEXT_H
 
 #include <atomic>
 #include <filesystem>
@@ -840,15 +205,11 @@ namespace ols
   }
 }
 
-#endif // OLS_FILETEXT_H
-#pragma once
 // The clock readings and the name a job record is kept under, shared by every
 // service: a duration is measured on the steady clock, a record's moment is
 // stated in whole seconds, and a job's name carries its kind, a part drawn from
 // the clock, and a tag so two jobs asked for in the same moment still get
 // different names.
-#ifndef OLS_JOB_CLOCK_H
-#define OLS_JOB_CLOCK_H
 
 #include <chrono>
 #include <cstdint>
@@ -899,14 +260,10 @@ namespace ols
   }
 } // namespace ols
 
-#endif // OLS_JOB_CLOCK_H
-#pragma once
 // What the machine keeps of the jobs it ran: a job's record lives under one
 // name in several maps, so when it runs past what it keeps, the oldest name
 // goes out of every one of them at once - a record left in one map while its
 // rest stands in another would be a lie a page could read.
-#ifndef OLS_JOBLEDGER_H
-#define OLS_JOBLEDGER_H
 
 #include <cstddef>
 #include <deque>
@@ -935,16 +292,12 @@ namespace ols
   }
 } // namespace ols
 
-#endif // OLS_JOBLEDGER_H
-#pragma once
 // The words a job wears for how far it has got. They are stated once here: no
 // module spells one of them differently, the pages draw only what the machine
 // writes, and the questions asked of a state - is it still working, has it
 // nowhere further to go - are asked the same way everywhere. A record that
 // names no state names nothing, and nothing stated is neither standing nor
 // ended.
-#ifndef OLS_JOBSTATE_H
-#define OLS_JOBSTATE_H
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -986,8 +339,6 @@ namespace ols
   }
 } // namespace ols
 
-#endif // OLS_JOBSTATE_H
-#pragma once
 // The one sum this tree uses: SHA-256, written once here and read the same way
 // by every module that checks a file's bytes. The words a file is checked
 // against are its card's own sum (a repository states an LFS oid, which is a
@@ -1000,8 +351,6 @@ namespace ols
 // the file being read again. Both shapes come out of one pass over the file,
 // because these are files of a hundred-plus gigabytes and a second read of one
 // costs real time.
-#ifndef OLS_SHA256_H
-#define OLS_SHA256_H
 
 #include <cmath>
 #include <cstdint>
@@ -1174,27 +523,6 @@ namespace ols
     }
   };
 
-  // The sum of a file as it stands whole. False when the file cannot be read.
-  inline bool sha256OfFile(const std::string &path, std::string &hex)
-  {
-    std::ifstream in{path, std::ios::binary};
-    if (!in)
-      return false;
-    Sha256 sum;
-    std::vector<uint8_t> buffer(65536);
-    while (true)
-    {
-      const std::streamsize got =
-          in.rdbuf()->sgetn(reinterpret_cast<char *>(buffer.data()),
-                            static_cast<std::streamsize>(buffer.size()));
-      if (got <= 0)
-        break;
-      sum.feed(buffer.data(), static_cast<size_t>(got));
-    }
-    hex = sum.finalHex();
-    return true;
-  }
-
   // One pass over a file, answering both shapes at once: its whole sum, and the
   // sum of each fixed chunk of it in file order. The last chunk is whatever is
   // left over, so a table describes a file exactly whatever its length. False
@@ -1248,87 +576,9 @@ namespace ols
   }
 } // namespace ols
 
-#endif // OLS_SHA256_H
-#pragma once
-// The words a tool call is written in, and the reading that takes those words
-// apart. The standing model is asked to name one thing the machine can do,
-// called by the name the machine lists it under, and to state each thing that
-// call needs on its own line, naming it. The answer may still carry the marks a
-// model uses to lay words out - bullets, quotes, a fence, or a sentence before
-// the call - so the lines that name nothing are layout, and the first line that
-// names a field is what stands. A call whose name the machine does not list is
-// answered as it was written: a reading never guesses at a name, and a name is
-// never corrected by inventing one.
-#ifndef OLS_TOOL_CALL_H
-#define OLS_TOOL_CALL_H
-
-#include <string>
-#include <vector>
-
-namespace ols
-{
-  // A call, as the shape left it.
-  struct ToolCall
-  {
-    // The name the answer called, or empty when none of its lines named one.
-    std::string name;
-    // The arguments it stated, in the order the answer wrote them. The same
-    // name twice keeps both: which one a machine uses is its own choice, and
-    // an answer that states one thing twice is a fact a page can see.
-    std::vector<std::pair<std::string, std::string>> args;
-  };
-
-  // One call out of an answer, taken apart.
-  inline ToolCall readToolCall(const std::string &block)
-  {
-    ToolCall call;
-    size_t at = 0;
-    while (at <= block.size())
-    {
-      const size_t lineEnd = block.find('\n', at);
-      const size_t stop = lineEnd == std::string::npos ? block.size() : lineEnd;
-      const std::string line = block.substr(at, stop - at);
-      at = lineEnd == std::string::npos ? block.size() + 1 : lineEnd + 1;
-      std::string found;
-      std::string value;
-      if (!ols::fieldAtLine(line, found, value))
-        continue;
-      size_t from = 0;
-      while (from < value.size() && isSpace(value[from]))
-        ++from;
-      size_t to = value.size();
-      while (to > from && isSpace(value[to - 1]))
-        --to;
-      value = value.substr(from, to - from);
-      if (found == "tool")
-      {
-        if (call.name.empty())
-          call.name = value;
-        continue;
-      }
-      // the arguments are named under "arg", with the argument's own name after
-      // it: "arg model", "arg width", and so on.
-      if (found.size() > 4 && found.compare(0, 4, "arg ") == 0)
-      {
-        const std::string argName = found.substr(4);
-        if (!argName.empty())
-          call.args.push_back({argName, value});
-        continue;
-      }
-      // a line that names something else is words the model wrote around the
-      // call, kept out of it.
-    }
-    return call;
-  }
-} // namespace ols
-
-#endif // OLS_TOOL_CALL_H
-#pragma once
 // A model's own files in the weights tree: the tree, the model's name, and the
 // file. Every module reads that shape the same way, so a model's files cannot
 // stand in one place for one page and in another for the next.
-#ifndef OLS_WEIGHT_PATHS_H
-#define OLS_WEIGHT_PATHS_H
 
 #include <initializer_list>
 #include <string>
@@ -1365,16 +615,4 @@ namespace ols
     return out;
   }
 
-  // Are all of a model's files on this machine?
-  inline bool filesAllPresent(const std::vector<std::string> &files)
-  {
-    for (const auto &file : files)
-    {
-      if (!fileExists(file))
-        return false;
-    }
-    return true;
-  }
 } // namespace ols
-
-#endif // OLS_WEIGHT_PATHS_H

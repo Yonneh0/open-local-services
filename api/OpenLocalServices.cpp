@@ -50,6 +50,16 @@ namespace ols
       return diff == 0;
     }
 
+    // Does any credential this request handed open the door? A request may hand
+    // the same key in two shapes at once, and any one of them is enough.
+    bool credentialsMatch(const std::vector<std::string> &given, const std::string &wanted)
+    {
+      for (const std::string &offered : given)
+        if (keysMatch(offered, wanted))
+          return true;
+      return false;
+    }
+
     bool apiPortInUse(uint16_t port)
     {
       if (port == 0)
@@ -142,9 +152,6 @@ namespace ols
         // the manager's to take. Left alone means it asks; off is the one word
         // that declines, and the door's own words then name the level it stands at.
         {"OLS_ELEVATE", false, false},
-        // The configured port is read only at startup. It defaults to 8765 when
-        // unset, and a requested port must be free.
-
     };
 
     std::string configTrim(const std::string &text)
@@ -286,8 +293,11 @@ namespace ols
           if (number > 1000000ull)
             return false;
         }
-        return number >= 0;
+        return true;
       }
+      // Threads are whole workers, so whole numbers only, and never more than the
+      // launcher itself will hand over: a figure past that is a slip of the key,
+      // and by the time it reaches the engines it has already become nonsense.
       if (key == "OLS_THREADS")
       {
         if (value.empty())
@@ -298,8 +308,8 @@ namespace ols
           if (c < '0' || c > '9')
             return false;
           number = number * 10ull + static_cast<unsigned long long>(c - '0');
-          if (number > 4000000000000ull)
-            number = 4000000000000ull;
+          if (number > 4096ull)
+            return false;
         }
         return number > 0;
       }
@@ -330,16 +340,16 @@ namespace ols
         if (!seen)
           lines.push_back(change.first + "=" + change.second);
       }
-      std::ofstream out{".env"};
-      if (!out)
-      {
-        error = "could not open .env to write it";
-        return false;
-      }
+      // The whole file goes over at once, through a temporary name and a rename:
+      // .env holds the keys this server runs on, and a write that died halfway
+      // would leave a person with half a config or none.
+      std::string text;
       for (const auto &entry : lines)
-        out << entry << "\n";
-      out.flush();
-      if (!out)
+      {
+        text += entry;
+        text.push_back('\n');
+      }
+      if (!ols::writeFileText(".env", text))
       {
         error = "could not write .env";
         return false;
@@ -490,7 +500,10 @@ namespace ols
           size_t valueEnd = jar.find(';', nameEnd + 1);
           if (valueEnd == std::string::npos)
             valueEnd = jar.size();
-          if (field == "ols-key")
+          // A field written without its = is nothing, and the text after it
+          // belongs to the next field: only a name that was given a value reads
+          // one.
+          if (field == "ols-key" && nameEnd < jar.size() && jar[nameEnd] == '=')
             given.push_back(decodeText(jar.substr(nameEnd + 1, valueEnd - nameEnd - 1), false));
           at = valueEnd + 1;
         }
@@ -552,6 +565,30 @@ namespace ols
         }
       }
       return out;
+    }
+
+    // The room a refused visit says it came from, kept to what a room's name can
+    // be: one page's name, with no folders and no address in it. The door writes
+    // this word back into its own page, into a link and into a refresh, so a name
+    // holding a quote would have written part of that page itself, and a name
+    // holding a host would have carried the visit off this machine.
+    std::string onePageName(const std::string &room)
+    {
+      size_t from = 0;
+      for (size_t at = 0; at < room.size(); ++at)
+        if (room[at] == '/' || room[at] == '\\')
+          from = at + 1;
+      std::string name;
+      for (size_t at = from; at < room.size(); ++at)
+      {
+        const char c = room[at];
+        const bool whole = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                           (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+        if (whole)
+          name.push_back(c);
+      }
+      const bool nothing = name.empty() || name.find_first_not_of('.') == std::string::npos;
+      return nothing ? std::string("index.html") : name;
     }
 
     std::string idJson(const std::string &id)
@@ -793,11 +830,7 @@ namespace ols
   {
     if (m_apiKey.empty())
       return true;
-    const std::vector<std::string> given = givenCredentials(req);
-    for (const std::string &offered : given)
-      if (keysMatch(offered, m_apiKey))
-        return true;
-    return false;
+    return credentialsMatch(givenCredentials(req), m_apiKey);
   }
 
   // Three-state gate before the doors: 0 allow, 1 send the refusal, -1 send
@@ -807,16 +840,24 @@ namespace ols
   // lifts the count back, so a machine that is being used is never left silent.
   int OpenLocalServices::authGate(const HttpRequest &req)
   {
-    if (authorize(req))
+    const std::vector<std::string> given = givenCredentials(req);
+    const bool asked = !m_apiKey.empty();
+    if (!asked || credentialsMatch(given, m_apiKey))
     {
       m_authFailures.store(0);
-      // A small random delay keeps a correct credential from being recognized by
-      // response timing alone.
-      static thread_local std::mt19937_64 authNoise{
-          static_cast<std::uint64_t>(
-              std::chrono::steady_clock::now().time_since_epoch().count())};
-      std::uniform_int_distribution<int> jitter(kAuthDelayMinMs, kAuthDelayMaxMs);
-      std::this_thread::sleep_for(std::chrono::milliseconds(jitter(authNoise)));
+      // A short random delay keeps a correct credential from being recognised by
+      // response timing alone. It is worth paying only where there is a secret to
+      // recognise: with no key set, or with nothing handed to compare against a
+      // key, a clock has nothing to give away, so those requests are answered
+      // straight away.
+      if (asked && !given.empty())
+      {
+        static thread_local std::mt19937_64 authNoise{
+            static_cast<std::uint64_t>(
+                std::chrono::steady_clock::now().time_since_epoch().count())};
+        std::uniform_int_distribution<int> jitter(kAuthDelayMinMs, kAuthDelayMaxMs);
+        std::this_thread::sleep_for(std::chrono::milliseconds(jitter(authNoise)));
+      }
       return 0;
     }
     const long long now = ols::steadyMs();
@@ -2062,10 +2103,9 @@ namespace ols
                                     const std::string &room, bool offersForm,
                                     bool walksBack)
   {
-    std::string here = room;
-    if (here.empty())
-      here = "index.html";
+    std::string here = onePageName(room);
     const std::string back = "/" + here;
+    const std::string backSafe = escapeHtmlText(back);
     std::string page =
         "<!doctype html>\n<html lang=\"en\">\n<head>\n"
         "<meta charset=\"utf-8\">\n"
@@ -2073,7 +2113,7 @@ namespace ols
         "<title>open-local-services - the door of this machine</title>\n"
         "</head>\n";
     if (walksBack)
-      page += "<meta http-equiv=\"refresh\" content=\"2; url=" + back + "\">\n";
+      page += "<meta http-equiv=\"refresh\" content=\"2; url=" + backSafe + "\">\n";
     // The door stands open to every visit, so the rooms' sheet cannot answer it -
     // it is one of the rooms, and a room that refuses is walked away from before
     // any key has been handed. What this page is dressed in is therefore its own,
@@ -2099,10 +2139,10 @@ namespace ols
       page += "</form>\n";
     }
     if (walksBack)
-      page += "<p><a href=\"" + back + "\" style=\"color:#8ecff6\">" + escapeHtmlText(here) +
+      page += "<p><a href=\"" + backSafe + "\" style=\"color:#8ecff6\">" + escapeHtmlText(here) +
               "</a> is the room this visit came from. It opens now that the key is on the "
               "connection.</p>\n";
-    page +=
+    page += "<p>Reading this as a program? The same words as json are at this same "
         "<p>Reading this as a program? The same words as json are at this same "
         "address, and a credential a program hands goes in a header: <code>X-Api-Key</code> "
         "or <code>Authorization: Bearer</code>.</p>\n";

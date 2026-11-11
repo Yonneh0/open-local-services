@@ -998,6 +998,11 @@ namespace ols
         const long long before = ols::fileSize(dest);
         const int answer = runCurl(url, dest, kFetchSliceSeconds);
         answerOut = answer;
+        // This machine would not ask for the file at all, because one of its
+        // names is not something a command line can carry. No further round
+        // changes that, so the file is given up on here.
+        if (answer == -1)
+          return false;
         const long long after = ols::fileSize(dest);
         if (answer == 0 || (goal > 0 && after >= goal))
           return true;
@@ -2211,8 +2216,11 @@ namespace ols
           }
           if (!integrityOk(dest, spec, fetched))
           {
-            noteError(job, transferred != 0 ? "the fetch did not finish for " + url
-                                            : "the file that came down is not whole");
+            noteError(job, transferred == -1
+                             ? "this machine would not ask for that file: its name or its address "
+                               "holds characters a command line cannot carry"
+                             : transferred != 0 ? "the fetch did not finish for " + url
+                                                : "the file that came down is not whole");
             markState(job, ols::kStateError);
             return false;
           }

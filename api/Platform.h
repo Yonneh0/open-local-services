@@ -211,6 +211,33 @@ namespace ols
 #endif
     }
 
+    // Can this text stand inside the quotes a command line is read in by? A
+    // fetch is asked of curl through a command line, so every part of it - the
+    // folder a file lands in, the address it comes from, the key that travels
+    // with it - is put between quotes. Most of those parts were written by this
+    // machine's own settings, but a file list comes from the source it is
+    // fetching from, and a name carrying a quote or a separator there would stop
+    // being a name and become a command. Such a part is refused, never escaped:
+    // a shell has no quoting rule that makes every character safe.
+    inline bool quotableInShell(const std::string &text)
+    {
+      for (const char c : text)
+      {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (u < 0x20 || u == 0x7f)
+          return false;
+#ifdef _WIN32
+        if (c == '"' || c == '%' || c == '&' || c == '|' || c == '<' || c == '>' || c == '^' ||
+            c == '`')
+          return false;
+#else
+        if (c == '\'')
+          return false;
+#endif
+      }
+      return true;
+    }
+
     // The fetch of one file over the network, asked the same way by every
     // module: the patience of a slow reader, a place to put the file even when
     // its folders are not there yet, and a part of a file already taken left
@@ -228,9 +255,14 @@ namespace ols
     // resume range the address rejected (36) starts the file clean here; whether
     // the bytes that arrive are the bytes meant is decided by the digest the
     // caller takes afterwards, never by the fetch having finished.
+    //
+    // The answer is curl's own code, or -1 when this machine would not ask at
+    // all because one of the parts cannot be quoted (see quotableInShell).
     inline int curlFetch(const std::string &dest, const std::string &url, const std::string &token,
                          int maxSeconds = 0)
     {
+      if (!quotableInShell(dest) || !quotableInShell(url) || !quotableInShell(token))
+        return -1;
       const std::string base = std::string(curlBinary()) + " -sSL --fail --retry 3 --create-dirs";
       const std::string bound = maxSeconds > 0 ? " --max-time " + std::to_string(maxSeconds) : "";
       const std::string auth =
