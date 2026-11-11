@@ -40,8 +40,6 @@ if [ "$PORT" -gt 65535 ]; then
 fi
 LINK=$HOST
 [ "$HOST" = 0.0.0.0 ] && LINK=127.0.0.1
-# what the words ask for, in any order: "build" builds and installs without
-# starting, key= and rate= are the same two settings run.bat takes.
 MODE=run
 FRESH_FULL=
 # what the words ask for, in any order: "build" builds and installs without

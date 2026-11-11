@@ -28,11 +28,6 @@ namespace ols
     bool embeddedAt(int index, std::string &name, std::string &bytes);
     // the bytes of one named file. false when this binary carries no such name.
     bool embeddedNamed(const std::string &name, std::string &bytes);
-    // the current copy of a file that sits beside the pages: the outside copy
-    // when it holds bytes, the copy carried inside otherwise. 0 when neither
-    // has it, 1 when the bytes came from inside this binary, 2 when they came
-    // from the file beside the pages.
-    int pageNamed(const std::string &dir, const std::string &name, std::string &bytes);
   }
 }
 

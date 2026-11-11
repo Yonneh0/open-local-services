@@ -3,9 +3,7 @@
 // only reads them and puts a file back together from the pieces it was stored
 // in.
 #include "WebAssets.h"
-#include "Common.h"
 
-#include <filesystem>
 #include <string>
 
 namespace ols
@@ -41,18 +39,6 @@ namespace ols
         return embeddedAt(i, ignoredName, bytes);
       }
       return false;
-    }
-
-    int pageNamed(const std::string &dir, const std::string &name, std::string &bytes)
-    {
-      std::string outside;
-      if (ols::readFileText((std::filesystem::path(dir) / name).string(), outside) && !outside.empty())
-      {
-        bytes = outside;
-        return 2;
-      }
-      bytes.clear();
-      return embeddedNamed(name, bytes) ? 1 : 0;
     }
 
   } // namespace webres

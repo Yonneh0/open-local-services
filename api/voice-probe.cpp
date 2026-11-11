@@ -8,7 +8,6 @@
 #include "Common.h"
 
 #include <chrono>
-#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -24,7 +23,32 @@ int main(int argc, char **argv)
   const std::string voiceRoom = argc > 2 ? argv[2] : std::string("voice");
   const std::string card = argc > 3 ? argv[3] : std::string();
   const std::string line = argc > 4 ? argv[4] : std::string("The voice engine speaks one line.");
-  const int threads = argc > 5 ? std::atoi(argv[5]) : 4;
+  // The threads asked for, read as digits and nothing else: a word typed where a
+  // number stands is no threads at all, and this probe is the proof a release
+  // script depends on, so it answers with its usage rather than starting a
+  // voice on a figure it made up.
+  int threads = 4;
+  if (argc > 5)
+  {
+    const std::string asked = argv[5];
+    long long count = 0;
+    bool digits = !asked.empty();
+    for (const char c : asked)
+    {
+      if (c < '0' || c > '9' || count > 4096)
+      {
+        digits = false;
+        break;
+      }
+      count = count * 10 + (c - '0');
+    }
+    if (!digits || count < 1 || count > 4096)
+    {
+      std::cout << "threads must be a count from 1 to 4096, not " << asked << std::endl;
+      return 1;
+    }
+    threads = static_cast<int>(count);
+  }
   if (card.empty())
   {
     std::cout << "usage: voice-probe[.exe] <weights room> <voice room> <model card> [line] [threads]"

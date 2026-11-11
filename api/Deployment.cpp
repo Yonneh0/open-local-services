@@ -419,8 +419,7 @@ namespace ols
             << "WorkingDirectory=" << state.root << "\n"
             << "ExecStart=" << state.target << "\n"
             << "Restart=on-failure\n"
-            << "RestartSec=5\n"
-            << "Environment=OLS_SERVICE=1\n";
+            << "RestartSec=5\n";
         for (const std::string &name : {"OLS_WEIGHTS_DIR", "OLS_DATA_DIR", "OLS_HOST"})
         {
           const std::string carried = carryEnv(name);
