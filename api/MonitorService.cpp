@@ -342,15 +342,14 @@ namespace ols
       runs.push_back(run);
     }
 
-    // What a model is doing now, in its own engine's words: which port it
-    // stands on, how many of its bytes are in memory, and whether a job of its
-    // kind is in motion at this moment.
+    // What a model is doing now, in its own engine's words: how many of its
+    // bytes are in memory, and whether a job of its kind is in motion at this
+    // moment.
     struct ModelRow
     {
       std::string engine;
       std::string model;
       bool open = false;
-      long long port = 0;
       long long residentBytes = -1; // unknown until an engine states it
       std::vector<json> runs;
       long long started = 0;
@@ -458,8 +457,6 @@ namespace ols
                       {"done", done},
                       {"failed", failed},
                       {"runs", runs}};
-        if (row.port != 0)
-          model["port"] = row.port;
         if (row.residentBytes >= 0)
           model["resident_bytes"] = row.residentBytes;
         if (row.started != 0)

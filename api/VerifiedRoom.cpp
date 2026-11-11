@@ -140,7 +140,7 @@ namespace ols
         return json{{"bytes", bytes}, {"unverified", touchedOf(path)}};
       }
 
-      // Stand a row for these bytes, or stand the unpaid one there instead.
+      // Write a file's row down and the room's file with it.
       void writeRow(RoomState &state, const std::string &rel, const json &row)
       {
         state.records[rel] = row;
