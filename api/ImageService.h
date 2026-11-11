@@ -59,6 +59,10 @@ namespace ols
                 std::string &contentType) const;
       std::string engineError() const;
 
+    private:
+      // What the module was pointed at when it was made. Nothing outside the
+      // module reads or writes these, and the two keys are written only through
+      // the setters above, which stand a guard over them while a job is running.
       int32_t mThreads;
       std::string mWeightsDir;
       std::string mOutputDir;

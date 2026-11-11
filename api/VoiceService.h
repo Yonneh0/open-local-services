@@ -79,6 +79,9 @@ namespace ols
       bool file(const std::string &kind, const std::string &name,
                 std::string &path, std::string &contentType) const;
 
+    private:
+      // What the module was pointed at when it was made; nothing outside the
+      // module reads or writes these.
       int32_t mThreads;
       std::string mWeightsDir;
       std::string mDataDir;
