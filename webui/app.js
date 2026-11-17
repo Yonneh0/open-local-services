@@ -57,7 +57,7 @@ let pickedModel = '';
 let pickedChoice = '';
 let autoPrompt = '';
 
-const pillKeys = { offload: 'pill-offload', tiling: 'pill-tiling', sage_attn: 'pill-sage', cpu: 'pill-cpu' };
+const pillKeys = { tiling: 'pill-tiling', sage_attn: 'pill-sage', cpu: 'pill-cpu' };
 
 function findModel(id) {
   for (const model of models) {
@@ -415,12 +415,22 @@ function paintModelCard(model) {
   const asked = askFields(model.id, true);
   const found = costRow(asked);
   const runMs = found ? runMsOf(found, asked) : 0;
+  // The quickest and the slowest are quoted in the same money as the first
+  // number. A row at another step count prices this ask per step, so its own
+  // recorded runs - made at its own steps and pictures - are brought to the
+  // ask's amount of work before their spread is stated beside it; left raw,
+  // one sentence would price one ask two ways at once.
+  const rowWork = Number(found ? found.row.steps : 0) *
+    (Number(found ? found.row.batch : 0) > 0 ? Number(found.row.batch) : 1);
+  const askWork = Number(asked ? asked.steps : 0) *
+    (Number(asked ? asked.batch : 0) > 0 ? Number(asked.batch) : 1);
+  const spread = found && rowWork > 0 && askWork > 0 ? askWork / rowWork : 1;
   addFact(box, 'what it costs here', runMs > 0
     ? costWords(runMs) + ' at these numbers · ' + Number(found.row.count) + ' run' +
     (Number(found.row.count) === 1 ? '' : 's') +
     (found.exact ? ' at exactly these numbers' : ' at these switches, priced per step') +
-    ' · the quickest ' + costWords(Number(found.row.min_ms)) +
-    ' · the slowest ' + costWords(Number(found.row.max_ms))
+    ' · the quickest ' + costWords(Number(found.row.min_ms) * spread) +
+    ' · the slowest ' + costWords(Number(found.row.max_ms) * spread)
     : 'nothing at these numbers has run here yet · no time is claimed');
   const open = openCost(model.id, model.uses_quant || model.asked_quant || '');
   if (open.count > 0) {
@@ -456,7 +466,11 @@ function paintModelCard(model) {
 // the cards are redrawn when there is something new to say about them, and left
 // alone when there is not.
 function modelsCardSignature() {
-  return JSON.stringify([pickedModel, Array.from(loadedSet).sort(),
+  // The page's own pick is part of what the cards say - the heavier border and
+  // the in use mark answer to it - so it belongs in the words that decide
+  // whether a redraw has anything new to say. Left out, tapping a card moved
+  // every other line on the page and left the mark on the card it was before.
+  return JSON.stringify([pickedModel, pickedChoice, Array.from(loadedSet).sort(),
     costRows.length, openRows.length, models.map(function (m) {
       // What the cards would cost here is part of what they say, so a card is
       // redrawn when a run of its settings lands - and only then.
@@ -676,7 +690,7 @@ function renderModels() {
         loadedSet.delete(model.id);
         if (pickedModel === model.id) pickedModel = '';
         renderModels();
-      }, 'Free the GPU memory this model is holding. The weights stay on disk.', 'unload');
+      }, 'Free the memory this model is holding. The weights stay on disk.', 'unload');
       unload.setAttribute('id', 'act-' + model.id + '-unload');
       fingers.appendChild(unload);
     }
@@ -935,7 +949,6 @@ function payload() {
   if (steps !== '') body.steps = Number(steps);
   const guidance = ui.textField('guidance').trim();
   if (guidance !== '') body.guidance = Number(guidance);
-  if (ui.isOn('pill-offload')) body.offload = true;
   if (ui.isOn('pill-tiling')) body.tiling = true;
   if (ui.isOn('pill-sage')) body.sage_attn = true;
   const limit = refsOf(findModel(modelChoice()) || {});
@@ -1011,9 +1024,9 @@ const aggregateRate = {};
 // page's own tally above forgets both. Nothing here is guessed: settings nobody has
 // asked for at these numbers have no row, and a card that gets no row states no
 // time. The machine keys a run by the model, the sides, the steps, the guidance, the
-// sampler and scheduler it really used, the step cache, the device, the offload and
-// sage switches, the batch and the reference count - and by no seed, because another
-// seed is the same work at these settings.
+// precision the weights really stood as, the sampler and scheduler it really used,
+// the step cache, the device, the switches, the batch and the reference count - and
+// by no seed, because another seed is the same work at these settings.
 let costRows = [];
 let openRows = [];
 
@@ -1043,8 +1056,11 @@ function askFields(model, defaultsOnly) {
     sampler: card.sampler ? String(card.sampler) : 'engine default',
     scheduler: card.scheduler ? String(card.scheduler) : 'engine default',
     cache: card.cache !== false,
+    // the precision the machine would open this model as, in the card's own words;
+    // a row the machine wrote carries the form the weights really stood as, and
+    // these two are the same reading of the same files.
+    quant: card.uses_quant ? String(card.uses_quant) : 'as shipped',
     device: ui.isOn(pillKeys.cpu) ? 'cpu' : 'card',
-    offload: ui.isOn(pillKeys.offload),
     sage_attn: ui.isOn(pillKeys.sage_attn),
     batch: defaultsOnly ? 1 : (Number(body.count) > 1 ? Number(body.count) : 1),
     refs: defaultsOnly ? 0 : (body.references ? body.references.length : 0),
@@ -1076,8 +1092,11 @@ function costRow(asked) {
       : (row.key ? String(row.key).split('|')[1] : '');
     if (rowModel !== String(asked.model)) continue;
     if (String(row.device) !== String(asked.device)) continue;
-    if ((row.offload === true) !== (asked.offload === true)) continue;
     if ((row.sage_attn === true) !== (asked.sage_attn === true)) continue;
+    // a row older than the machine's own naming of precisions carries none, and
+    // it stands as a near row rather than vanishing; a row that does name one
+    // must name the one this ask would open at.
+    if (row.quant !== undefined && String(row.quant) !== String(asked.quant)) continue;
     if ((row.cache === true) !== (asked.cache === true)) continue;
     if (String(row.sampler) !== String(asked.sampler)) continue;
     if (String(row.scheduler) !== String(asked.scheduler)) continue;
@@ -1445,7 +1464,7 @@ function standingAskOf(record) {
     scheduler: String(stated.scheduler || 'engine default'),
     cache: stated.cache === true,
     device: String(stated.device || 'card'),
-    offload: stated.offload === true,
+    quant: String(stated.quant || 'as shipped'),
     sage_attn: stated.sage_attn === true,
     batch: Number(stated.batch) > 0 ? Number(stated.batch) : 1,
     refs: Number(stated.refs) || 0,
@@ -3837,6 +3856,14 @@ async function main() {
   ui.onPress(E('viewer-prev'), function () { stepViewer(-1); });
   ui.onPress(E('viewer-next'), function () { stepViewer(1); });
   ui.onPress(E('viewer-close'), function () { closeViewer(); });
+  // The picture is an overlay over the whole page, so it owes the page its
+  // ending back: the key everyone reaches for on an overlay closes it, and
+  // when no picture is open the key belongs to whatever else has it.
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && E('viewer').classList.contains('on')) {
+      closeViewer();
+    }
+  });
   // The scroll: one hand starts it and stops it, and the three dropdowns beside
   // it name the time each picture stands, the move to the next, and how fast
   // that move is made. Its choices are this page's, kept in this browser, and

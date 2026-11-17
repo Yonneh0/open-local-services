@@ -1,8 +1,9 @@
 // The home page: everything the server is doing, read live, in one place.
 // The page is built around the models: every model that is open or has worked
-// and is still kept gets a full-width card carrying the numbers its own engine
-// states — memory held, what it read and wrote, speeds, over its jobs — each
-// with a graph beside it. The machine gets the same treatment: device pools,
+// and is still kept gets a full-width bar - named, stating what it holds,
+// painting its running work - and the deeper numbers its engine states (its
+// memory line, its files, its job table) wait behind hands on that bar. The
+// machine gets the same treatment: device pools,
 // memory, what the engines hold open, and what is in motion, each with its
 // history line. Nothing here is a guess: a number no engine states is named as
 // missing rather than drawn as zero, and the history lines are this document's
@@ -49,6 +50,11 @@ const cardRowsShown = 12;
 // names its rows against what passes the filter.
 const cardPageRows = 12;
 let cardPage = 0;
+
+// The last machine reading this page drew: a reader’s own hand on a bar -
+// opening its facts or its jobs - redraws the panel from this reading, so the
+// page answers the touch at once instead of waiting for a number to move.
+let lastSnapshot = null;
 
 // The cap each engine keeps its own jobs to - the one number the shared job
 // ledger states for every module that owns a store. The page names it once, so
@@ -1083,205 +1089,294 @@ function rateUnitFor(run) {
   return '';
 }
 
+// What a bar keeps open between readings: the facts strip and the jobs table
+// belong to the reader who opened them, and they stand through every reading
+// until that reader closes them again.
+const barOpen = new Map();
+
+// One model, one bar: the line that names it and states how it stands; the
+// line that moves - a running job's bar, or the last thing that moved here;
+// and behind two hands, the facts strip and the jobs table, for the reader
+// who wants them. A panel watching twenty models stays a page a person can
+// read, and nothing the old card stated is lost - only what was asked for is
+// drawn.
 function drawCard(entry, system, history) {
   const engine = engineWords(entry.engine);
   const model = String(entry.model);
-  const shell = ui.cardShell(engine, 'status-card');
+  const key = engine + '\t' + model;
+  const shell = ui.cardShell(engine + ' model-bar', 'status-card');
   const card = shell.card;
   const main = shell.main;
+  // The hands ride at the end of the bar's first line, so the facts rail the
+  // shell offers by default has nothing left to carry.
+  shell.fingers.remove();
 
+  const runs = Array.isArray(entry.runs) ? entry.runs : [];
+  const running = runs.filter((run) => run.state === 'running');
+  const controls = cardRowControls(engine, model);
+  const keep = rowVisible(engine, model, controls);
+  const shown = runs.filter(keep);
+  const table = tableRow(model);
+  const held = Number(entry.resident_bytes || 0);
+  const budget = Number((system.loaded && system.loaded.budget_bytes) || 0);
+  const opened = barOpen.get(key) || {};
+  let selectedPanel = null;
+
+  const toggle = (which, label, tip) => {
+    const hand = ui.fingerAct(label, function () {
+      const now = barOpen.get(key) || {};
+      now[which] = !(barOpen.get(key) && barOpen.get(key)[which]);
+      barOpen.set(key, now);
+      if (lastSnapshot) drawModelCards(lastSnapshot);
+    }, tip);
+    if (opened[which]) hand.classList.add('on');
+    return hand;
+  };
+
+  // ---------- the line that names this model and how it stands ----------
   const head = document.createElement('div');
-  head.className = 'card-head ' + engine;
+  head.className = 'bar-head';
+
   const tag = document.createElement('span');
   tag.className = 'card-tag';
   tag.textContent = engine;
   head.appendChild(tag);
+
   const title = document.createElement('span');
   title.className = 'card-title';
   title.textContent = model;
   head.appendChild(title);
+
   const state = document.createElement('span');
-  state.className = 'card-state ' + (entry.open ? 'open' : 'closed');
-  state.textContent = entry.open ? 'open' : 'not open';
+  state.className = 'card-state ' + (running.length ? 'running' : entry.open ? 'open' : 'closed');
+  state.textContent = running.length ? whole(running.length) + ' running'
+    : entry.open ? 'open' : 'not open';
   head.appendChild(state);
+
   if (Number(entry.port || 0) > 0) {
     const port = document.createElement('span');
     port.className = 'card-extra';
     port.textContent = 'port ' + entry.port;
     head.appendChild(port);
   }
-  if (Number(entry.running || 0) > 0) {
-    const busy = document.createElement('span');
-    busy.className = 'card-extra running';
-    busy.textContent = whole(entry.running) + ' running';
-    head.appendChild(busy);
-  }
-  main.appendChild(head);
 
-  const runs = Array.isArray(entry.runs) ? entry.runs : [];
-  // The table carries its own hands over its rows, set down above it, and the
-  // words for a job a reader pressed open under that row. Nothing about one
-  // table lives elsewhere on the page, so a reader follows the table they are
-  // looking at and the tables beside it stay as they were.
-  const controls = cardRowControls(engine, model);
-  // The words for a job a reader pressed live below the rows they belong to, as
-  // one card in this table; nothing else on the page holds them.
-  let selectedPanel = null;
-  const keep = rowVisible(engine, model, controls);
-  const shown = runs.filter(keep);
-  const table = tableRow(model);
-
-  // The card in three parts, in order: what this model is doing now, then the
-  // model as its own tables state it, then what it has done. Every part uses the
-  // same tiles the machine section uses, so a number reads the same way
-  // anywhere on this page.
-  const tiles = document.createElement('div');
-  tiles.className = 'card-metrics ' + engine;
-  main.appendChild(tiles);
-
-  const group = (words) => {
-    const label = document.createElement('div');
-    label.className = 'card-group';
-    label.textContent = words;
-    tiles.appendChild(label);
-  };
-
-  const running = runs.filter((run) => run.state === 'running');
-
-  // ---------- what this model is doing now ----------
-  group('now');
-
-  const doing = running.length ? 'running: ' + whole(running.length)
-    + (running.length === 1 ? ' job' : ' jobs') : 'idle';
-  metric(tiles, 'state', doing, '',
-    running.length
-      ? ['In motion here: ' + running.map((run) => run.kind + (Number(run.max || 0) > 0 ?
-        ', ' + whole(run.done || 0) + ' of ' + whole(run.max) + ' steps' : '')).join(' · ')]
-      : [Number(entry.last_started_at || 0) > 0 ? 'last asked at ' + ui.clock(entry.last_started_at)
-        : 'This model has not been asked since this machine started']);
-
-  // The work in motion, painted the same way every other running job on this
-  // page is painted.
-  for (const run of running) {
-    const max = Number(run.max || 0);
-    const elapsed = Math.max(0, Math.round(Date.now() / 1000 - Number(run.t || 0)));
-    ui.progressSet(main, String(run.id), Number(run.done || 0), max,
-      engine + ' ' + model + (max > 0 ? ' - ' + whole(run.done) + ' of ' + whole(max) : ' - ' + elapsed + 's so far'),
-      run.kind === 'load' ? 'load' : '');
-  }
-
-  // The work itself: what each job did and the rate it did it at.
-  const steps = [];
-  const stepRates = [];
-  const speech = [];
-  const speechRates = [];
-  for (const run of shown.slice().reverse()) {
-    if (run.kind === 'generate') {
-      steps.push(Number(run.max || run.done || 0) || null);
-      stepRates.push(runRate(run));
-    } else if (run.kind === 'speak') {
-      speech.push(Number(run.audio_s || 0) || null);
-      speechRates.push(runRate(run));
-    }
-  }
-
-  const lastFinished = shown.find((run) => runMs(run) > 0);
-
-  // ---------- the model as its own card states it ----------
-  group('model');
-
-  const held = Number(entry.resident_bytes || 0);
-  const heldTile = metric(tiles, 'held in memory', held ? ui.sizeText(held) : 'not reported',
-    held ? 'of this machine, right now' : 'by this engine',
-    [engine === 'voice' ? 'The voice engine lives inside this server; it does not report its own memory.'
-      : null]);
-  if (engine === 'image') {
-    const budget = Number((system.loaded && system.loaded.budget_bytes) || 0);
-    drawPool(heldTile, held, budget, 'held');
-    if (Array.isArray(history.models) && Array.isArray(history.samples)) {
-      const at = history.models.indexOf(model);
-      if (at >= 0) {
-        drawTrace(heldTile, [{
-          points: traceOf(history.samples,
-            (sample) => (sample.m && at < sample.m.length) ? sample.m[at] : null),
-        }], 'bytes');
-      } else {
-        noFigure(heldTile, 'no line yet',
-          'This model has not been in memory during any page reading of this machine, so there is nothing to draw.');
-      }
-    } else {
-      noFigure(heldTile, 'no line yet', 'Too few machine readings to draw this line yet.');
-    }
+  // What this model stands open with, and the pool the number fits in.
+  if (engine === 'voice') {
+    const voiceHeld = document.createElement('span');
+    voiceHeld.className = 'card-extra';
+    voiceHeld.textContent = 'engine memory';
+    voiceHeld.setAttribute('title',
+      'The voice engine lives inside this server; it does not report its own memory.');
+    head.appendChild(voiceHeld);
+  } else if (held > 0) {
+    const heldWords = document.createElement('span');
+    heldWords.className = 'card-extra bar-held';
+    const fill = document.createElement('i');
+    if (budget > 0) fill.style.width = Math.min(100, Math.round((held / budget) * 100)) + '%';
+    const pool = document.createElement('span');
+    pool.className = 'bar-pool';
+    pool.appendChild(fill);
+    pool.setAttribute('title', whole(held) + ' of ' + whole(budget) + ' bytes this engine may hold.');
+    heldWords.textContent = ui.sizeText(held) + ' held';
+    heldWords.appendChild(pool);
+    head.appendChild(heldWords);
+  } else {
+    const heldWords = document.createElement('span');
+    heldWords.className = 'card-extra';
+    heldWords.textContent = 'nothing held';
+    heldWords.setAttribute('title', entry.open
+      ? 'This engine answers this model open but states no bytes for it.'
+      : 'This model holds no memory until a load hand opens it.');
+    head.appendChild(heldWords);
   }
 
   const weights = table ? Number(table.bytes || 0) : 0;
   const shapeBytes = (table && table.memory) ? Number(table.memory.weights_bytes || 0) : 0;
   if (weights > 0 || shapeBytes > 0) {
-    metric(tiles, 'weights on disk', ui.sizeText(weights || shapeBytes), 'for this model',
-      [table && table.on_disk === false ? 'not on this machine yet' : null]);
+    const disk = document.createElement('span');
+    disk.className = 'card-extra';
+    disk.textContent = ui.sizeText(weights || shapeBytes) + ' on disk';
+    disk.setAttribute('title', table && table.on_disk === false
+      ? 'the model table states this size but not these files on this machine'
+      : 'This model\'s weight files, measured on disk.');
+    head.appendChild(disk);
   }
 
-  const files = (table && Array.isArray(table.files)) ? table.files : [];
-  if (files.length) {
-    metric(tiles, 'files', files.join(', '), '',
-      ['File names from the model tables for this model']);
+  const actions = document.createElement('span');
+  actions.className = 'bar-actions';
+  if (entry.open) {
+    const down = ui.fingerAct('put down', async function () {
+      try {
+        if (engine === 'voice') await ui.api('/voice/api/models/' + encodeURIComponent(model) + '/unload', 'POST', {});
+        else await ui.api('/api/unload', 'POST', { model: model });
+        ui.log(model + ' put down: its memory is free again', 'ok');
+      } catch (refused) {
+        ui.log('refused to put down ' + model + ': ' + refused.message, 'err');
+      }
+      await refresh();
+    }, 'Let go of the memory this model holds right now. The weights stay on disk.', 'unload');
+    actions.appendChild(down);
   } else {
-    // two different absences: a table that names this model and stops at its
-    // files, and a model the tables never mentioned at all.
-    metric(tiles, 'files', 'not stated', '',
-      [table ? 'No file names in the model tables for this model'
-        : 'This model is not in the model tables this page read, so nothing here names its files']);
+    const up = ui.fingerAct('open', async function () {
+      try {
+        if (engine === 'voice') await ui.api('/voice/api/models/' + encodeURIComponent(model) + '/load', 'POST', {});
+        else await ui.api('/api/models/' + encodeURIComponent(model) + '/load', 'POST', {});
+        ui.log('opening ' + model + (engine === 'voice' ? '' : ' - its progress stands on this bar'), 'ok');
+      } catch (refused) {
+        ui.log('refused to open ' + model + ': ' + refused.message, 'err');
+      }
+      await refresh();
+    }, 'Stand this model up in its engine. A big model takes its own time and its own memory.', 'load');
+    actions.appendChild(up);
   }
-  metric(tiles, 'quantised to', quantWords(files), '',
-    ['Read from the file names above; tensor types inside the files are not read.']);
+  actions.appendChild(toggle('info', 'facts',
+    'What this model is: the memory it holds and its line, its weight files, their quant and layers, and the rate of its kept jobs.'));
+  actions.appendChild(toggle('jobs', 'jobs',
+    'The jobs this engine keeps about this model, newest first, with the hands that narrow them.'));
+  head.appendChild(actions);
+  main.appendChild(head);
 
-  const shape = (table && table.memory) ? table.memory : null;
-  if (shape) {
-    if (Number(shape.n_layer || 0) > 0) {
-      metric(tiles, 'layers', whole(Number(shape.n_layer)), 'of this model', null);
+  // ---------- the line that moves ----------
+  const live = document.createElement('div');
+  live.className = 'bar-live';
+  if (running.length) {
+    card.classList.add('is-running');
+    for (const run of running) {
+      const max = Number(run.max || 0);
+      const elapsed = Math.max(0, Math.round(Date.now() / 1000 - Number(run.t || 0)));
+      ui.progressSet(live, String(run.id), Number(run.done || 0), max,
+        run.kind + (max > 0 ? ' · ' + whole(run.done) + ' of ' + whole(max) + ' steps' : ' · ' + elapsed + 's so far'),
+        run.kind === 'load' ? 'load' : '');
+    }
+  } else {
+    const last = shown.find((run) => runMs(run) > 0) || shown[0];
+    if (last) {
+      const rate = runRate(last);
+      const words = ['last ' + String(last.kind) + ' ' + String(last.state)];
+      if (runMs(last) > 0) words.push(secondsText(runMs(last)) + ' taken');
+      if (rate !== null) words.push(rateText(rate, rateUnitFor(last)));
+      const when = ui.clock(last.t);
+      if (when) words.push(when);
+      live.textContent = words.join(' · ');
+      live.setAttribute('title', 'The newest job this engine keeps its numbers about. Open the jobs to see the rest.');
+    } else if (Number(entry.last_started_at || 0) > 0) {
+      live.textContent = 'asked at ' + ui.clock(entry.last_started_at) + ' · no job numbers kept';
     } else {
-      metric(tiles, 'layers', 'not stated', '', ['This model\'s file does not state its layer count.']);
+      live.textContent = entry.open
+        ? 'open and idle · nothing asked of it since this machine started'
+        : 'nothing asked of this model since this machine started';
     }
   }
+  main.appendChild(live);
 
-  // ---------- the context, always drawn the same way ----------
-  // Nothing here runs words: the engines this page describes work on pictures and
-  // speech, so there is no word context to draw.
-  metric(tiles, 'context', 'none', '',
-    ['This engine works on pictures and speech; a word context does not apply.']);
+  // ---------- the facts, for the reader who asked ----------
+  if (opened.info) {
+    const tiles = document.createElement('div');
+    tiles.className = 'card-metrics ' + engine;
+    const group = (words) => {
+      const label = document.createElement('div');
+      label.className = 'card-group';
+      label.textContent = words;
+      tiles.appendChild(label);
+    };
 
-  // ---------- what this model has done ----------
-  group('jobs');
+    group('memory');
+    const heldTile = metric(tiles, 'held in memory', held ? ui.sizeText(held) : 'not reported',
+      held ? 'on this machine, right now' : 'from this engine',
+      engine === 'voice'
+        ? ['The voice engine lives inside this server; it does not report its own memory.']
+        : null);
+    if (engine === 'image') {
+      drawPool(heldTile, held, budget, 'held');
+      if (Array.isArray(history.models) && Array.isArray(history.samples)) {
+        const at = history.models.indexOf(model);
+        if (at >= 0) {
+          drawTrace(heldTile, [{
+            points: traceOf(history.samples,
+              (sample) => (sample.m && at < sample.m.length) ? sample.m[at] : null),
+          }], 'bytes');
+        } else {
+          noFigure(heldTile, 'no line yet',
+            'This model has not been in memory during any page reading of this machine, so there is nothing to draw.');
+        }
+      } else {
+        noFigure(heldTile, 'no line yet', 'Too few machine readings to draw this line yet.');
+      }
+    }
 
-  if (engine === 'image') {
-    const pictureRate = (lastFinished && lastFinished.kind === 'generate')
-      ? runRate(lastFinished) : meanOf(stepRates);
-    metric(tiles, 'steps/s', rateText(pictureRate), pictureRate === null ? '' : 'steps/s',
-      ['The last picture that finished, or the mean over the ones kept here.']);
-    drawBars(tiles, steps, 'steps');
-    drawBars(tiles, stepRates, 'steps/s');
-  } else if (engine === 'voice') {
-    const speechRate = (lastFinished && lastFinished.kind === 'speak')
-      ? runRate(lastFinished) : meanOf(speechRates);
-    metric(tiles, 'speech speed', rateText(speechRate), speechRate === null ? '' : '× real time',
-      ['How much sound a render made against the wall clock it took; above 1 is faster than real ' +
-        'time.']);
-    drawBars(tiles, speech, 's of speech');
-    drawBars(tiles, speechRates, '× real time');
+    group('on disk');
+    const files = (table && Array.isArray(table.files)) ? table.files : [];
+    if (files.length) {
+      metric(tiles, 'files', files.join(', '), '',
+        ['File names from the model tables for this model']);
+    } else {
+      // two different absences: a table that names this model and stops at its
+      // files, and a model the tables never mentioned at all.
+      metric(tiles, 'files', 'not stated', '',
+        [table ? 'No file names in the model tables for this model'
+          : 'This model is not in the model tables this page read, so nothing here names its files']);
+    }
+    metric(tiles, 'quantised to', quantWords(files), '',
+      ['Read from the file names above; tensor types inside the files are not read.']);
+    const shape = (table && table.memory) ? table.memory : null;
+    if (shape) {
+      if (Number(shape.n_layer || 0) > 0) {
+        metric(tiles, 'layers', whole(Number(shape.n_layer)), 'of this model', null);
+      } else {
+        metric(tiles, 'layers', 'not stated', '', ['This model\'s file does not state its layer count.']);
+      }
+    }
+
+    // The rate of the work kept here, in the unit that engine's kind of work
+    // measures itself by, with a bar per job beside it.
+    const steps = [];
+    const stepRates = [];
+    const speech = [];
+    const speechRates = [];
+    for (const run of shown.slice().reverse()) {
+      if (run.kind === 'generate') {
+        steps.push(Number(run.max || run.done || 0) || null);
+        stepRates.push(runRate(run));
+      } else if (run.kind === 'speak') {
+        speech.push(Number(run.audio_s || 0) || null);
+        speechRates.push(runRate(run));
+      }
+    }
+    const lastFinished = shown.find((run) => runMs(run) > 0);
+    group('history');
+    if (engine === 'image') {
+      const pictureRate = (lastFinished && lastFinished.kind === 'generate')
+        ? runRate(lastFinished) : meanOf(stepRates);
+      metric(tiles, 'steps/s', rateText(pictureRate), pictureRate === null ? '' : 'steps/s',
+        ['The last picture that finished, or the mean over the ones kept here.']);
+      drawBars(tiles, steps, 'steps');
+      drawBars(tiles, stepRates, 'steps/s');
+    } else if (engine === 'voice') {
+      const speechRate = (lastFinished && lastFinished.kind === 'speak')
+        ? runRate(lastFinished) : meanOf(speechRates);
+      metric(tiles, 'speech speed', rateText(speechRate), speechRate === null ? '' : '× real time',
+        ['How much sound a render made against the wall clock it took; above 1 is faster than real time.']);
+      drawBars(tiles, speech, 's of speech');
+      drawBars(tiles, speechRates, '× real time');
+    }
+    const useWords = modelUseWords(shown);
+    metric(tiles, 'work totals',
+      shown.length ? shown.length + ' of ' + whole(Number(entry.kept || 0)) + ' kept jobs' : 'nothing shows through the filter',
+      '',
+      useWords.length ? [useWords.join(' · ')] : ['Nothing measured in the kept jobs here.']);
+    main.appendChild(tiles);
   }
 
-  const useWords = modelUseWords(shown);
-  metric(tiles, 'work totals',
-    shown.length ? shown.length + ' of ' + whole(Number(entry.kept || 0)) + ' kept jobs' : 'nothing shows through the filter',
-    '',
-    useWords.length ? [useWords.join(' · ')] : ['Nothing measured in the kept jobs here.']);
-  if (Number(entry.kept || 0) > 0) {
-    metric(tiles, 'jobs kept', whole(Number(entry.kept)), '',
-      [Number(entry.last_started_at || 0) > 0 ? 'The newest was asked at ' + ui.clock(entry.last_started_at) : null]);
+  // ---------- the jobs table, for the reader who asked ----------
+  if (!opened.jobs) {
+    cardsHost.appendChild(card);
+    return;
   }
 
-  // The hands over this table come first: they are what its rows below are
-  // narrowed by, and they belong to this table alone.
+  // The table carries its own hands over its rows, set down above it, and the
+  // words for a job a reader pressed open under that row. Nothing about one
+  // table lives elsewhere on the page, so a reader follows the table they are
+  // looking at and the tables beside it stay as they were.
   main.appendChild(controls.wrap);
 
   // The jobs themselves, newest first, in the engine's own words. The rows are a
@@ -1383,19 +1478,6 @@ function drawCard(entry, system, history) {
     main.appendChild(selectedPanel);
     break;
   }
-
-  // The card carries no rail of facts down its right edge. Every value such a
-  // rail would state is already on this card once: the engine it runs on, whether
-  // that engine is open, and the port it answers on are in its head; the work in
-  // motion here is its state tile; what it holds in memory, the weight files it
-  // names on disk, their count, the quant read off their names, and the layer
-  // count are the tiles above; so is the context. What the engine keeps and when
-  // this model was last asked are the two tiles under the jobs, and the foot
-  // beside them. The shell every page draws its cards in hands over a facts rail
-  // so the other pages can run their facts to the card border; here that rail
-  // would only repeat the numbers the card already shows, so it is dropped and the
-  // card's words column is the whole card.
-  shell.fingers.remove();
 
   cardsHost.appendChild(card);
 }
@@ -1622,6 +1704,7 @@ function drawLog() {
 
 function drawStatus(snapshot) {
   records = Array.isArray(snapshot.jobs) ? snapshot.jobs : [];
+  lastSnapshot = snapshot;
   drawTotals(snapshot.summary || {});
   drawMachine(snapshot.system || {}, (snapshot.summary || {}), (snapshot.history || {}), (snapshot.jobs || []));
   drawModelCards(snapshot);

@@ -111,8 +111,8 @@
             <div class="opt-row" id="clip-row" hidden>
               <label for="clip-length"
                 title="How many frames the clip this model moves should have. Only shown for a model that makes moving pictures. Leave blank for the length this model's card names.">frames</label>
-              <input id="clip-length" type="number" min="5" max="241" value=""
-                title="Frames, not seconds: this model names the rate it moves at, so the length of a clip is frames divided by that rate. The machine accepts 5..241 frames. Blank uses the length the card names. A longer clip costs proportionally more time.">
+              <input id="clip-length" type="number" min="5" max="243" value=""
+                title="Frames, not seconds: this model names the rate it moves at, so the length of a clip is frames divided by that rate. The machine accepts 5..243 frames, on the grid of lengths the model works at. Blank uses the length the card names. A longer clip costs proportionally more time.">
             </div>
             <div class="opt-row">
               <label for="seed" title="-1 gives a new image every run. A fixed number repeats one image.">seed</label>
@@ -124,8 +124,6 @@
             </div>
           </div>
           <div class="pill-row">
-            <span class="pill" id="pill-offload"
-              title="Let the model use system memory as well as the GPU. Use it if a load fails.">system memory</span>
             <span class="pill" id="pill-tiling"
               title="Decode the image in tiles, which needs far less memory. Turn on above 1024 px.">vae tiling</span>
             <span class="pill" id="pill-sage" title="Approximate attention: faster, slightly different output.">fast

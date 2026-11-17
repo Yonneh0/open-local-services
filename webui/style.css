@@ -3079,3 +3079,91 @@ a:focus-visible {
 
 /* Nothing here stands between a browser and a machine: a refused visit is
    walked to the door page, which carries its own sheet. */
+
+/* ---------- model bars: the home page's open-models panel ----------
+   Each model is one bar: the line that names it and states how it stands,
+   and the line that moves - a running job's progress, or the newest job's
+   numbers. The facts strip and the jobs table wait behind their hands, so a
+   panel watching twenty models stays a page a person can read. */
+.model-bar .bar-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
+}
+
+.model-bar .bar-held {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The pool the held bytes fit in: a well with its own fill, standing on the
+   words it measures. */
+.model-bar .bar-pool {
+  display: inline-block;
+  width: 46px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.model-bar .bar-pool i {
+  display: block;
+  height: 100%;
+  background: var(--engine-tint);
+}
+
+.model-bar .bar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.model-bar .bar-actions .finger {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.model-bar .bar-actions .finger.on {
+  color: var(--fg);
+  border-color: var(--engine-tint);
+  background: color-mix(in srgb, var(--engine-tint) 16%, var(--bg3));
+}
+
+.model-bar .bar-live {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  min-height: 14px;
+}
+
+/* A running job on a bar is one line: the words beside the track, the track
+   filling the room the words leave. */
+.model-bar .bar-live .prog-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-bar .bar-live .prog-bar {
+  flex: 1 1 auto;
+  height: 7px;
+}
+
+.model-bar .bar-live .prog-text {
+  flex: 0 0 auto;
+  max-width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-bar.is-running {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
