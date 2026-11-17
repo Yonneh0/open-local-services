@@ -350,7 +350,11 @@ namespace ols
       if (gModels.count(id))
         return true;
       const std::string weight = packagePath(def.file);
-      if (!fileExists(weight))
+      // A spec package names its weight file itself; a bundled package names
+      // the engine's own directory whose files are the model, so being on disk
+      // there is having that directory stand.
+      std::error_code weightEc;
+      if (!std::filesystem::is_directory(weight, weightEc) && !fileExists(weight))
         return false; // no files: nothing to load, and nothing failed
       audiocpp_model_config config = {def.family.c_str(), nullptr, nullptr, nullptr};
       audiocpp_options *options = nullptr;
@@ -3143,14 +3147,36 @@ namespace ols
     std::string VoiceService::loadErrorFor(const std::string &modelId) const
     {
       std::lock_guard<std::mutex> lock(gEngineMutex);
-      const std::string keys[] = {modelId, modelId + " (session)", modelId + " (session cpu)"};
-      for (const std::string &key : keys)
+      const auto plain = gLoadErrors.find(modelId);
+      if (plain != gLoadErrors.end())
+        return plain->second;
+      // A session refusal is kept under the model, the kind of work and the
+      // controls it was asked with; when the device was tried first and failed,
+      // the engine leaves one note per backend. The cpu note is the engine's
+      // last word on the matter, so a refusal answers with that, then with the
+      // device's, then with whatever plain note the card left.
+      std::string deviceNote;
+      std::string plainSession;
+      for (const auto &entry : gLoadErrors)
       {
-        const auto found = gLoadErrors.find(key);
-        if (found != gLoadErrors.end())
-          return found->second;
+        if (entry.first.rfind(modelId + ":", 0) != 0)
+          continue;
+        const size_t space = entry.first.rfind(' ');
+        const std::string tail =
+          space == std::string::npos ? std::string() : entry.first.substr(space);
+        if (tail == " (cpu)")
+          return entry.second;
+        if (tail == " (device)")
+        {
+          if (deviceNote.empty())
+            deviceNote = entry.second;
+        }
+        else if (plainSession.empty())
+          plainSession = entry.second;
       }
-      return std::string();
+      if (!deviceNote.empty())
+        return deviceNote;
+      return plainSession;
     }
 
     std::string VoiceService::startJob(const std::string &kind, const std::string &modelId,

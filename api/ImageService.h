@@ -19,6 +19,14 @@ namespace ols
       ImageService(const std::string &weightsDir, const std::string &outputDir, int32_t threads,
                    const std::string &hfToken, const std::string &civitaiKey, int32_t keptMax);
 
+      // The whole service is one machine: every job, model and setting it speaks
+      // of stands in module-wide state, so a second object would not be a second
+      // machine but a second handle to the one that is already stood.
+      ImageService(const ImageService &) = delete;
+      ImageService &operator=(const ImageService &) = delete;
+      ImageService(ImageService &&) = delete;
+      ImageService &operator=(ImageService &&) = delete;
+
       std::string modelsJson() const;
       std::string statusJson() const;
       std::string devicesJson() const;
@@ -58,17 +66,6 @@ namespace ols
       bool file(const std::string &kind, const std::string &name, std::string &path,
                 std::string &contentType) const;
       std::string engineError() const;
-
-    private:
-      // What the module was pointed at when it was made. Nothing outside the
-      // module reads or writes these, and the two keys are written only through
-      // the setters above, which stand a guard over them while a job is running.
-      int32_t mThreads;
-      std::string mWeightsDir;
-      std::string mOutputDir;
-      std::string mHfToken;
-      std::string mCivitaiKey;
-      int32_t mKeptMax;
     };
 
   } // namespace imagegen

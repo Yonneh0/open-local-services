@@ -77,11 +77,10 @@ namespace ols
       // words. Empty leaves the engine's choice for this model's family.
       std::string sampler;
       std::string scheduler;
-      // Whether a step cache has room in this model's steps. A distilled model
-      // runs the few steps its distillation was trained for, and a cache that
-      // starts at fifteen percent of them and stops at ninety skips work those
-      // steps were the whole sampling for.
-      bool cache = true;
+      // Whether this model runs with a step cache. A row that names nothing runs
+      // without one: the cache starts at fifteen percent of a run's steps and
+      // stops at ninety, which in a few distilled steps is the whole sampling.
+      bool cache = false;
       // How many CLIP text-blocks to stop after. -1 leaves the engine's own
       // default standing, which is 2 for SD 2 and SDXL and 1 for SD 1.5
       // (src/conditioning/conditioner.hpp:459). A card that names the number says
@@ -127,7 +126,7 @@ namespace ols
           {"qwen-image-2.1-turbo", "the same legible text and illustration in eight steps"},
 
           {"sdxl-turbo", "fast product, food, and cartoon shapes in one or four steps"},
-          {"realvisxl-v5-lightning", "photoreal portraits and candid photos in four steps, honest skin"},
+          {"realvisxl-v5-lightning", "photoreal portraits and candid photos in five steps, honest skin"},
           {"pony-diffusion-v6", "anime and game illustration written in tag style"},
           {"cyberrealistic-xl", "photoreal people, portraits and full body"},
           {"animagine-xl-3.1", "anime illustration in several genres, with score tags"},
@@ -208,138 +207,66 @@ namespace ols
     static const std::vector<ImageModelTuning> &kTuning()
     {
       static const std::vector<ImageModelTuning> rows = {
-          // SDXL Turbo: the card states 512x512 - "Preferably, the model
-          // generates images of size 512x512", and its own limitations name "a
-          // fixed resolution (512x512 pix)" - one step enough and four better,
-          // and no guidance_scale and no negative_prompt at all ("we disable it
-          // with guidance_scale=0.0"). The repo ships an Euler-Ancestral
-          // scheduler with trailing spacing, which is the grid sgm_uniform
-          // draws; four steps give a step cache nothing it may skip, so the
-          // cache is off and only the free conditioning cache is kept.
+          // SDXL Turbo: the card at 512x512 with guidance disabled
+          // ("guidance_scale=0.0"), one to four steps; the repo ships an
+          // Euler-Ancestral trailing-spacing scheduler, which is the grid
+          // sgm_uniform draws. Four steps leave a step cache nothing to skip.
           {"sdxl-turbo", 512, 512, "euler_a", "sgm_uniform", false},
-          // FLUX.3 Klein: its card's own table states the distilled checkpoint at 16
-          // steps with no guidance at all ("Klein | distilled, bfloat16 | 16 | none"),
-          // and the engine's FLUX.3 page names euler with the default discrete
-          // scheduler carrying the upstream time shift of 6.93 - so the scheduler is
-          // left to the engine, which knows this family. Its samples and its memory
-          // figure are stated at 1024x1024, which is the size it draws at. "Short
-          // prompts produce generic output": the card asks for full scene captions,
-          // which is what its prompt and the suite's runs are, and it names text
-          // rendering as a strength while warning the words may distort. ucache is
-          // documented for the UNet families; this is a transformer, and the engine
-          // refuses that mode for it on its own, so the card states no cache.
+          // FLUX.3 Klein: the card's table states the distilled checkpoint at 16
+          // steps with no guidance ("Klein | distilled, bfloat16 | 16 | none"),
+          // at 1024x1024. The engine's FLUX.3 page names euler and carries the
+          // upstream time shift of 6.93 in its own default scheduler, so no
+          // scheduler is named here. No step cache for a transformer.
           {"flux-3-klein", 1024, 1024, "euler", "", false},
-          // Z-Image Turbo: the card's own table names the Turbo row at Step 8 with CFG
-          // crossed out, and its quick start passes guidance_scale=0.0 with the words
-          // "Guidance should be 0 for the Turbo models" - num_inference_steps 9 there,
-          // which it notes "actually results in 8 DiT forwards", the number this
-          // engine's own example asks for. Its example and its showcase are stated at
-          // 1024, its strengths are photorealistic generation, "Accurate Bilingual
-          // Text Rendering" and instruction adherence. The engine's page names no
-          // sampler for it, so its choice for this family is left standing, and
-          // ucache is a UNet mode the engine will not take for a single-stream
-          // transformer.
+          // Z-Image Turbo: the card's Turbo row at Step 8 with CFG crossed out
+          // ("Guidance should be 0 for the Turbo models"), stated at 1024. The
+          // engine's page names no sampler for this family, so none is written.
           {"z-image-turbo", 1024, 1024, "", "", false},
-          // Qwen Image 2.1 and its Turbo: the engine's own page runs both with
-          // "--sampling-method euler" - the base at cfg 6.0, the Turbo with
-          // "--sigmas qwen-image-2.1-turbo --steps 8 --cfg-scale 1.0" - and asks for
-          // dimensions divisible by 32, leaving the flow schedule to itself. The
-          // official ComfyUI workflow for the same weights ships 1024x1024, euler,
-          // 25 steps and "Prefer multiples of 32", and notes the base "needs about
-          // 40-50 steps with euler" on the full pipeline, so 25 is the low end of what
-          // the released workflow ships. ucache is a UNet mode the engine refuses for
-          // this transformer.
+          // Qwen Image 2.1 and its Turbo: the engine's page runs both with euler -
+          // the base at cfg 6.0 (the released ComfyUI workflow ships 25 steps and
+          // 1024x1024), the Turbo at 8 steps and cfg 1.0 with its own sigmas.
           {"qwen-image-2.1", 1024, 1024, "euler", "", false},
           {"qwen-image-2.1-turbo", 1024, 1024, "euler", "", false},
-          // RealVisXL V5 Lightning: the card's own parameters — "Sampling Steps: 5",
-          // "Sampling Method: DPM++ SDE Karras / DPM++ SDE", "CFG Scale: 1.0-2.0" — at
-          // the square an SDXL checkpoint is trained at. It is a Lightning distillation
-          // of RealVisXL V5, whose card says the model "is aimed at photorealism". No
-          // step cache: five distilled steps leave the cache window the engine
-          // documents (15%-95% of the steps) with three steps inside it.
+          // RealVisXL V5 Lightning: the card's parameters - 5 steps, DPM++ SDE
+          // Karras, CFG 1.0-2.0 - at the square an SDXL is trained at. Five
+          // distilled steps leave the engine's cache window (15%-95% of the steps)
+          // with three steps inside it, so the cache is off.
           {"realvisxl-v5-lightning", 1024, 1024, "dpm++2m_sde", "karras", false},
-          // Pony Diffusion V6 XL: the card names its own pair - "Using Euler a with 25
-          // steps and resolution of 1024px is recommended", run "with no negative prompt
-          // and otherwise default settings". It is a plain SDXL finetune at 25 steps, so
-          // the step cache stays on: ucache is the mode the engine's caching page writes
-          // for UNet models, and 25 steps is the range it calls an opportunity.
+          // Pony Diffusion V6 XL: the card recommends Euler a at 25 steps and
+          // 1024px, with no negative prompt. A plain SDXL UNet at 25 steps is the
+          // caching case the engine's page documents, so the cache stays on.
           {"pony-diffusion-v6", 1024, 1024, "euler_a", "", true},
-          // CyberRealistic XL: its Recommended Settings table names steps 25-30, CFG
-          // 7.0-8.0, "1024x1024 (native)" and the sampler pair "DPM++ 3M SDE Karras,
-          // Euler A". The middle of each range is taken. The first sampler maps to this
-          // engine's dpm++2m_sde_bt, the bit-trick 2M SDE that is the solver ComfyUI
-          // ships as 3M; Euler A is the card's own listed alternative. 28 steps on an
-          // SDXL UNet is what the engine's caching page calls an opportunity, so the step
-          // cache stays on.
+          // CyberRealistic XL: the Recommended Settings table names 25-30 steps,
+          // CFG 7.0-8.0, 1024x1024 (native), and "DPM++ 3M SDE Karras, Euler A" -
+          // the middle of each range is taken. That sampler is this engine's
+          // dpm++2m_sde_bt, the bit-trick 2M SDE ComfyUI ships as 3M.
           {"cyberrealistic-xl", 1024, 1024, "dpm++2m_sde_bt", "karras", true},
-          // Animagine XL 3.1: the card's recommended settings are a CFG of "around 5-7",
-          // "sampling steps below 30" and "Euler Ancestral (Euler a) as a sampler", with
-          // the 1024x1024 square from its Multi Aspect Resolution table. An SDXL UNet at
-          // 28 steps is the caching case the engine's page documents, so the step cache
-          // stays on.
+          // Animagine XL 3.1: the card's CFG "around 5-7", "sampling steps below
+          // 30", Euler a, and the square of its Multi Aspect Resolution table.
           {"animagine-xl-3.1", 1024, 1024, "euler_a", "", true},
-          // Lustify NSFW Checkpoint, v1.0 alpha. CivitAI version 638929 - a VERSION id, so
-          // it resolves at /api/v1/model-versions/638929 (the /api/v1/models/<id> endpoint
-          // takes a model id and answers "No model with id" for this number; that 404 is an
-          // endpoint mismatch, not a dead record). It names modelId 573152 "LUSTIFY! [NSFW
-          // checkpoint]" by coyotte, "baseModel":"SDXL 1.0", and the primary file
-          // lustifyNSFWCheckpoint_v10Alpha.safetensors, pruned fp16, 6.46 GB, SHA256
-          // 5080D7346C13... - the "Model hash 5080d7346c" the showcase photos carry, so
-          // those generations came off this very file and their metadata is evidence about
-          // it: steps 30, cfg 4-6.5 (most 4.5-5), "sampler":"DPM++ 2M SDE" with
-          // "scheduler":"karras", negativePrompt "airbrushed, blurry", "Size":"832x1152"
-          // (also 896x1152, 1152x832), prompts opening "score_9, 4k, highres, best quality,".
-          // The card itself states what the checkpoint is for and what it can also do:
-          // "a photoreal checkpoint optimized for creating high-quality imagery of women in
-          // explicit/sexual scenarios ... if you guide it properly, it is fully capable of
-          // generating stunning SFW photography, objects, animals, and fantasy environments".
-          // The version's own description is only "Initial release." and the card body says
-          // "Description to be rewritten completely" - the recommended-parameters block that
-          // exists on this model page (DPM++ SDE, Karras/Exponential, 4 steps, cfg 1-2) is
-          // written for the ⚡LIGHTNING⚡ files, a different checkpoint, so its step and
-          // guidance numbers do not apply to this one; only its note that "the lighting type
-          // tags need more weight ... (neon lighting:1.3), (cinematic lighting:1.1)" is
-          // carried into the prompts as a hint, marked as the author's remark on a sibling.
-          // No __metadata__ is in the file, but its header proves a full SDXL set:
-          // model.diffusion_model, conditioner.embedders.0/1 and first_stage_model all in
-          // F16 - the VAE the showcase metas pass by hand (sdxl_vae_fp16.safetensors) is
-          // already inside, so nothing extra is loaded. clip skip is not named; SDXL's
-          // family default of 2 stands.
+          // Lustify NSFW Checkpoint: CivitAI version 638929 - a VERSION id, so it
+          // resolves at /api/v1/model-versions/638929, not the model endpoint. The
+          // showcase photos carry the model hash of this very file, and their
+          // metadata is the evidence for its numbers: steps 30, cfg most 4.5-5,
+          // DPM++ 2M SDE on the karras grid, negative "airbrushed, blurry", sizes
+          // about 832x1152. The recommended-parameters block on the page belongs to
+          // the LIGHTNING files, another checkpoint, and is not used. The VAE is
+          // baked into the file; SDXL's family clip skip of 2 stands.
           {"lustify-sdxl", 832, 1152, "dpm++2m_sde", "karras", true},
-          // Juggernaut XL v9 (RunDiffusion/Juggernaut-XL-v9, base_model
-          // stabilityai/stable-diffusion-xl-base-1.0, the file on disk being the card's
-          // own "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"). Its "Recommended
-          // Settings" table is explicit: Resolution "832 × 1216 (portrait) · 1216 × 832
-          // (landscape)", Sampler "DPM++ 2M Karras" - which is dpm++2m drawing on the
-          // karras grid, both named in the engine's own words - Steps "30 – 40", CFG
-          // "3 – 7 (lower = more realistic)", so 35 and 5.0, the numbers its own
-          // from_pretrained example passes. The square 1024 this app had it at is SDXL's
-          // training size, not the size the card sends people to; the card's portrait
-          // column is 832x1216 and that is what a run asking for no size now draws.
-          // "Negative prompts: start with none. ... Heavy negatives often hurt more than
-          // they help on this model." - so it ships with none, as it already did, and
-          // these runs name none. Its VAE is "Already baked in", which is what the loader
-          // reads off the file. clip skip is not named for an SDXL and the engine's
-          // family default is already 2, so nothing is written.
+          // Juggernaut XL v9: the card's table: 832x1216 portrait, DPM++ 2M Karras,
+          // 30-40 steps, CFG 3-7 - so 35 and 5.0, the numbers its own example
+          // passes, at the size the card sends people to rather than SDXL's
+          // training square. "Start with none" for negatives; the VAE is baked in.
           {"juggernaut-xl-v9", 832, 1216, "dpm++2m", "karras", true},
-          // MiniMax H3. The numbers are unsloth's own example run beside the very GGUF
-          // bytes this machine downloads: "Example UD-Q2_K_XL, the smallest rung here,
-          // at 960x544, 124 frames, 24 FPS, 8 steps, guidance 1.0, seed 11, on a
-          // single card" - the length and shape the model's own maker runs it at, and
-          // 124 frames at 24 FPS is 5.2 s, inside the "up to 15 seconds at 24 FPS" its
-          // card states. 960 and 544 are both multiples of 32, and 124 = 17*7 + 5 sits
-          // exactly on the frame grid the engine keeps (docs/minimax_h3.md:93: "Frame
-          // count is aligned upward to the 17k+5 grid"), so nothing here is aligned
-          // upward on the way in. 8 steps is also what the repo's shorter example asks
-          // ("--width 640 --height 384 --video-frames 25 --steps 4"): the few steps a
-          // distilled, cfg-free checkpoint was trained for. No sampler or scheduler is
-          // named by either card, so the engine's choice for the model's family stands.
-          // The flow shift IS named, by the engine's own page (docs/minimax_h3.md:95:
-          // "The default video flow shift is 12. The audio stream is mapped internally
-          // to its shift of 3"), and the family default is not that, so 12 is written
-          // down. No step cache: docs/caching.md scopes the step caches to UNet models
-          // and the library refuses them for the other families on its own, and eight
-          // distilled steps leave a cache nothing to skip anyway.
+          // MiniMax H3: unsloth's own example run beside the very GGUF bytes this
+          // machine downloads - 960x544, 124 frames at 24 FPS, 8 steps, guidance
+          // 1.0, the length and shape the model's maker runs it at. 960 and 544
+          // are multiples of 32 and 124 = 17*7 + 5 sits on the engine's frame grid
+          // (docs/minimax_h3.md), so nothing is aligned upward on the way in.
+          // Neither card names a sampler, so the family choice stands; the video
+          // flow shift 12 is written from that same page, whose family default is
+          // not it. No step cache: those are scoped to UNet models, and eight
+          // distilled steps leave one nothing to skip.
           {"minimax-h3", 960, 544, "", "", false, -1, 12.0f, true, 124, 24},
       };
       return rows;
@@ -418,8 +345,7 @@ namespace ols
             "", "", 0,
             {{"model", "sd_xl_turbo_1.0_fp16.safetensors"}});
         // The card names 5 steps, DPM++ SDE Karras, CFG 1.0-2.0, and a recommended
-        // negative prompt, all shipped here as it writes them: the negative carries the
-        // (word:1.3) weights the card uses, which this engine's prompt parser reads.
+        // negative prompt, all shipped here as it writes them.
         add(out, "realvisxl-v5-lightning", "RealVisXL V5 Lightning", "SG161222/RealVisXL_V5.0_Lightning", 5, 1.5f,
             "portrait photo of a young woman with freckles in natural window light, 85mm lens, "
             "detailed skin texture, plain plaster wall behind her, shoulders and face only in "
@@ -430,40 +356,28 @@ namespace ols
             "eyes, bad eyes), (deformed face, ugly face, bad face), (deformed hands, bad hands, "
             "fused fingers), morbid, mutilated, mutation, disfigured",
             "", 0, {{"model", "RealVisXL_V5.0_Lightning_fp16.safetensors"}});
-        // The card's own recommendation: "Using Euler a with 25 steps and resolution of
-        // 1024px is recommended", run "with no negative prompt and otherwise default
-        // settings" - the default guidance of the software it names is 7. Its required
-        // clip skip 2 needs nothing from here: the engine resolves an unset clip skip to
-        // 2 for SDXL on its own (conditioner.hpp). The prompt carries the card's own
-        // quality template, which it says is what makes the defaults work.
+        // The card's own recommendation: Euler a, 25 steps, 1024px, no negative
+        // prompt, default guidance 7. Its clip skip 2 is the engine's SDXL family
+        // default already. The prompt carries the card's own quality template.
         add(out, "pony-diffusion-v6", "Pony Diffusion V6 XL", "LyliaEngine/Pony_Diffusion_V6_XL", 25,
             7.0f, "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, "
                   "source_anime, a knight in ornate silver armour standing alone in a stone "
                   "hall, torchlight on the breastplate, detailed face, dramatic lighting",
             "", "", 0,
             {{"model", "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"}, {"vae", "sdxl_vae.safetensors"}});
-        // The card's Recommended Settings table: steps 25-30, sampler "DPM++ 3M SDE
-        // Karras, Euler A", resolution "1024x1024 (native)", CFG 7.0-8.0 - the middle of
-        // each range here. Its first sampler is the bit-trick 2M SDE this engine carries
-        // (the solver ComfyUI names 3M), so that pair is used; Euler A is the card's own
-        // equal alternative. It also says the checkpoint ships a VAE ("Built-in VAE - No
-        // need for an external VAE"), which is why the row names no vae file, and its
-        // example prompts open on (masterpiece, best quality) quality tags, which the
-        // prompt below follows.
+        // The card's Recommended Settings: steps 25-30, "DPM++ 3M SDE Karras,
+        // Euler A", 1024x1024 (native), CFG 7.0-8.0 - the middle of each range.
+        // It ships its own VAE ("Built-in VAE"), so the row names none.
         add(out, "cyberrealistic-xl", "CyberRealistic XL", "cyberdelia/CyberRealisticXL", 28, 7.5f,
             "(masterpiece, best quality), RAW photo figure study of an unclothed woman seated with "
             "her back to the camera on a wooden stool against a plain grey backdrop, bare shoulders "
             "and back, one soft key light from the upper left, skin texture visible, no "
             "retouching, tasteful framing, RAW photo, 85mm",
             "", "", 0, {{"model", "CyberRealisticXLPlay_V10.0_FP16.safetensors"}});
-        // The card's own settings: a CFG of "around 5-7", "sampling steps below 30", and
-        // "Euler Ancestral (Euler a) as a sampler"; the square of its Multi Aspect
-        // Resolution table. Its prompt template is "1girl/1boy, character name, from what
-        // series, everything else in any order" with "masterpiece, best quality, very
-        // aesthetic, absurdres" prepended - the widget's own example below - and the
-        // negative is the card's recommended one, verbatim. It says the model is
-        // "optimized for Danbooru-style tags rather than natural language prompts", so the
-        // tags are the prompt here, not sentences.
+        // The card's own settings: CFG "around 5-7", "sampling steps below 30",
+        // Euler a, and the square of its Multi Aspect Resolution table. It is
+        // "optimized for Danbooru-style tags rather than natural language prompts",
+        // so the prompt is tags and the negative is the card's, verbatim.
         add(out, "animagine-xl-3.1", "Animagine XL 3.1", "cagliostrolab/animagine-xl-3.1", 28, 6.0f,
             "1girl, green hair, sweater, looking at viewer, upper body, beanie, outdoors, "
             "night, turtleneck, masterpiece, best quality, very aesthetic, absurdres",
@@ -580,11 +494,9 @@ namespace ols
     static uint64_t gUseTick = 0;
 
     // The working-set ceiling for image models: a standing three quarters of the
-    // largest GPU heap this pair of machines is built for, so the compute
-    // buffers and activations still fit beside the weights. it is a fixed
-    // number rather than a reading of the machine - what a machine can actually
-    // hold is answered when a context is opened, where the engine asks its own
-    // allocator for room and this module closes the models it must to make room.
+    // largest GPU heap, so the compute buffers and activations still fit beside
+    // the resident weights. what can actually be held is answered when a context
+    // is opened, where the engine asks its own allocator for room.
     static long long gpuTotalBytes()
     {
 #ifdef OLS_CUDART_LINKED
@@ -600,8 +512,8 @@ namespace ols
 
     static long long memoryBudgetBytes()
     {
-      const long long gpu = gpuTotalBytes();
-      return gpu > 0 ? gpu : 25769803776LL;
+      const long long heap = gpuTotalBytes();
+      return heap > 0 ? heap / 4 * 3 : 19327352832LL; // three quarters of 24 GiB
     }
     static std::map<std::string, std::vector<std::string>> gEvents;
     static std::map<std::string, bool> gEnded;
@@ -609,12 +521,10 @@ namespace ols
     // One record per job: kind, model, state, timings, progress, and the file it made.
     static std::map<std::string, json> gJobs;
     // What stands proved about the bytes of this weights room is the room's own
-    // record, read and written through VerifiedRoom: one set of rows for the
-    // whole machine, so a page and a download cannot hold two different opinions
-    // about the same file.
-    // which precision of a model a person last asked for, kept beside the
-    // weights room's own record so the next open keeps it: the choice is a
-    // machine-wide fact about a model, not one a page forgets on reload.
+    // record, read and written through VerifiedRoom - see the room beside it.
+    // Which precision of a model a person last asked for. The choice is a
+    // machine-wide fact about a model, so it stands beside the weights room and
+    // outlives a restart.
     static std::map<std::string, std::string> gChosenQuant;
     static std::map<std::string, std::shared_ptr<std::mutex>> gLoadGuards;
     static std::map<std::string, int> gGenerating;
@@ -634,11 +544,10 @@ namespace ols
     // its record, and is read once when the job settles.
     static std::map<std::string, long long> gStartedMs;
 
-    // the newest jobs this engine keeps: past this its oldest record is dropped, so
-    // the merged status answer stays a few kilobytes however long the machine has
-    // been up. the cap is the one number the shared ledger states, and the status
-    // page's words about what is kept follow it.
-
+    // the newest jobs this engine keeps: past this its oldest record is dropped,
+    // so the merged status answer stays a few kilobytes however long the machine
+    // has been up. the cap is ols::kKeptJobs, the one number the shared ledger
+    // states for every service.
     static void pruneJobs()
     {
       ols::forgetPastKept(gJobOrder, ols::kKeptJobs, gJobs, gEvents, gEnded, gCancel, gStartedMs);
@@ -647,36 +556,66 @@ namespace ols
     static std::string gOutputDir;
     static std::string gRefsDir;
 
-    // What a settled run cost, filed beside the settings it ran at. A page that
-    // wants to say "this draw will take about a minute" has one honest source: what
-    // a run of these same settings cost on this machine before. A model's size says
-    // nothing about its time, and the suite's log is a file no browser reads, so the
-    // module keeps the times itself and answers them at /api/timings. A generation
-    // is keyed by the model and by everything that changes the work - the sides
-    // asked for, the steps, the guidance, the sampler and scheduler as this run
-    // resolved them, the step cache, the device the work ran on, the offload and
-    // sage-attention switches, how many pictures the ask asked for, and how many
-    // reference pictures it started from. An open is keyed by the model and the
-    // precision it was opened as. The seed is deliberately not in any key: another
-    // seed is the same work at these settings. A run that was cancelled or failed
-    // kept only part of its work and is not filed.
-    static std::map<std::string, json> gTimings;
-    static bool gTimingsLoaded = false;
-
-    // Called with gMutex held. Read the ledger back once per process, so a machine
-    // that was shut down and started again still knows what its runs cost. A file
-    // that cannot be read is left alone: the ledger fills up again as work runs, and
-    // a page that has nothing to read says it has no sample rather than guessing.
-    static void ensureTimingsLoadedLocked()
+    // Called with gMutex held. Read the chosen precisions back once per process.
+    static void ensureChosenLoadedLocked()
     {
-      if (gTimingsLoaded)
+      static bool loaded = false;
+      if (loaded)
         return;
-      gTimingsLoaded = true;
+      loaded = true;
+      std::string body;
+      if (!readFileText(gWeightsDir + "/.chosen-quants.json", body))
+        return;
+      const json doc = json::parse(body, nullptr, false);
+      if (!doc.is_object())
+        return;
+      for (const auto &entry : doc.items())
+      {
+        if (entry.value().is_string())
+          gChosenQuant[entry.key()] = entry.value().get<std::string>();
+      }
+    }
+
+    // Called with gMutex held. The few short rows are rewritten whole: as cheap
+    // as merging one into them, and a half-written file never stands.
+    static bool saveChosenLocked()
+    {
+      json doc = json::object();
+      for (const auto &entry : gChosenQuant)
+        doc[entry.first] = entry.second;
+      return writeFileText(gWeightsDir + "/.chosen-quants.json", doc.dump());
+    }
+
+    // What a settled run cost, filed beside the settings it ran at: the honest
+    // answer to "what will this draw take" is what these same settings cost here
+    // before. A generation is keyed by the model and by everything that changes
+    // the work - the sides, the steps, the guidance, the sampler and scheduler as
+    // this run resolved them, the step cache, the device, the sage-attention
+    // switch, the picture count and the reference count. An open is keyed by the
+    // model and the precision it was opened as. The seed is in no key: another
+    // seed is the same work. A run that was cancelled or failed is not filed.
+    // The ledger stands behind its own lock: filing and reading it reach files,
+    // and that work must never happen while gMutex - the lock every page answer
+    // passes through - is held.
+    static std::map<std::string, json> gTimings;
+    static std::mutex gTimingsMutex;
+    // One row per set of settings ever run to the end; past this depth the
+    // oldest-touched rows come off, so a machine that has been reconfigured for
+    // years cannot grow the ledger or the file past a page's patience.
+    static const std::size_t kMaxTimingRows = 400;
+
+    // Called with gTimingsMutex held. Read the ledger back once per process.
+    static void ensureTimingsLoaded()
+    {
+      static bool loaded = false;
+      if (loaded)
+        return;
+      loaded = true;
       std::string body;
       if (!readFileText(gWeightsDir + "/.run-timings.json", body))
         return;
       const json doc = json::parse(body, nullptr, false);
-      if (doc.is_discarded() || !doc.is_object())
+      if (!doc.is_object())
         return;
       for (const auto &entry : doc.items())
       {
@@ -685,11 +624,8 @@ namespace ols
       }
     }
 
-    // Called with gMutex held. The ledger holds one row per set of settings this
-    // machine has run - tens of rows after a full suite - so rewriting the whole
-    // file is as cheap as merging a row into it, and a machine that dies mid-write
-    // loses at most the one run it was filing.
-    static bool saveTimingsLocked()
+    // Called with gTimingsMutex held.
+    static bool saveTimings()
     {
       json doc = json::object();
       for (const auto &entry : gTimings)
@@ -697,10 +633,10 @@ namespace ols
       return writeFileText(gWeightsDir + "/.run-timings.json", doc.dump());
     }
 
-    // Called with gMutex held, from the one place a job settles. The record carries
-    // its own settings, so filing happens where the truth is: a run that finished
-    // every step of its window says what these settings cost, and nothing else does.
-    static void noteTimingLocked(const json &record)
+    // From the one place a job settles, once the file it describes is settled
+    // too: a run that finished every step of its window says what these settings
+    // cost, and nothing else does. Called without gMutex held.
+    static void noteTiming(const json &record)
     {
       if (!record.is_object() || !record.contains("kind") || !record.contains("model"))
         return;
@@ -718,22 +654,21 @@ namespace ols
       if (kind == "load")
       {
         std::string precision = record.value("quant", std::string());
-        if (precision.empty())
-          precision = "as shipped";
-        settings["precision"] = precision;
+        settings["precision"] = precision.empty() ? std::string("as shipped") : precision;
       }
       else
       {
-        // a run that never got as far as naming its settings cannot be filed: the
-        // settings are the key, and an ask that was refused never had any
+        // the settings are the key, and an ask that was refused never had any
         if (!record.contains("settings") || !record["settings"].is_object())
           return;
         settings = record["settings"];
       }
-      // the key is the settings themselves, printed by the json library with its
-      // keys in order, so the same ask from any door lands on one row
+      // the key is the settings themselves, printed with its keys in order, so
+      // the same ask from any door lands on one row
       const std::string key = kind + "|" + record.value("model", std::string()) + "|" + settings.dump();
-      ensureTimingsLoadedLocked();
+      const long long now = nowSeconds();
+      std::lock_guard<std::mutex> lock(gTimingsMutex);
+      ensureTimingsLoaded();
       auto at = gTimings.find(key);
       if (at == gTimings.end())
       {
@@ -745,7 +680,7 @@ namespace ols
         row["min_ms"] = ms;
         row["max_ms"] = ms;
         row["last_ms"] = ms;
-        row["updated"] = nowSeconds();
+        row["updated"] = now;
         gTimings[key] = row;
       }
       else
@@ -760,9 +695,19 @@ namespace ols
         if (ms > row.value("max_ms", ms))
           row["max_ms"] = ms;
         row["last_ms"] = ms;
-        row["updated"] = nowSeconds();
+        row["updated"] = now;
       }
-      saveTimingsLocked();
+      while (gTimings.size() > kMaxTimingRows)
+      {
+        auto oldest = gTimings.begin();
+        for (auto it = gTimings.begin(); it != gTimings.end(); ++it)
+        {
+          if (it->second.value("updated", 0LL) < oldest->second.value("updated", 0LL))
+            oldest = it;
+        }
+        gTimings.erase(oldest);
+      }
+      saveTimings();
     }
     // How many of this machine's own renders stand on disk. The newest that many
     // are kept, and that many is also the deepest a gallery page can be asked
@@ -778,6 +723,9 @@ namespace ols
     // than the oldest one file at a time.
     static const int kPruneSlack = 128;
     static int32_t gThreads = 4;
+    // The download keys stand behind their own lock: the entry point writes them
+    // once at startup and curl reads them on every job thread after that.
+    static std::mutex gKeysMutex;
     static std::string gHfToken;
     static std::string gCivitaiKey;
 
@@ -828,7 +776,7 @@ namespace ols
       return found != gGenerating.end() && found->second > 0;
     }
 
-    static void touchContext(const std::string &modelId, const std::string &form);
+    static void touchContext(const std::string &modelId, const std::string &form, long long bytes);
     static std::string lruVictimLocked(const std::string &keep);
     static void closeContextLocked(const std::string &modelId);
 
@@ -841,8 +789,12 @@ namespace ols
           ++it;
           continue;
         }
-        closeContextLocked(it->first);
+        // closeContextLocked drops the model's own pending-erase entry with it,
+        // which takes this iterator with it: take the name and step past the
+        // entry before anything can erase it.
+        const std::string modelId = it->first;
         it = gPendingErase.erase(it);
+        closeContextLocked(modelId);
       }
     }
 
@@ -870,6 +822,8 @@ namespace ols
 
     static void markState(const std::string &job, const std::string &state)
     {
+      json timingRecord;
+      bool willFile = false;
       {
         std::lock_guard<std::mutex> lock(gMutex);
         json &record = gJobs[job];
@@ -877,17 +831,17 @@ namespace ols
         if (ols::stateEnded(state))
         {
           record["ended_at"] = nowSeconds();
-          // the run is over: state how long it took, and let go of the start it
-          // was measured from
           const auto started = gStartedMs.find(job);
           if (started != gStartedMs.end())
           {
             record["elapsed_ms"] = steadyMs() - started->second;
             gStartedMs.erase(job);
           }
-          // the run is over and its record now carries its own settings and its
-          // whole cost, so this is where the machine files what those settings cost
-          noteTimingLocked(record);
+          // the record now carries its own settings and its whole cost: what
+          // those settings cost is filed below, after the lock is let go,
+          // because filing reaches a file
+          willFile = true;
+          timingRecord = record;
           // A finished job finished every step of its own count, so a row that
           // reads "0 of 1" under a job that just completed would be a lie; a
           // stopped or failed job keeps the part it really did.
@@ -900,6 +854,8 @@ namespace ols
           }
         }
       }
+      if (willFile)
+        noteTiming(timingRecord);
       if (state == ols::kStateCancelled)
         pushEvent(job, json{{"type", "cancelled"}}.dump());
     }
@@ -927,7 +883,14 @@ namespace ols
     static void noteResult(const std::string &job, const std::string &url)
     {
       std::lock_guard<std::mutex> lock(gMutex);
-      gJobs[job]["url"] = url;
+      json &record = gJobs[job];
+      // every file a run made, in the order the stream carried them; "url" stays
+      // the first, which is the one a page with room for one picture shows.
+      if (!record.contains("urls") || !record["urls"].is_array())
+        record["urls"] = json::array();
+      record["urls"].push_back(url);
+      if (!record.contains("url"))
+        record["url"] = url;
     }
 
     // A word about one step that did not stop the job: a file that came by a
@@ -976,8 +939,14 @@ namespace ols
 
     static int runCurl(const std::string &url, const std::string &dest, int maxSeconds = 0)
     {
-      const std::string key = url.rfind("https://civitai.com/", 0) == 0 ? gCivitaiKey : gHfToken;
-      return ols::platform::curlFetch(dest, url, key, maxSeconds);
+      // read the keys under their lock: a job thread reaches here while the
+      // entry point may still be standing the keys up
+      std::string token;
+      {
+        std::lock_guard<std::mutex> lock(gKeysMutex);
+        token = url.rfind("https://civitai.com/", 0) == 0 ? gCivitaiKey : gHfToken;
+      }
+      return ols::platform::curlFetch(dest, url, token, maxSeconds);
     }
 
     // How long one round of an internet fetch is allowed to run: one curl for the
@@ -1081,6 +1050,11 @@ namespace ols
 
     static json fetchListing(const std::string &repo)
     {
+      // A card that names no repo has no tree to ask about: the address built
+      // from an empty name asks for the root of huggingface and answers a 404
+      // every single time.
+      if (repo.empty())
+        return json();
       static std::map<std::string, json> gListings;
       static std::map<std::string, std::shared_ptr<std::mutex>> gListingGuards;
       std::shared_ptr<std::mutex> guard;
@@ -1140,6 +1114,7 @@ namespace ols
     // the table is work paid for a listing that did not change.
     static json repoListingCached(const std::string &flatRepo)
     {
+      static std::mutex parsedMutex;
       static std::map<std::string, std::pair<std::string, json>> parsed;
       const std::string path = gWeightsDir + "/.hf-tree-" + flatRepo + ".json";
       std::error_code ec{};
@@ -1147,16 +1122,21 @@ namespace ols
       if (ec)
         return json();
       const std::string stamp = std::to_string(when.time_since_epoch().count());
-      std::lock_guard<std::mutex> lock(gMutex);
-      const auto found = parsed.find(path);
-      if (found != parsed.end() && found->second.first == stamp)
-        return found->second.second;
+      {
+        std::lock_guard<std::mutex> lock(parsedMutex);
+        const auto found = parsed.find(path);
+        if (found != parsed.end() && found->second.first == stamp)
+          return found->second.second;
+      }
+      // the read and the parse stand outside every shared lock: the tree can be
+      // long, and gMutex is what every page answer passes through
       std::string body;
       if (!readFileText(path, body))
         return json();
       json tree = json::parse(body, nullptr, false);
       if (tree.is_discarded())
         tree = json();
+      std::lock_guard<std::mutex> lock(parsedMutex);
       parsed[path] = {stamp, tree};
       return tree;
     }
@@ -1173,12 +1153,15 @@ namespace ols
       for (const auto &entry : tree)
       {
         const std::string path = ols::statedString(entry, "path");
-        if (path.rfind(prefix, 0) == 0 &&
-            path.size() >= 12 && path.compare(path.size() - 12, 12, ".safetensors") == 0 &&
-            path.find("-of-", prefix.size()) != std::string::npos)
-        {
+        if (path.rfind(prefix, 0) != 0 || path.find("-of-", prefix.size()) == std::string::npos)
+          continue;
+        // shards come in the clothing the weights keep: a safetensors set and a
+        // gguf set are both split the same way, and a listing should find the
+        // brothers of either, not only of one
+        const bool dress = (path.size() >= 12 && path.compare(path.size() - 12, 12, ".safetensors") == 0) ||
+                           (path.size() >= 5 && path.compare(path.size() - 5, 5, ".gguf") == 0);
+        if (dress)
           out.push_back(path);
-        }
       }
       if (out.size() < 2)
         return {slot};
@@ -1431,13 +1414,12 @@ namespace ols
 
     // The switches the web interface offers: kept on the server so a page reload
     // shows the same page. Nothing here is about what a model may draw: a
-    // picture is shown whole, always, so there is no filter to remember and no
-    // switch to turn it off. "cpu" is the one that names which part of the
-    // machine works: the card is left to whatever else the machine is busy with,
-    // and every weight and every step is worked where the threads are.
+    // picture is shown whole, always. "cpu" names which part of the machine
+    // works: the card is left to whatever else the machine is busy with, and
+    // every weight and every step is worked where the threads are.
     static const std::vector<std::string> &kPrefKeys()
     {
-      static const std::vector<std::string> keys = {"offload", "tiling", "sage_attn", "cpu"};
+      static const std::vector<std::string> keys = {"tiling", "sage_attn", "cpu"};
       return keys;
     }
     static bool prefKeyNamed(const std::string &key)
@@ -1561,7 +1543,12 @@ namespace ols
           return safetensorsComplete(path);
         return true;
       }
-      return got == want;
+      // a card states its sum in upper-case hex and some spell the kind before
+      // it; the sum computed here is lower-case hex. compare what they say.
+      std::string expected = lowerText(want);
+      if (expected.rfind("sha256:", 0) == 0)
+        expected.erase(0, 7);
+      return lowerText(got) == expected;
     }
 
     // What a model can be taken as: the same model with some of its parts stood
@@ -1716,6 +1703,7 @@ namespace ols
         const std::string held = [&]()
         {
           std::lock_guard<std::mutex> lock(gMutex);
+          ensureChosenLoadedLocked();
           const auto found = gChosenQuant.find(def->id);
           return found == gChosenQuant.end() ? std::string() : found->second;
         }();
@@ -1850,6 +1838,8 @@ namespace ols
       return fallback;
     }
 
+    // what a model's files weigh, shard for shard: a set that came apart on the
+    // way to this machine costs every piece of it, not just the first.
     static long long weightsBytesOf(const std::string &modelId, const std::string &form)
     {
       const ImageModelDef *def = findModel(modelId);
@@ -1858,21 +1848,28 @@ namespace ols
         return 0;
       for (const auto &file : modelFiles(def, form))
       {
-        const std::string path = ols::modelFilePath(gWeightsDir, modelId, localNameOf(file.second));
-        std::error_code ec{};
-        const auto size = std::filesystem::file_size(path, ec);
-        if (!ec)
-          bytes += static_cast<long long>(size);
+        const std::string repo = slotRepo(file.second).empty() ? def->repo : slotRepo(file.second);
+        for (const std::string &part : expandShards(repo, file.second))
+        {
+          const std::string path = ols::modelFilePath(gWeightsDir, modelId, localNameOf(part));
+          std::error_code ec{};
+          const auto size = std::filesystem::file_size(path, ec);
+          if (!ec)
+            bytes += static_cast<long long>(size);
+        }
       }
       return bytes;
     }
 
-    // Caller holds gCtxMutex.
-    static void touchContext(const std::string &modelId, const std::string &form)
+    // Caller holds gCtxMutex, and holds no lock that weightsBytesOf or the form
+    // tables need: the bytes and the form are counted before this, never inside
+    // it, because this stamp lands on a path that already holds gCtxMutex and
+    // gMutex must only ever be taken before it, never under it.
+    static void touchContext(const std::string &modelId, const std::string &form, long long bytes)
     {
       ++gUseTick;
       gCtxUse[modelId] = gUseTick;
-      gCtxBytes[modelId] = weightsBytesOf(modelId, form);
+      gCtxBytes[modelId] = bytes;
       gCtxForm[modelId] = form;
     }
 
@@ -1954,32 +1951,20 @@ namespace ols
     static std::string currentChosenQuant(const std::string &modelId)
     {
       std::lock_guard<std::mutex> lock(gMutex);
+      ensureChosenLoadedLocked();
       const auto found = gChosenQuant.find(modelId);
       return found == gChosenQuant.end() ? std::string() : found->second;
     }
 
-    static bool clearOtherModelsLocked(const std::string &modelId, std::string &why)
-    {
-      std::vector<std::string> others;
-      for (const auto &entry : gCtx)
-      {
-        if (entry.first != modelId)
-          others.push_back(entry.first);
-      }
-      for (const std::string &other : others)
-      {
-        if (busyModel(other))
-        {
-          why = "Another model is still processing: " + other;
-          return false;
-        }
-      }
-      for (const std::string &other : others)
-        closeContextLocked(other);
-      return true;
-    }
-    static sd_ctx_t *openContext(const std::string &modelId, bool offload, bool sage, bool cpu,
-                                 std::string &error)
+    // Open a model, or take the one already standing. openedForm and openedBytes
+    // come back from here telling what the weights really stood as and weighed:
+    // resolved before the context lock, because the tables they read stand behind
+    // the request lock, and gMutex may only ever be taken before gCtxMutex, never
+    // under it - the page answers take them in that order and an open taking them
+    // the other way is a deadlock waiting for its two halves.
+    static sd_ctx_t *openContext(const std::string &modelId, bool sage, bool cpu,
+                                 std::string &error, std::string *openedFormOut = nullptr,
+                                 long long *openedBytesOut = nullptr)
     {
       const ImageModelDef *def = findModel(modelId);
       if (!def)
@@ -1987,34 +1972,64 @@ namespace ols
         error = "that model is not one this machine knows: " + modelId;
         return nullptr;
       }
-      if (cpu)
-      {
-        error = "image models here are kept in card memory only; the cpu path is not allowed for them";
-        return nullptr;
-      }
+      if (openedFormOut)
+        openedFormOut->clear();
+      if (openedBytesOut)
+        *openedBytesOut = 0;
       const std::string chosen = currentChosenQuant(modelId);
       const std::string base = ols::modelFileDir(gWeightsDir, modelId);
+      // the form is resolved once, out here: what the ask named when it names a
+      // form, else what the files standing here answer with.
+      const ModelForm *form = formFor(def, chosen);
+      std::string openedForm = form ? form->label : std::string();
+      if (!form)
+      {
+        // the row's own files are, for a model whose default form is the file the
+        // row already names, one of the forms it is offered as - say that form,
+        // the same words the model card uses, so the form a run is filed under
+        // and the form the card names are never two answers to one question.
+        const auto offers = findOffers(modelId);
+        if (offers)
+        {
+          for (const ModelForm &offer : *offers)
+          {
+            if (filesAsForm(def, &offer) == def->files)
+            {
+              openedForm = offer.label;
+              break;
+            }
+          }
+        }
+      }
+      const long long openedBytes = weightsBytesOf(modelId, chosen);
       sd_ctx_params_t params;
       sd_ctx_params_init(&params);
-      std::vector<std::pair<std::string, std::string>> wantedFiles = modelFiles(def, chosen);
+      const std::vector<std::pair<std::string, std::string>> wantedFiles = filesAsForm(def, form);
+      // every file a slot stands under has to be here before the engine is asked
+      // for anything - a shard set is more files than its name says - and the
+      // engine is handed the first of them, which is the one it reads the rest
+      // from.
       std::vector<std::string> paths;
       paths.reserve(wantedFiles.size());
       for (const auto &file : wantedFiles)
       {
-        paths.push_back(base + localNameOf(file.second));
-      }
-      for (size_t i = 0; i < paths.size(); ++i)
-      {
-        if (!ols::fileExists(paths[i]))
+        const std::string repo = slotRepo(file.second).empty() ? def->repo : slotRepo(file.second);
+        const std::vector<std::string> parts = expandShards(repo, file.second);
+        for (const std::string &part : parts)
         {
-          error = "the file for " + modelId + " (" + localNameOf(wantedFiles[i].second) + ") is not here";
-          return nullptr;
+          if (!ols::fileExists(base + localNameOf(part)))
+          {
+            error = "the file for " + modelId + " (" + localNameOf(part) + ") is not here";
+            return nullptr;
+          }
         }
+        paths.push_back(base + localNameOf(parts.front()));
       }
       for (size_t i = 0; i < wantedFiles.size(); ++i)
       {
         const std::string slot = wantedFiles[i].first;
         const char *path = paths[i].c_str();
+        bool handedOn = true;
         if (slot == "model")
           params.model_path = path;
         else if (slot == "clip_l")
@@ -2031,14 +2046,21 @@ namespace ols
           params.llm_path = path;
         else if (slot == "llm_vision")
           params.llm_vision_path = path;
+        // the audio half of a joint video+audio model: the engine's page passes
+        // it as its own component and says a run without it "produces video
+        // without a decoded audio track" (docs/minimax_h3.md).
         else if (slot == "audio_vae")
-          // the audio half of a joint video+audio model: the engine's page passes
-          // it as its own component ("Pass the four MiniMax-H3 components
-          // separately", docs/minimax_h3.md:7) and says what leaving it out costs
-          // ("Omitting --audio-vae still runs the joint diffusion model but
-          // produces video without a decoded audio track", docs line 46) - half of
-          // what the model makes would go unmade.
           params.audio_vae_path = path;
+        else
+          handedOn = false;
+        // a table naming a part the engine has no door for would otherwise load
+        // the model short one weight and never say so.
+        if (!handedOn)
+        {
+          std::fprintf(stderr, "[image] %s names a part this machine cannot hand on: %s\n",
+                       modelId.c_str(), slot.c_str());
+          std::fflush(stderr);
+        }
       }
       params.n_threads = gThreads;
       params.enable_mmap = true;
@@ -2055,20 +2077,26 @@ namespace ols
         std::fflush(stderr);
       }
       // The card of this machine, named in the engine's words, is what a model
-      // opens on. "cpu" leaves that card alone - every weight and every step
-      // then works where the threads are, which is what a machine asks when the
-      // card is busy with something else - and with no device named the engine
-      // keeps its own cpu path, so nothing of the card is opened for it.
-      const std::string gpu = gpuDeviceName();
-      if (gpu.empty())
+      // opens on; "cpu" is a name the engine resolves as well, and every weight
+      // and every step then works where the threads are. A library with no card
+      // in front of it offers the cpu and nothing else - the engine's own plan
+      // for that case is the default backend too - so a run asks the cpu and
+      // the log says so once, rather than every run refusing over a card no
+      // one ever asked for.
+      const std::string card = cpu ? std::string() : gpuDeviceName();
+      const bool onCpu = cpu || card.empty();
+      if (card.empty())
       {
-        error = "image models here are kept in card memory only; no card was found to load them on";
-        return nullptr;
+        static std::once_flag loggedOnce;
+        std::call_once(loggedOnce, [] {
+          std::fprintf(stderr, "[image] no card answers on this machine: image models open on the cpu\n");
+          std::fflush(stderr);
+        });
       }
-      params.backend = gpu.c_str();
-      params.params_backend = gpu.c_str();
+      const std::string device = onCpu ? std::string("cpu") : card;
+      params.backend = device.c_str();
+      params.params_backend = device.c_str();
       params.auto_fit = true;
-      (void)offload;
 
       std::shared_ptr<std::mutex> guard;
       {
@@ -2076,17 +2104,17 @@ namespace ols
         const auto standing = gCtx.find(modelId);
         if (standing != gCtx.end())
         {
-          const bool stands_on = gCtxCpu.count(modelId) ? gCtxCpu[modelId] : false;
-          const auto openForm = gCtxForm.find(modelId);
-          const std::string openedForm = openForm == gCtxForm.end() ? std::string() : openForm->second;
-          if (stands_on != cpu || openedForm != chosen)
+          const bool standsOn = gCtxCpu.count(modelId) ? gCtxCpu[modelId] : false;
+          const auto opened = gCtxForm.find(modelId);
+          const std::string standsAs = opened == gCtxForm.end() ? std::string() : opened->second;
+          if (standsOn != onCpu || standsAs != openedForm)
           {
             std::fprintf(stderr, "[image] %s stands open on %s and as %s, and this asks for %s and as %s: the weights are moved\n",
                          modelId.c_str(),
-                         stands_on ? "cpu" : "card",
-                         openedForm.empty() ? "its default" : openedForm.c_str(),
-                         cpu ? "cpu" : "card",
-                         chosen.empty() ? "its default" : chosen.c_str());
+                         standsOn ? "cpu" : "card",
+                         standsAs.empty() ? "its default" : standsAs.c_str(),
+                         onCpu ? "cpu" : "card",
+                         openedForm.empty() ? "its default" : openedForm.c_str());
             std::fflush(stderr);
             closeContextLocked(modelId);
           }
@@ -2097,7 +2125,11 @@ namespace ols
         const auto found = gCtx.find(modelId);
         if (found != gCtx.end())
         {
-          touchContext(modelId, chosen);
+          touchContext(modelId, openedForm, openedBytes);
+          if (openedFormOut)
+            *openedFormOut = openedForm;
+          if (openedBytesOut)
+            *openedBytesOut = openedBytes;
           return found->second;
         }
         const auto existing = gLoadGuards.find(modelId);
@@ -2115,17 +2147,12 @@ namespace ols
         const auto found = gCtx.find(modelId);
         if (found != gCtx.end())
         {
-          touchContext(modelId, chosen);
+          touchContext(modelId, openedForm, openedBytes);
+          if (openedFormOut)
+            *openedFormOut = openedForm;
+          if (openedBytesOut)
+            *openedBytesOut = openedBytes;
           return found->second;
-        }
-      }
-      std::string roomWhy;
-      {
-        std::lock_guard<std::mutex> lock(gCtxMutex);
-        if (!clearOtherModelsLocked(modelId, roomWhy))
-        {
-          error = roomWhy;
-          return nullptr;
         }
       }
       params.max_vram = nullptr;
@@ -2154,9 +2181,18 @@ namespace ols
       {
         std::lock_guard<std::mutex> lock(gCtxMutex);
         gCtx[modelId] = ctx;
-        gCtxCpu[modelId] = cpu;
-        touchContext(modelId, chosen);
+        gCtxCpu[modelId] = onCpu;
+        touchContext(modelId, openedForm, openedBytes);
+        // room is made after the new weights stand, never before: closing an
+        // idle neighbour that pushed the room past its ceiling while the new
+        // model opened would leave the engine short of heap at the one moment
+        // it needs the most.
+        trimOverBudgetLocked(modelId);
       }
+      if (openedFormOut)
+        *openedFormOut = openedForm;
+      if (openedBytesOut)
+        *openedBytesOut = openedBytes;
       return ctx;
     }
 
@@ -2321,17 +2357,40 @@ namespace ols
         if (!doDownload(job, def))
           return;
       }
+      // an open cannot be taken back: a stop asked for now is honoured by
+      // stopping here, before the weights are moved onto a device
+      if (cancelledRequested(job))
+      {
+        markState(job, ols::kStateCancelled);
+        return;
+      }
       std::string error;
+      std::string openedForm;
       // The load hand opens the model the way the page's switches name it, so a
       // model loaded by hand stands on the same device the next run would put it
       // on - and a run that names another of them moves the weights.
-      sd_ctx_t *ctx = openContext(modelId, prefOn("offload"), prefOn("sage_attn"), prefOn("cpu"),
-                                  error);
+      sd_ctx_t *ctx = openContext(modelId, prefOn("sage_attn"), prefOn("cpu"), error, &openedForm);
       if (!ctx)
       {
         noteError(job, error);
         markState(job, ols::kStateError);
         return;
+      }
+      if (cancelledRequested(job))
+      {
+        // the weights stand now; pulling them back out from under a run that may
+        // already be working with them costs more than the stop is worth, so the
+        // load says it stopped and says what it leaves standing.
+        noteStep(job, "the model was open before the stop was asked for; it stands open");
+        markState(job, ols::kStateCancelled);
+        return;
+      }
+      {
+        // the timing row for an open is keyed by the precision the model was
+        // really opened as, not by what the page had asked for at best
+        std::lock_guard<std::mutex> lock(gMutex);
+        if (!openedForm.empty())
+          gJobs[job]["quant"] = openedForm;
       }
       markState(job, ols::kStateDone);
     }
@@ -2472,6 +2531,25 @@ namespace ols
         const std::string output = gOutputDir + "/" + source + ext;
         if (std::filesystem::exists(output, ec))
           return output;
+      }
+      // a clip cannot be read as a picture, and no hand here can take one - but
+      // every clip this machine stood has a still beside it, the poster the
+      // gallery draws and the preview a browser moves, and a reference named by
+      // a clip's id asks for the first of those that stands. without this, a
+      // page could keep a clip's picture for later and be told, when it asked
+      // for it, that the machine could not find it.
+      for (const auto &still : {".poster.png", ".preview.apng"})
+      {
+        if (std::filesystem::exists(gRefsDir + "/" + source + ".avi", ec) ||
+            std::filesystem::exists(gOutputDir + "/" + source + ".avi", ec))
+        {
+          const std::string kept = gRefsDir + "/" + source + still;
+          if (std::filesystem::exists(kept, ec))
+            return kept;
+          const std::string made = gOutputDir + "/" + source + still;
+          if (std::filesystem::exists(made, ec))
+            return made;
+        }
       }
       if (ols::fileExists(source))
         return source;
@@ -2746,7 +2824,9 @@ namespace ols
         control2.push_back('\x00'); // the frame stands for one part of a second:
         control2.push_back('\x01'); // a numerator of one over the rate below
         putBE16(control2, static_cast<std::uint16_t>(previewFps)); // the denominator
-        putBE16(control2, 0u); // dispose: nothing to undo; blend: over, not replace
+        putBE16(control2, 0u); // dispose: leave what was drawn; blend: source -
+                               // every frame is the whole picture, so what a
+                               // reader draws over what it says stands
         pngChunk(out, "fcTL", control2);
         ++sequence;
 
@@ -2841,10 +2921,15 @@ namespace ols
     // The clip's own file: a RIFF AVI that carries the frames as they came and the
     // sound the model carried with them. With keepTheFramesWhole the frames are
     // written as plain pixels instead of as JPEGs, which no player has to know a
-    // codec for - a much bigger file that even the plainest player reads.
+    // codec for - a much bigger file that even the plainest player reads. A frame
+    // that does not stand at the size of the others is left out, so framesWritten
+    // comes back with the number the file really carries.
     static bool writeAviClip(const std::string &path, const sd_image_t *frames, int count, int fps,
-                             const sd_audio_t *audio, bool keepTheFramesWhole = false)
+                             const sd_audio_t *audio, bool keepTheFramesWhole = false,
+                             int *framesWrittenOut = nullptr)
     {
+      if (framesWrittenOut)
+        *framesWrittenOut = 0;
       if (count < 1 || fps < 1)
         return false;
       const std::uint32_t wide = frames[0].width;
@@ -2890,21 +2975,41 @@ namespace ols
       if (payloads.empty())
         return false;
       const std::uint32_t made = static_cast<std::uint32_t>(payloads.size());
+      if (framesWrittenOut)
+        *framesWrittenOut = static_cast<int>(made);
       // A frame of plain pixels is written as an uncompressed chunk: that is what
       // tells a reader to take the bytes as they stand rather than hand them to a
       // codec, which is the whole point of the plain copy.
       const char *const chunkKind = rawFrames ? "00db" : "00dc";
       const std::uint32_t chunkFlags = rawFrames ? 0u : 0x10u;
+      // the biggest chunk either stream holds, and what the whole clip costs a
+      // second: these two fields are read by players that size their buffers from
+      // the header, and an audio-only number in a field that counts both streams
+      // says a compressed clip needs no room for its pictures.
+      std::uint64_t clipBytes = 0;
+      std::uint32_t biggestVideo = 0;
+      for (const std::string &body : payloads)
+      {
+        clipBytes += body.size();
+        if (body.size() > biggestVideo)
+          biggestVideo = static_cast<std::uint32_t>(body.size());
+      }
+      std::uint32_t biggestChunk = biggestVideo;
+      if (hasAudio && pcm.size() > biggestChunk)
+        biggestChunk = static_cast<std::uint32_t>(pcm.size());
+      const std::uint32_t bytesPerSecond = static_cast<std::uint32_t>(
+          (clipBytes + (hasAudio ? pcm.size() : 0u)) * static_cast<std::uint64_t>(fps) /
+          static_cast<std::uint64_t>(made));
 
       std::string avih;
       putLE32(avih, static_cast<std::uint32_t>(1000000 / fps));
-      putLE32(avih, hasAudio ? align * rate : 0u);
+      putLE32(avih, bytesPerSecond);
       putLE32(avih, 0u);
       putLE32(avih, 0x110u);
       putLE32(avih, made);
       putLE32(avih, 0u);
       putLE32(avih, hasAudio ? 2u : 1u);
-      putLE32(avih, frameBytes);
+      putLE32(avih, biggestChunk);
       putLE32(avih, wide);
       putLE32(avih, tall);
       for (int at = 0; at < 4; ++at)
@@ -2927,12 +3032,16 @@ namespace ols
       putLE32(video, static_cast<std::uint32_t>(fps));
       putLE32(video, 0u);
       putLE32(video, made);
-      putLE32(video, frameBytes);
+      putLE32(video, rawFrames ? frameBytes : biggestVideo);
       putLE32(video, static_cast<std::uint32_t>(-1));
+      // a sample is a fixed size only when no codec sits between: a compressed
+      // frame is as long as it is, and the index says where each one starts.
+      putLE32(video, rawFrames ? frameBytes : 0u);
+      // the picture's rectangle, four whole numbers, as the header ends.
       putLE32(video, 0u);
       putLE32(video, 0u);
-      putLE16(video, static_cast<std::uint16_t>(wide));
-      putLE16(video, static_cast<std::uint16_t>(tall));
+      putLE32(video, wide);
+      putLE32(video, tall);
 
       std::string videoFormat;
       putLE32(videoFormat, 0x28u);
@@ -2982,10 +3091,11 @@ namespace ols
         putLE32(audioHead, static_cast<std::uint32_t>(pcm.size())); // one chunk holds it all
         putLE32(audioHead, static_cast<std::uint32_t>(-1)); // quality: the default
         putLE32(audioHead, align); // a block is this wide
-        putLE16(audioHead, 0u);
-        putLE16(audioHead, 0u);
-        putLE16(audioHead, 0u);
-        putLE16(audioHead, 0u);
+        // a sound stream has no picture rectangle, but the sixteen bytes where it
+        // stands are still part of every stream header: a reader that walks the
+        // header stops at the wrong letter without them.
+        for (int at = 0; at < 4; ++at)
+          putLE32(audioHead, 0u);
 
         std::string audioFormat;
         putLE16(audioFormat, 1u);
@@ -3127,15 +3237,25 @@ namespace ols
         markState(job, ols::kStateError);
         return;
       }
+      // guidance answers in the engine's own units, and a number it was never
+      // meant - not-a-number among them - is refused here rather than walked
+      // into the sampler, where no check would notice it: every comparison a
+      // range check leans on lets a not-a-number through.
+      if (!std::isfinite(guidanceAsked) || guidanceAsked < 0.0 || guidanceAsked > 100.0)
+      {
+        noteError(job, "the guidance asked for is outside 0..100");
+        markState(job, ols::kStateError);
+        return;
+      }
       // how long a clip is, in frames rather than in seconds: a model whose card
       // says its work moves names a length beside it, and the bounds here are what
-      // this machine will run. The engine asks for the frame count to sit on the
-      // grid its temporal compression works on and rounds a count that is off the
-      // grid up on its own (docs/minimax_h3.md), so what comes back can be a few
-      // frames longer than what was asked - which is why the record keeps what
-      // came out rather than what was asked.
+      // this machine will run. The engine keeps the count on the grid its temporal
+      // compression works on - 17 frames and 5, aligned upward - so the ceiling is
+      // the last grid point under it, 17*14+5: a count between grid points is
+      // raised to the next one and would then stand past the ceiling it was
+      // refused by.
       static const int kMinFrames = 5;
-      static const int kMaxFrames = 241;
+      static const int kMaxFrames = 243;
       const int framesAsked = request.value("frames", def->frames > 0 ? def->frames : kMinFrames);
       if (def->video && (framesAsked < kMinFrames || framesAsked > kMaxFrames))
       {
@@ -3230,23 +3350,33 @@ namespace ols
         std::lock_guard<std::mutex> lock(gCtxMutex);
         ++gGenerating[modelId];
       }
-      std::string error;
-      // "cpu" names which part of the machine this run works on; a run that
-      // names nothing takes the switch the page left standing. the three switches
-      // are named here once because the run's own record carries them: what a run
-      // cost is filed under the switches it ran with, and a name read twice can
-      // drift apart from the one that was used.
-      const bool offloadAsked = request.value("offload", false);
-      const bool sageAsked = request.value("sage_attn", false);
-      const bool cpuAsked = request.value("cpu", prefOn("cpu"));
-      sd_ctx_t *ctx = openContext(modelId, offloadAsked, sageAsked, cpuAsked, error);
-      if (!ctx)
+      // from here to the end of the run this model is busy, and a good deal of
+      // what lies ahead can still throw: a counter let go by hand on every road
+      // out is a counter some road will forget.
+      struct GenerationCount
       {
+        std::string model;
+        ~GenerationCount()
         {
           std::lock_guard<std::mutex> lock(gCtxMutex);
-          --gGenerating[modelId];
+          const auto now = gGenerating.find(model);
+          if (now != gGenerating.end() && --now->second <= 0)
+            gGenerating.erase(model);
           finishPendingLocked();
         }
+      } generationCount{modelId};
+      std::string error;
+      std::string openedForm;
+      // "cpu" names which part of the machine this run works on; a run that
+      // names nothing takes the switch the page left standing. the switches are
+      // named here once because the run's own record carries them: what a run
+      // cost is filed under the switches it ran with, and a name read twice can
+      // drift apart from the one that was used.
+      const bool sageAsked = request.value("sage_attn", prefOn("sage_attn"));
+      const bool cpuAsked = request.value("cpu", prefOn("cpu"));
+      sd_ctx_t *ctx = openContext(modelId, sageAsked, cpuAsked, error, &openedForm);
+      if (!ctx)
+      {
         noteError(job, error);
         markState(job, ols::kStateError);
         return;
@@ -3254,17 +3384,20 @@ namespace ols
 
       sd_sample_params_t sample;
       sd_sample_params_init(&sample);
+      // a model trained without guidance states 0 on its card; 1.0 is the same
+      // sentence in the engine's words (its own note reads "use cfg-scale=1 for
+      // distilled models"), so 0 is answered with 1.0 and nothing more.
       sample.guidance.txt_cfg = guidance == 0.0f ? 1.0f : guidance;
       sample.sample_steps = steps;
-      sample.sample_method = sd_get_default_sample_method(ctx);
-      sample.scheduler = sd_get_default_scheduler(ctx, sample.sample_method);
       // The sampler and scheduler the model's own card names, asked in the
       // engine's words: the engine's choice for the model's family stands where
-      // the card names nothing, and a name the engine does not know is left as
-      // the engine's own choice rather than answered as a failure of the run.
-      // Which solver this run really sampled with is kept beside it, named in the
-      // words the picture table uses, so the run's cost is filed under the solver
-      // that did the work and not under a name the engine quietly replaced.
+      // the card names nothing, and a name the engine does not know is kept as
+      // the engine's own choice - and said - rather than answered as a failure
+      // of the run. Which solver this run really sampled with is kept beside it,
+      // named in the words the picture table uses, so the run's cost is filed
+      // under the solver that did the work and not under a name the engine
+      // quietly replaced.
+      sample.sample_method = sd_get_default_sample_method(ctx);
       std::string samplerUsed = "engine default";
       std::string schedulerUsed = "engine default";
       if (!def->sampler.empty())
@@ -3275,7 +3408,14 @@ namespace ols
           sample.sample_method = asked;
           samplerUsed = def->sampler;
         }
+        else
+          noteStep(job, "the card names a sampler the engine does not know (" + def->sampler +
+                           "); the engine's own choice stands");
       }
+      // The grid a solver walks belongs to the solver, so its default is asked
+      // after the solver above is settled - not before, which keyed every row's
+      // grid to the family's solver instead of to the one the card named.
+      sample.scheduler = sd_get_default_scheduler(ctx, sample.sample_method);
       if (!def->scheduler.empty())
       {
         const enum scheduler_t asked = str_to_scheduler(def->scheduler.c_str());
@@ -3284,6 +3424,9 @@ namespace ols
           sample.scheduler = asked;
           schedulerUsed = def->scheduler;
         }
+        else
+          noteStep(job, "the card names a scheduler the engine does not know (" + def->scheduler +
+                           "); the solver's own grid stands");
       }
       std::vector<float> sigmas;
       if (!def->sigmas.empty())
@@ -3326,7 +3469,10 @@ namespace ols
       // answers with several windows for.
       img.batch_count = def->video ? 1
                                    : (batch < 1 ? 1 : (batch > kMaxBatchPerRun ? kMaxBatchPerRun : batch));
-      img.vae_tiling_params.enabled = request.value("tiling", false);
+      // vae tiling follows the page's switch when the run names nothing, the way
+      // the device switches do - a switch that only works when a run happens to
+      // name it is a switch the page should not be asked to leave standing.
+      img.vae_tiling_params.enabled = request.value("tiling", prefOn("tiling"));
       // The text encoder stops after this many blocks. Left at -1 the engine
       // answers for the model's family - 2 for SD 2 and SDXL, 1 for SD 1.5
       // (src/conditioning/conditioner.hpp:459) - which is right for the families
@@ -3375,16 +3521,9 @@ namespace ols
       // What this run resolved to, kept with the job so that the machine can say,
       // once the run settles, what a run of these settings cost. The seed is not
       // among them: another seed is the same work at these settings, which is why
-      // repeats of one ask agree on one estimate. The guidance is the number the
-      // run used, which is what a zero means here - the engine takes a zero as one.
+      // repeats of one ask agree on one estimate. The quant is the form the
+      // weights really stood as, and the guidance the number the run used.
       {
-        bool deviceCpu = false;
-        {
-          std::lock_guard<std::mutex> ctxLock(gCtxMutex);
-          const auto standing = gCtxCpu.find(modelId);
-          if (standing != gCtxCpu.end())
-            deviceCpu = standing->second;
-        }
         std::lock_guard<std::mutex> lock(gMutex);
         json &jobRecord = gJobs[job];
         json asked = json::object();
@@ -3392,11 +3531,11 @@ namespace ols
         asked["height"] = height;
         asked["steps"] = steps;
         asked["guidance"] = guidanceAsked == 0.0 ? 1.0 : guidanceAsked;
+        asked["quant"] = openedForm.empty() ? std::string("as shipped") : openedForm;
         asked["sampler"] = samplerUsed;
         asked["scheduler"] = schedulerUsed;
         asked["cache"] = cacheOn;
-        asked["device"] = deviceCpu ? std::string("cpu") : std::string("card");
-        asked["offload"] = offloadAsked;
+        asked["device"] = cpuAsked ? std::string("cpu") : std::string("card");
         asked["sage_attn"] = sageAsked;
         asked["batch"] = img.batch_count;
         asked["refs"] = static_cast<int>(sources.size());
@@ -3501,37 +3640,31 @@ namespace ols
       sd_image_t *images = nullptr;
       int produced = 0;
       bool ok = false;
-      // a clip's sound, when one came out: it is part of what the model made
-      // rather than something this machine adds afterwards, so it is kept beside
-      // the frames and freed with them.
+      // a clip's sound, when one came out: part of what the model made rather
+      // than something this machine adds afterwards, so it is kept beside the
+      // frames and freed with them.
       sd_audio_t *clipAudio = nullptr;
       int encodedFps = 0;
+      // the busy count lets go with its own guard above; what is freed here is
+      // what the run allocated.
       struct Release
       {
         sd_image_t **images;
         int *produced;
-        const std::string *model;
         sd_audio_t **audio;
         ~Release()
         {
           sd_set_progress_callback(nullptr, nullptr);
-          {
-            std::lock_guard<std::mutex> ctxLock(gCtxMutex);
-            --gGenerating[*model];
-            finishPendingLocked();
-          }
           if (*audio)
             free_sd_audio(*audio);
           // What a run made is allocated inside the library, and its header says
           // plainly that the caller must hand it back through free_sd_images
-          // ("caller needs to call free_sd_images to free the memory after use ...
-          // This helps avoid CRT problems on Windows when memory is allocated in
-          // the library but freed in the caller, which may use a different CRT"),
-          // include/stable-diffusion.h:641.
+          // ("the memory is allocated in the library but freed in the caller"),
+          // include/stable-diffusion.h.
           if (*images)
             free_sd_images(*images, *produced);
         }
-      } release{&images, &produced, &modelId, &clipAudio};
+      } release{&images, &produced, &clipAudio};
       if (def->video)
         ok = generate_video(ctx, &vid, &images, &produced, &clipAudio, &encodedFps) && produced > 0;
       else
@@ -3574,7 +3707,10 @@ namespace ols
           markState(job, ols::kStateError);
           return;
         }
-        const bool clipWritten = writeAviClip(gOutputDir + "/" + clipName, images, produced, rate, clipAudio);
+        int clipFrames = 0;
+        const bool clipWritten =
+            writeAviClip(gOutputDir + "/" + clipName, images, produced, rate, clipAudio, false,
+                         &clipFrames);
         bool posterWritten = false;
         if (images[0].data)
           posterWritten = stbi_write_png((gOutputDir + "/" + posterName).c_str(),
@@ -3598,6 +3734,15 @@ namespace ols
           markState(job, ols::kStateError);
           return;
         }
+        // the file holds what it holds: a frame left out because it did not stand
+        // at the size of the others is said here and carried into the record,
+        // rather than the record naming frames the clip never got.
+        if (clipFrames < produced)
+        {
+          noteStep(job, "the clip was stood with " + std::to_string(clipFrames) + " of the " +
+                           std::to_string(produced) +
+                           " frames the run made: a frame that did not stand at the size of the others is left out");
+        }
         // the record of a clip says what it is made of, in the words this
         // machine's own file door answers with, so a page that holds the record
         // can reach the part it wants rather than the whole clip: a card draws
@@ -3618,9 +3763,9 @@ namespace ols
                        {"prompt", prompt},
                        {"steps", steps},
                        {"seed", vid.seed},
-                       {"frames", produced},
+                       {"frames", clipFrames},
                        {"fps", rate},
-                       {"duration_ms", static_cast<long long>(produced) * 1000 / rate},
+                       {"duration_ms", static_cast<long long>(clipFrames) * 1000 / rate},
                        {"poster", posterValue},
                        {"preview", previewValue},
                        {"audio", audioValue},
@@ -3636,7 +3781,7 @@ namespace ols
                       {"preview", previewWritten ? json("/files/outputs/" + previewName) : json(nullptr)},
                       {"audio", trackWritten ? json("/files/outputs/" + trackName) : json(nullptr)},
                       {"raw", rawWritten ? json("/files/outputs/" + rawName) : json(nullptr)},
-                      {"frames", produced},
+                      {"frames", clipFrames},
                       {"fps", rate}};
         pushEvent(job, event.dump());
       }
@@ -3657,6 +3802,7 @@ namespace ols
         }
         json record = {{"id", name.substr(0, name.size() - 4)},
                        {"file", name},
+                       {"kind", "image"},
                        {"created", created},
                        {"model", modelId},
                        {"name", def->name},
@@ -3687,9 +3833,13 @@ namespace ols
           gEngineError = "the body of the ask is not one this machine can read";
           return std::string();
         }
+        // read the two names without trusting their types: this runs on the
+        // thread that serves the request, and a body that words "model" as a
+        // number must be answered with a refusal, not with an exception carried
+        // up through the server.
         if (wanted.empty())
-          wanted = probe.value("model", std::string());
-        quant = probe.value("quant", std::string());
+          wanted = ols::statedString(probe, "model");
+        quant = ols::statedString(probe, "quant");
       }
       else if (!payloadJson.empty())
       {
@@ -3699,8 +3849,8 @@ namespace ols
         if (!probe.is_discarded())
         {
           if (wanted.empty())
-            wanted = probe.value("model", std::string());
-          quant = probe.value("quant", std::string());
+            wanted = ols::statedString(probe, "model");
+          quant = ols::statedString(probe, "quant");
         }
       }
       if (kind != "download" && kind != "load" && kind != "generate")
@@ -3737,7 +3887,10 @@ namespace ols
       if (!quant.empty())
       {
         std::lock_guard<std::mutex> lock(gMutex);
+        ensureChosenLoadedLocked();
         gChosenQuant[wanted] = quant;
+        // the next page, and the next start of this machine, keep the choice
+        saveChosenLocked();
       }
       const std::string job = makeId("img");
       {
@@ -3812,8 +3965,8 @@ namespace ols
     // recent cost of one model can stop when it has it.
     std::string ImageService::timingsJson() const
     {
-      std::lock_guard<std::mutex> lock(gMutex);
-      ensureTimingsLoadedLocked();
+      std::lock_guard<std::mutex> lock(gTimingsMutex);
+      ensureTimingsLoaded();
       json runs = json::array();
       json opens = json::array();
       for (const auto &entry : gTimings)
@@ -3876,18 +4029,29 @@ namespace ols
       size_t sent = 0;
       while (true)
       {
-        auto &frames = gEvents[id];
-        while (sent < frames.size())
+        // look the job up afresh for every chunk: the room lets old jobs go
+        // while this one waits and while a chunk is being written, and either
+        // an iterator or a reference carried across the wait would be reading
+        // a row that no longer stands. and looking it up with find, never with
+        // [], which would mint an empty row for a job that has been swept away.
+        bool alive = true;
+        while (true)
         {
-          const std::string frame = "data: " + frames[sent] + "\n\n";
+          const auto frames = gEvents.find(id);
+          if (frames == gEvents.end())
+            return;
+          if (sent >= frames->second.size())
+            break;
+          const std::string frame = "data: " + frames->second[sent] + "\n\n";
           lock.unlock();
-          const bool alive = OpenLocalServices::writeStreamChunk(client, frame);
+          alive = OpenLocalServices::writeStreamChunk(client, frame);
           lock.lock();
           if (!alive)
             return;
           ++sent;
         }
-        if (gEnded[id])
+        const auto ended = gEnded.find(id);
+        if (ended != gEnded.end() && ended->second)
           return;
         gCondition.wait_for(lock, std::chrono::seconds(1));
       }
@@ -3926,21 +4090,30 @@ namespace ols
       {
         // Every model a machine knows is offered whatever it may draw: nothing
         // here hides a card because of what a model tends to produce.
-        const bool present = modelInstalled(def.id);
+        std::string held;
+        {
+          std::lock_guard<std::mutex> lock(gMutex);
+          ensureChosenLoadedLocked();
+          const auto found = gChosenQuant.find(def.id);
+          if (found != gChosenQuant.end())
+            held = found->second;
+        }
+        // the names this model's files stand under, in the same words every other
+        // table gives them: a path beside the weights room. on_disk is then said
+        // of these very files - a card that lists one precision and reports on
+        // the bytes of another is the disagreement a page cannot argue with.
+        const std::vector<std::pair<std::string, std::string>> listedFiles =
+            modelFiles(&def, held);
+        const bool present = filesProved(&def, listedFiles);
         long long bytes = 0;
-        // What of this model physically sits in the room, stood behind or not. The
-        // two are different sentences and were told as one: a model whose files were
-        // copied in by hand - or read, hashed and left unvouched by the bug above -
-        // has its bytes on this machine, and a page that only ever heard on_disk:
-        // false called that weights not downloaded and offered to fetch them again.
+        // what of this model physically sits in the room, proved or not: a model
+        // whose files were copied in by hand has its bytes on this machine, and a
+        // page that only ever heard on_disk: false called that not downloaded and
+        // offered to fetch them again.
         long long lyingHere = 0;
         bool unchecked = false;
-        // the names this model's files stand under, in the same words every other
-        // table gives them: a path beside the weights room. a model whose files
-        // are not here still names what they would be, and says so by its own
-        // on_disk flag - the names are the fact a page reads the quant off.
         json files = json::array();
-        for (const auto &file : modelFiles(&def, std::string()))
+        for (const auto &file : listedFiles)
         {
           const std::string path = ols::modelFilePath(gWeightsDir, def.id, localNameOf(file.second));
           files.push_back(def.id + "/" + localNameOf(file.second));
@@ -3995,7 +4168,7 @@ namespace ols
             // the rest of its files are the row's own, and those are asked about
             // by the model's own row already.
             bool here = true;
-            bool present = true;
+            bool standing = true;
             long long total = 0;
             for (const auto &file : offer.files)
             {
@@ -4003,22 +4176,15 @@ namespace ols
                 here = false;
               std::error_code ec{};
               if (std::filesystem::file_size(modelRoom + localNameOf(file.second), ec))
-                present = false;
+                standing = false;
               total += bytesOf(file.second);
             }
             json one = {{"name", offer.label}, {"here", here}};
-            one["present"] = present;
+            one["present"] = standing;
             if (total > 0)
               one["bytes"] = total;
             quants.push_back(one);
           }
-        }
-        std::string held;
-        {
-          std::lock_guard<std::mutex> lock(gMutex);
-          const auto found = gChosenQuant.find(def.id);
-          if (found != gChosenQuant.end())
-            held = found->second;
         }
         out.push_back({{"id", def.id},
                        {"name", def.name},
@@ -4042,10 +4208,6 @@ namespace ols
                        {"edit", def.edit},
                        {"redraw", def.redraw},
                        {"refs", def.refs},
-                       // Whether this model's work is a moving picture, and the
-                       // clip length and frame rate its card runs it at home at:
-                       // a page reads these rather than guessing from what a file
-                       // is named, and a run that names no clip length draws them.
                        {"video", def.video},
                        {"frames", def.frames},
                        {"fps", def.fps},
@@ -4053,10 +4215,9 @@ namespace ols
                        {"on_disk", present},
                        {"bytes", bytes},
                        // present_bytes: what of this model sits in the room whether or
-                       // not anything has read it. unchecked: some of it is here with
-                       // nothing stood behind it. Both are said apart from on_disk so
-                       // a machine holding the bytes is never called a machine without
-                       // them - which is what a page showed as weights not downloaded.
+                       // not anything has proved it. unchecked: some of it is here with
+                       // nothing stood behind it. Both are said apart from on_disk so a
+                       // machine holding the bytes is never called a machine without them.
                        {"present_bytes", lyingHere},
                        {"unchecked", unchecked},
                        {"quants", quants},
@@ -4184,6 +4345,7 @@ namespace ols
         return false;
       loadPrefs();
       std::lock_guard<std::mutex> lock(gMutex);
+      bool touched = false;
       for (const auto &entry : doc.items())
       {
         const std::string key = entry.key();
@@ -4194,15 +4356,44 @@ namespace ols
           if (!known(entry.value().get<std::string>()))
             continue;
           gPrefs["model"] = entry.value().get<std::string>();
+          touched = true;
           continue;
         }
+        // a switch this machine does not keep is passed over, not answered as a
+        // failure: a page sends the switches it keeps standing, and one of them
+        // growing old on this machine must not cost the rest of them.
         if (!prefKeyNamed(key))
           continue;
+        // a switch says what it means as a boolean, a number or the words one
+        // and zero; a value worded no way a switch speaks is passed over too,
+        // rather than taken for the answer that is not it.
         if (entry.value().is_boolean())
+        {
           gPrefs[key] = entry.value().get<bool>() ? "1" : "0";
+          touched = true;
+        }
+        else if (entry.value().is_number())
+        {
+          gPrefs[key] = entry.value().get<double>() != 0.0 ? "1" : "0";
+          touched = true;
+        }
         else if (entry.value().is_string())
-          gPrefs[key] = entry.value().get<std::string>() == "1" ? "1" : "0";
+        {
+          const std::string word = entry.value().get<std::string>();
+          if (word == "1" || word == "true")
+          {
+            gPrefs[key] = "1";
+            touched = true;
+          }
+          else if (word == "0" || word == "false")
+          {
+            gPrefs[key] = "0";
+            touched = true;
+          }
+        }
       }
+      if (!touched)
+        return false;
       return savePrefsLocked();
     }
 
@@ -4270,8 +4461,13 @@ namespace ols
         record["url"] = "/files/outputs/" + kept.name.substr(0, kept.name.size() - 5);
         items.push_back(record);
       }
-      std::sort(items.begin(), items.end(), [](const json &a, const json &b)
-                { return a.value("created", 0LL) > b.value("created", 0LL); });
+      // a record's moment is whole seconds, and a run's pictures can all be
+      // written inside one of them: the sort keeps the newest-file-first order
+      // the walk already gave these records behind a tie, so every page of the
+      // gallery is a cut of one settled order and no picture lands on two pages
+      // - or on none.
+      std::stable_sort(items.begin(), items.end(), [](const json &a, const json &b)
+                       { return a.value("created", 0LL) > b.value("created", 0LL); });
       json trimmed = json::array();
       for (int i = 0; i < limit && i < static_cast<int>(items.size()); ++i)
       {
@@ -4283,13 +4479,20 @@ namespace ols
           .dump();
     }
 
-    // Whether a name a page gave can stand as one of this machine's files: one
-    // name, no path parts, and nothing that could step out of the folder the
-    // door reads inside. One rule serves every door that names a file.
+    // Whether a name a page gave can stand as one of this machine's files: the
+    // door reads inside the folder its kind names and nowhere else. No step out
+    // through "..", no backslash, no colon - a drive letter or an alternate
+    // stream hides behind one - and no dot at the start, which is how the room's
+    // own records (its chosen precisions, its switches) are named. A slash may
+    // stand inside a name, for a thing that lives in a folder of its own: a
+    // model's files are named model/file, and it is the model's folder all the
+    // same. One rule serves every door that names a file.
     static bool safeItemName(const std::string &name)
     {
-      return !name.empty() && name.find('/') == std::string::npos &&
-             name.find("..") == std::string::npos && name.find('\\') == std::string::npos;
+      if (name.empty() || name.front() == '/' || name.front() == '\\' || name.front() == '.')
+        return false;
+      return name.find("..") == std::string::npos && name.find('\\') == std::string::npos &&
+             name.find(':') == std::string::npos;
     }
 
     // one gallery record by its id, for a page that already holds the id and
@@ -4353,8 +4556,10 @@ namespace ols
           items.push_back(record);
         }
       }
-      std::sort(items.begin(), items.end(), [](const json &a, const json &b)
-                { return a.value("created", 0LL) > b.value("created", 0LL); });
+      // pictures kept in the same second stand in the order the room gave them;
+      // a sort free to shuffle ties would move them between two answers.
+      std::stable_sort(items.begin(), items.end(), [](const json &a, const json &b)
+                       { return a.value("created", 0LL) > b.value("created", 0LL); });
       return json{{"items", items}}.dump();
     }
 
@@ -4373,7 +4578,11 @@ namespace ols
         gRefError.clear();
       }
       if (source.empty())
+      {
+        std::lock_guard<std::mutex> lock(gRefErrorMutex);
+        gRefError = "what to keep was not named";
         return false;
+      }
       std::error_code ec{};
       std::string from;
       // What a person keeps as a reference is the thing a later run can start
@@ -4416,7 +4625,11 @@ namespace ols
       if (from.empty() && ols::fileExists(source))
         from = source;
       if (from.empty())
+      {
+        std::lock_guard<std::mutex> lock(gRefErrorMutex);
+        gRefError = "nothing by that name is here to keep";
         return false;
+      }
       // keep the real extension of the picture (.png, .jpg, .jpeg, .webp):
       // cutting at a fixed four characters drops the dot of .jpeg/.webp and
       // writes a name the ref list cannot read back
@@ -4586,8 +4799,17 @@ namespace ols
     {
       if (!safeItemName(name))
         return false;
-      const std::string base = kind == "outputs" ? gOutputDir
-                                                 : (kind == "refs" ? gRefsDir : gWeightsDir);
+      // the doors this one opens, named: any other word names no folder, and a
+      // request for it is refused rather than walked into the weights room.
+      std::string base;
+      if (kind == "outputs")
+        base = gOutputDir;
+      else if (kind == "refs")
+        base = gRefsDir;
+      else if (kind == "weights")
+        base = gWeightsDir;
+      else
+        return false;
       path = base + "/" + name;
       if (!ols::fileExists(path))
         return false;
@@ -4602,12 +4824,6 @@ namespace ols
 
     ImageService::ImageService(const std::string &weightsDir, const std::string &outputDir, int32_t threads,
                                const std::string &hfToken, const std::string &civitaiKey, int32_t keptMax)
-        : mThreads(threads),
-          mWeightsDir(weightsDir),
-          mOutputDir(outputDir),
-          mHfToken(hfToken),
-          mCivitaiKey(civitaiKey),
-          mKeptMax(keptMax)
     {
       gWeightsDir = weightsDir;
       gOutputDir = outputDir;
@@ -4617,8 +4833,11 @@ namespace ols
         gRefsDir = (data / "refs").string();
       }
       gThreads = threads;
-      gHfToken = hfToken;
-      gCivitaiKey = civitaiKey;
+      {
+        std::lock_guard<std::mutex> lock(gKeysMutex);
+        gHfToken = hfToken;
+        gCivitaiKey = civitaiKey;
+      }
       // A room was set for a size; a number that is not a size leaves the default
       // standing rather than a room that holds nothing.
       gKeptMax = keptMax > 0 ? keptMax : kGalleryCeilingDefault;
@@ -4631,13 +4850,13 @@ namespace ols
 
     void ImageService::setHfToken(const std::string &token)
     {
-      mHfToken = token;
+      std::lock_guard<std::mutex> lock(gKeysMutex);
       gHfToken = token;
     }
 
     void ImageService::setCivitaiKey(const std::string &token)
     {
-      mCivitaiKey = token;
+      std::lock_guard<std::mutex> lock(gKeysMutex);
       gCivitaiKey = token;
     }
 

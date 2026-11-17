@@ -2,14 +2,16 @@
 REM run.sh for Windows: build every part of open-local-services if needed,
 REM then start the server. Same steps as run.sh, with Windows tool discovery.
 REM Pass "build" to build and install without starting the server.
-REM The CUDA device of the card in this box is what is built by default: every
-REM part - the image engine, the server's own device probe, and the voice
-REM engine's device code - is compiled on CUDA, and nothing of the Vulkan sdk is
-REM asked of this machine. Pass arch=<number> to name the card its code is
-REM written for; with no word the card in this box is read from nvidia-smi, and
-REM the oldest shape this project supports is the last resort.
-REM Pass "vulkan" for the other shape - the one that needs the Vulkan sdk and
-REM builds in the plain roots - and "cuda" is taken as the default it names.
+REM The shape this run builds follows the box. A CUDA card named - the card in
+REM this box as nvidia-smi names it, an arch=<number> word, or the environment -
+REM builds whole on CUDA: every part, the image engine, the server's own device
+REM probe, and the voice engine's device code, compiled on nvcc, and nothing of
+REM the Vulkan sdk is asked of that machine. A box that names no card builds
+REM with no device backend at all - the shape build-rel.sh names with
+REM -DOLS_NO_DEVICE=1 - and the engines work where the threads are.
+REM Pass "vulkan" for the sdk's shape - the one that needs the Vulkan sdk and
+REM builds in the plain roots - "cuda" is taken as the default it names, and
+REM "nodevice" forces the device-free shape where a card could be named.
 REM Optional runtime settings as arguments: key=<access key> rate=<requests per minute>
 REM Everything already built is skipped, and a server that is running is stopped
 REM only after the build below succeeds, right before its binary is replaced.
@@ -72,6 +74,7 @@ FOR %%A IN (%*) DO (
     IF /I "%%A"=="build" SET MODE=build
     IF /I "%%A"=="cuda" SET CUDA_WANTED=1
     IF /I "%%A"=="vulkan" SET VULKAN_WANTED=1
+    IF /I "%%A"=="nodevice" SET NODEVICE_WANTED=1
     IF /I "%%A"=="key" set PENDING=key
     IF /I "%%A"=="rate" set PENDING=rate
     IF /I "%%A"=="arch" set PENDING=arch
@@ -90,11 +93,24 @@ rem too: it names the default, and the start path the laptop down the network
 rem uses hands it. naming both words is a contradiction this script does not
 rem settle for anyone.
 set CUDA_ON=
+set NODEVICE=
 if defined CUDA_WANTED if defined VULKAN_WANTED (
   echo cuda and vulkan name two backends: name one of them, or neither.
   exit /b 1
 )
-if not defined VULKAN_WANTED set CUDA_ON=1
+if defined NODEVICE_WANTED if defined VULKAN_WANTED (
+  echo nodevice and vulkan name two shapes: name one of them, or neither.
+  exit /b 1
+)
+if defined NODEVICE_WANTED if defined CUDA_WANTED (
+  echo nodevice and cuda name two shapes: name one of them, or neither.
+  exit /b 1
+)
+if defined NODEVICE_WANTED (
+  set NODEVICE=1
+) else if not defined VULKAN_WANTED (
+  set CUDA_ON=1
+)
 rem cmake picks the job count itself; no need to count cores here.
 set PARALLEL=--parallel
 rem the output cache needs no words here: the server's own default is the data
@@ -189,11 +205,19 @@ rem shape this project supports. a word, or the environment, has said which card
 rem before this block is reached, and what they named is never overwritten here.
 rem the comma of the format is quoted: cmd reads it as a separator, and hands
 rem nvidia-smi two options where one name was written.
+rem a box whose device is gone answers "No devices were found" on the standard
+rem output, where the line below reads it - that sentence names no capability,
+rem so a word with anything but digits and a dot in it is dropped here, and the
+rem shape taken below is the one a box with no card takes.
+set SMICAP=
 if not defined CUDA_ARCH for /f "delims=" %%L in ('nvidia-smi --query-gpu=compute_cap "--format=csv,noheader" 2^>nul') do (
-  if not defined CUDA_ARCH set CUDA_ARCH=%%L
+  if not defined SMICAP set "SMICAP=%%L"
 )
+if not defined CUDA_ARCH if defined SMICAP (
+  for /f "delims=0123456789." %%C in ("!SMICAP!") do set SMICAP=
+)
+if not defined CUDA_ARCH set CUDA_ARCH=!SMICAP!
 if defined CUDA_ARCH set CUDA_ARCH=!CUDA_ARCH:.=!
-if not defined CUDA_ARCH set CUDA_ARCH=75
 set CUDA_HOME=
 set NINJA_EXE=
 for /d %%C in ("C:\Program Files\NVIDIA CUDA*" "C:\Program Files (x86)\NVIDIA CUDA*" "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*" "C:\Program Files (x86)\NVIDIA GPU Computing Toolkit\CUDA\*") do (
@@ -217,12 +241,23 @@ if defined NINJA_EXE for %%P in ("!NINJA_EXE!\..") do set NINJA_DIR=%%~fP
 rem what the shape this run builds asks of the machine, said before any build is
 rem asked of it: the CUDA path needs the toolkit, ninja, and the studio
 rem environment, and asks nothing of an SDK; the Vulkan path needed its SDK, and
-rem refused for it above.
+rem refused for it above. a box that names no card and holds no toolkit is not a
+rem CUDA machine: it takes the shape with no device backend, as build-rel.sh
+rem names it for a card-less box. a card named by word or environment with no
+rem toolkit under it stays the refusal it always was - that shape was asked for
+rem by name, and this script does not answer a named shape with another.
+if defined CUDA_ON if not defined CUDA_HOME if not defined CUDA_ARCH (
+  echo No CUDA toolkit here and nvidia-smi names no card: this build carries no
+  echo device backend, the shape build-rel.sh names -DOLS_NO_DEVICE=1.
+  set CUDA_ON=
+  set NODEVICE=1
+)
 if defined CUDA_ON (
   if not defined CUDA_HOME (
     echo No CUDA toolkit: nvcc is under neither the Program Files nor PATH.
-    echo This path compiles on a card's CUDA; the other shape is named by the word
-    echo vulkan, and asks the Vulkan SDK rather than a toolkit.
+    echo A CUDA shape was named - the cuda word or an arch= word names it - and
+    echo that shape compiles on nvcc; name the sdk with the vulkan word, or let
+    echo the card-less shape stand with the nodevice word.
     exit /b 1
   )
   if not defined NINJA_EXE (
@@ -236,6 +271,7 @@ if defined CUDA_ON (
   echo CUDA toolkit at !CUDA_HOME!, ninja at !NINJA_EXE!, card at sm_!CUDA_ARCH!
 )
 if defined VULKAN_WANTED echo Vulkan compute with the SDK at !VULKAN_DIR!, in the plain roots
+if defined NODEVICE echo No device backend: the engines and the server build on the cpu alone
 rem the roots each backend builds in, named for it: always a build subfolder
 rem inside the source being built - never a short alias in some unrelated place
 rem - so a source tree keeps its own build and nothing else is scattered. the
@@ -250,6 +286,11 @@ if defined VULKAN_WANTED (
   set SD_ROOT=api\vendor\stable-diffusion.cpp\build
   set API_ROOT=api\build
   set BACKEND=Vulkan
+)
+if defined NODEVICE (
+  set SD_ROOT=api\vendor\stable-diffusion.cpp\build-nd
+  set API_ROOT=api\build-nd
+  set BACKEND=cpu, no device backend
 )
 rem ---- the one incremental path every entry point shares ----
 rem every shape of this path is named at its configure - the card generation and
@@ -281,6 +322,11 @@ set ENGINE_NINJA_PATH=
 if defined NINJA_DIR set ENGINE_NINJA_PATH=set "PATH=!NINJA_DIR!;!PATH!"
 set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON
 set NOVEC_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+rem the one word the api build takes for a box with no device backend, the way
+rem build-rel.sh names it: the voice engine then carries the cpu backend alone,
+rem and none of the server's device code is compiled.
+set OLS_NODEVICE=
+if defined NODEVICE set OLS_NODEVICE=-DOLS_NO_DEVICE=1
 echo == building the parts, skipping anything already built ==
 
 rem ---- clone the engine sources when they are missing ----
@@ -358,6 +404,10 @@ if not defined SD_DONE (
     if defined CUDA_ON (
         call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api\vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH! !OLS_GUARD!
+    ) else if defined NODEVICE (
+        !ENGINE_VC!
+        !ENGINE_NINJA_PATH!
+        cmake !ENGINE_GEN! -S api\vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
     ) else (
         !ENGINE_VC!
         !ENGINE_NINJA_PATH!
@@ -381,7 +431,7 @@ if not exist "!API_ROOT!\CMakeCache.txt" (
         call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!
     ) else (
-        cmake -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT!
+        cmake -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT! !OLS_NODEVICE!
     )
     if errorlevel 1 exit /b 1
 ) else (
@@ -421,7 +471,7 @@ if not exist "!API_ROOT!\CMakeCache.txt" (
         call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!
       ) else (
-        cmake -S api -B !API_ROOT! -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT!
+        cmake -S api -B !API_ROOT! -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT! !OLS_NODEVICE!
       )
       if errorlevel 1 exit /b 1
     )

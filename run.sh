@@ -390,6 +390,7 @@ stop_running open-local-services "Stopping the running open-local-services to re
 # ---- install into the runtime tree when this tree is build input only ----
 if [ "$RUNTIME" != "$PWD" ]; then
   echo "Installing the server and its libraries into $RUNTIME"
+  INSTALLED_ELSEWHERE=1
   mkdir -p "$RUNTIME/api"
   cp -f "$API_BUILD/open-local-services" "$RUNTIME/api/open-local-services"
   ldd "$API_BUILD/open-local-services" 2>/dev/null | sed 's/.*=> \([^ ]*\.so[^ ]*\).*/\1/' |
@@ -424,6 +425,17 @@ fi
 if [ "$MODE" = build ]; then
   echo ""
   echo "Built. Start the server with: run.sh"
+  exit 0
+fi
+
+# A tree that is build input only has no server of its own to start: the binary
+# it just made went to the tree that asked for it, and whatever stands beside
+# this tree is what an earlier build left behind. Starting that would answer
+# with old code while the lines above say the new one was just installed.
+if [ "${INSTALLED_ELSEWHERE:-}" = 1 ]; then
+  echo ""
+  echo "This tree is build input only: the server and its libraries stand in"
+  echo "$RUNTIME, and that tree is the one to start from."
   exit 0
 fi
 

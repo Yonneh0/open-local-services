@@ -4,6 +4,9 @@ api/build-arm64/
 # the development root a CUDA build on Windows drives with ninja: a generated
 # tree like every other build root, and its name is long on the same grounds.
 api/build-cuda/
+# the cpu-only shape's root, named by run.bat's nodevice word: generated like
+# every other build root.
+api/build-nd/
 # the development path's card-named roots: run.bat and build-rel.bat now name
 # the same root for one shape, so a root like api\build-c75 is generated state
 # exactly like every other build root and is never a source.
