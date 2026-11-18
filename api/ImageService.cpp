@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <condition_variable>
 #include <filesystem>
+#include <iostream>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -2156,6 +2157,14 @@ namespace ols
         }
       }
       params.max_vram = nullptr;
+      static std::once_flag sdLogOnce;
+      std::call_once(sdLogOnce, []()
+      {
+        sd_set_log_callback(
+            [](sd_log_level_t level, const char *text, void *)
+            { std::cerr << "[sd " << (level == SD_LOG_DEBUG ? "debug" : level == SD_LOG_INFO ? "info" : level == SD_LOG_WARN ? "warn" : "error") << "] " << text; },
+            nullptr);
+      });
       sd_ctx_t *ctx = new_sd_ctx(&params);
       bool freed = false;
       while (!ctx)
