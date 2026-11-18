@@ -1949,6 +1949,12 @@ namespace ols
 #endif
     }
 
+    // The engine's own last complaint, kept where a failed run can speak it.
+    // Runs are made one at a time, so one slot tells the truth for the run in
+    // front of it; the log callback fills it as the engine talks.
+    static std::mutex gSdWordsMutex;
+    static std::string gSdWords;
+
     // Whole bytes of device memory the card states, or 0 when no card answers.
     static long long cudaDeviceTotalBytes()
     {
@@ -2180,7 +2186,20 @@ namespace ols
       {
         sd_set_log_callback(
             [](sd_log_level_t level, const char *text, void *)
-            { std::cerr << "[sd " << (level == SD_LOG_DEBUG ? "debug" : level == SD_LOG_INFO ? "info" : level == SD_LOG_WARN ? "warn" : "error") << "] " << text; },
+            {
+              const bool bad = level == SD_LOG_ERROR || level == SD_LOG_WARN;
+              if (bad && text)
+              {
+                std::lock_guard<std::mutex> lock(gSdWordsMutex);
+                gSdWords = text;
+                const auto cut = gSdWords.find(" --- ");
+                if (cut != std::string::npos)
+                  gSdWords.erase(cut);
+                while (!gSdWords.empty() && (gSdWords.back() == '\n' || gSdWords.back() == '\r'))
+                  gSdWords.pop_back();
+              }
+              std::cerr << "[sd " << (level == SD_LOG_DEBUG ? "debug" : level == SD_LOG_INFO ? "info" : level == SD_LOG_WARN ? "warn" : "error") << "] " << text;
+            },
             nullptr);
       });
       static const std::string kVramBudget = []()
@@ -3729,9 +3748,16 @@ namespace ols
           markState(job, ols::kStateCancelled);
           return;
         }
-        // the engine said no and carries no words of its own at this door: what is
-        // known is that the run asked for a picture or a clip and none came out.
-        noteError(job, def->video ? "the clip did not come out" : "the picture did not come out");
+        // the engine said no. it now carries its own words - what it last
+        // complained of is what this run died of, and a page that reads the
+        // job should say so instead of a shrug.
+        std::string words;
+        {
+          std::lock_guard<std::mutex> lock(gSdWordsMutex);
+          words.swap(gSdWords);
+        }
+        const std::string bare = def->video ? "the clip did not come out" : "the picture did not come out";
+        noteError(job, words.empty() ? bare : bare + ": " + words);
         markState(job, ols::kStateError);
         return;
       }
