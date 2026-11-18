@@ -1827,9 +1827,14 @@ function keepChosenOrClear(models) {
   chosenModel = '';
 }
 
+// A machine that stops answering is said once; the loop keeps trying quietly
+// and says so only when the answer comes back.
+var offlineSaid = false;
 function offline(err) {
   ui.headUnknown();
   if (updated) updated.textContent = 'not connected · retrying';
+  if (offlineSaid) return;
+  offlineSaid = true;
   const served = ui.apiStatus === 401 || ui.apiStatus === 403;
   log(served
     ? 'a server stands here and refused this page: ' + String(ui.apiError || '')
@@ -1860,7 +1865,14 @@ async function main() {
   if (keptRenders && keptRenders.data && Array.isArray(keptRenders.data)) drawRenders(keptRenders.data);
   attachVoiceDoors();
   attachStudioDoors();
-  await ui.poll(refresh, offline, ui.pollMs);
+  await ui.poll(async function () {
+    const answered = await refresh();
+    if (offlineSaid) {
+      log('The machine answers again.', 'ok');
+      offlineSaid = false;
+    }
+    return answered;
+  }, offline, ui.pollMs);
 }
 
 // ---------- the studio doors: clone, create, edit, play ----------

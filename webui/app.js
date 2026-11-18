@@ -4020,9 +4020,23 @@ async function main() {
     });
   }
 
-  await ui.poll(refresh, function (failed) {
+  // A machine that is briefly unreachable is a fact said once, not a fresh
+  // line every round: the page keeps retrying in silence and says so again
+  // only when the answer comes back.
+  let quiet = false;
+  await ui.poll(async function () {
+    const answered = await refresh();
+    if (quiet) {
+      log('The machine answers again.', 'ok');
+      quiet = false;
+    }
+    return answered;
+  }, function (failed) {
     ui.headUnknown();
-    log('Refresh failed: ' + failed, 'err');
+    if (!quiet) {
+      log('The machine stopped answering: ' + failed + ' - retrying quietly.', 'err');
+      quiet = true;
+    }
   }, ui.pollMs);
 }
 
