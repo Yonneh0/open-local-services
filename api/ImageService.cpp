@@ -3317,13 +3317,43 @@ namespace ols
       // refused by.
       static const int kMinFrames = 5;
       static const int kMaxFrames = 243;
-      const int framesAsked = request.value("frames", def->frames > 0 ? def->frames : kMinFrames);
+      int framesAsked = request.value("frames", def->frames > 0 ? def->frames : kMinFrames);
       if (def->video && (framesAsked < kMinFrames || framesAsked > kMaxFrames))
       {
         noteError(job, "the clip asked for is outside " + std::to_string(kMinFrames) + ".." +
                            std::to_string(kMaxFrames) + " frames");
         markState(job, ols::kStateError);
         return;
+      }
+      // A card only holds so many picture-frames at once. The engine keeps no
+      // window over them: the whole clip is one working set, and an ask past
+      // the card dies inside it after every weight has moved. The maker's own
+      // recipe runs 56 frames of 864x480 on a 24 GiB card with the weights
+      // streaming, so that many picture-frames are taken as what such a card
+      // holds, and the window a card of this size holds follows from it.
+      // An ask past the window is bent down to the last whole grid point of
+      // four frames and says so; an ask the card can hold is never touched.
+      if (def->video)
+      {
+        const long long cardBytes = cudaDeviceTotalBytes();
+        if (cardBytes > 0)
+        {
+          const long long kVendorPixelFrames = 864LL * 480 * 56;
+          const long long window = kVendorPixelFrames * (cardBytes / (1024LL * 1024 * 1024)) / 24;
+          const long long asked = static_cast<long long>(framesAsked) * width * height;
+          if (asked > window)
+          {
+            int fits = static_cast<int>(window / (static_cast<long long>(width) * height));
+            fits -= fits % 4;
+            if (fits < kMinFrames)
+              fits = kMinFrames;
+            std::fprintf(stderr, "[image] %s asked for %d frames of %dx%d: this card's window holds %d, the clip will be made that long\n",
+                         modelId.c_str(), static_cast<int>(asked / (static_cast<long long>(width) * height)),
+                         width, height, fits);
+            std::fflush(stderr);
+            framesAsked = fits;
+          }
+        }
       }
       // the pictures this run starts from, in the order they were handed over:
       // an editing model reads each of them and keeps them apart by position,
