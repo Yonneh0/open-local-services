@@ -2110,7 +2110,12 @@ namespace ols
       }
       const std::string device = onCpu ? std::string("cpu") : card;
       params.backend = device.c_str();
-      params.params_backend = device.c_str();
+      // A clip's weights stream: the engine's own recipe for these video models
+      // keeps the params on the cpu and lets the card hold the working set.
+      // Left on the card the manager asks for every byte at once and refuses
+      // any clip bigger than a postcard.
+      const bool streamWeights = def->video && !onCpu;
+      params.params_backend = streamWeights ? "*=cpu" : device.c_str();
       params.auto_fit = true;
 
       std::shared_ptr<std::mutex> guard;
