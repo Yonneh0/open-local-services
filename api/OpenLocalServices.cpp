@@ -15,6 +15,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <random>
 #include <sstream>
@@ -1370,12 +1371,17 @@ namespace ols
             }
           }
         }
-        catch (const nlohmann::json::exception &)
+        catch (const nlohmann::json::exception &exc)
         {
+          std::cerr << "[http] " << req.path << " read the body as a stranger: " << exc.what() << std::endl;
           resp = jsonError(400, "Invalid request body");
         }
-        catch (const std::exception &)
+        catch (const std::exception &exc)
         {
+          // The answer keeps its words short, but the server's own line names
+          // what threw, so a door that fails on another machine can be read
+          // where it stands instead of guessed at from a bare 500.
+          std::cerr << "[http] " << req.path << " threw: " << exc.what() << std::endl;
           resp = jsonError(500, "Internal error");
         }
       }
