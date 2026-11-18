@@ -1540,7 +1540,8 @@ $out | ConvertTo-Json -Compress
         for (const std::string &name : names)
         {
           const std::string base = "/sys/class/net/" + name;
-          json adapter = byName.contains(name) ? byName[name] : json::object();
+          const auto known = byName.find(name);
+          json adapter = known != byName.end() ? known->second : json::object();
           adapter["name"] = name;
           adapter["if_index"] = -1;
 
