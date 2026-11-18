@@ -49,6 +49,10 @@ let startRefs = [];
 let draggedRef = '';
 let running = null;
 let lastJob = '';
+// The job ids of the ask this page has standing on the machine right now, when
+// that ask is a batch: the cancel hand stops the whole of it, each job by its
+// own name, and the machine answers for the ones already drawn by leaving them.
+let batchJobs = null;
 // The model this machine has open, per its own state.
 let pickedModel = '';
 // The model a run draws with, as last picked on a card; empty means the model
@@ -912,26 +916,27 @@ async function putInUse(model) {
 }
 
 // How many pictures one run of this machine answers for. The engine keeps a run
-// inside one model's work and makes at most kRunPictures of them at a time, and a
-// clip is already one run's whole work, so a model whose work moves answers one
-// clip to a run. Every count on the page - what it asks a run for, what it plans
-// notices for, and where a run's boundary sits - is read from this one number, so
-// the pictures the page laid out and the pictures the machine makes are the same
-// pictures.
-const kRunPictures = 4;
+// inside one model's work, and one run makes one picture: a batch is therefore
+// many jobs, not one heavy one. The X4 hand asks four separate jobs and the X16
+// hand sixteen separate ones, so every picture stands on the machine as its own
+// record - its own entry in the jobs table, its own cancel, its own line in the
+// gallery - and stopping an ask leaves the drawn pictures drawn. Every count on
+// the page - what it asks a run for, what it plans notices for, and where a
+// run's boundary sits - is read from this one number, so the pictures the page
+// laid out and the pictures the machine makes are the same pictures.
+const kRunPictures = 1;
 
 function picturesPerRun(model) {
-  const card = findModel(String(model)) || {};
-  return card.video === true ? 1 : kRunPictures;
+  return kRunPictures;
 }
 
-// What the ask on this page will make in one run: what its own images field
-// named, kept inside what one run carries.
+// What the ask on this page will make: what its own images field named, kept
+// inside the deepest ask this studio makes. Each picture is a job of its own, so
+// this number is at once the pictures drawn and the jobs the machine is handed.
 function askedPictures() {
-  const perRun = picturesPerRun(modelChoice());
   const wanted = Math.round(Number(ui.numberField('count', 1)));
   const chosen = wanted > 1 ? wanted : 1;
-  return chosen > perRun ? perRun : chosen;
+  return chosen > kMaxBatchPictures ? kMaxBatchPictures : chosen;
 }
 
 function payload() {
@@ -943,7 +948,10 @@ function payload() {
     width: size.width,
     height: size.height,
     seed: ui.numberField('seed', -1),
-    count: askedPictures(),
+    // One job makes one picture. Asking the machine for several inside one job is
+    // not what this page does any more: an ask of several pictures is several
+    // jobs, so each one can be watched, cancelled, and kept on its own.
+    count: 1,
   };
   const steps = ui.textField('steps').trim();
   if (steps !== '') body.steps = Number(steps);
@@ -1194,7 +1202,7 @@ function picturePosition(entry, position, standing) {
       (standing > 1 ? ' · ' + position + ' of ' + standing + ' standing here' : '');
   }
   return 'picture ' + (Number(entry.n) + 1) + ' of ' + Number(entry.of) +
-    (entry.of > entry.inRun ? ' · run ' + entry.run + ' of ' + entry.runs : '') +
+    (entry.of > entry.inRun ? ' · job ' + entry.run + ' of ' + entry.runs : '') +
     (standing > 1 ? ' · ' + position + ' of ' + standing + ' standing here' : '');
 }
 
@@ -2021,13 +2029,12 @@ function readyToDraw(model) {
   return true;
 }
 
-// The ask every generate hand takes: one picture, or the quick batches, which are
-// the same ask drawn in runs. A run is asked for what it can carry - what the
-// model itself carries per run - so a batch is runs one after another rather than
-// one run the machine would answer with fewer pictures than were asked for, and
-// the pictures the notices name are the pictures the machine makes. The chain
-// stops at the first run that failed or was stopped, since a run nobody explained
-// is not a reason to start another, and what is left of the batch says so.
+// The ask every generate hand takes: one picture, or the quick batches. Every
+// picture is its own job on the machine - the X4 hand is four separate jobs and
+// the X16 hand sixteen - so the whole ask is handed over at once, each job keeps
+// its own record, and the cancel hand can stop the ones that have not been drawn
+// without touching the ones already made. Each job is then followed by its own
+// name to its own ending, and what came out is counted from those endings alone.
 // The model this ask draws with is the one this page has picked: the ask's own
 // words name that pick, so the hand carries no model that another pick would
 // answer for.
@@ -2043,29 +2050,65 @@ async function drawAsk(pictures) {
   // of this model rather than on a card's opening words.
   keepAsk(model);
   const batch = planPictures(model, pictures);
-  const perRun = picturesPerRun(model);
-  const runs = Math.ceil(pictures / perRun);
   log('An ask of ' + pictures + ' picture' + (pictures === 1 ? '' : 's') + ' with ' + modelName(model) +
-    (runs === 1 ? ' in one run.' : ': ' + runs + ' runs, ' + perRun + ' picture' +
-      (perRun === 1 ? '' : 's') + ' each.'), 'ok');
-  for (let run = 1; run <= runs; ++run) {
-    const carry = pictures - (run - 1) * perRun;
-    const ended = await startJob(model, 'generate', { count: carry > perRun ? perRun : carry }, batch);
-    if (ended === 'cancelled') {
-      log('The batch stopped where it was: ' + ((run - 1) * perRun) + ' of ' + pictures +
-        ' asked for were drawn.', 'warn');
-      finishPlan(batch, 'never asked for: the batch stopped before this one');
+    (pictures === 1 ? ', as one job.' : ': ' + pictures + ' separate one-picture jobs, drawn one after another.'), 'ok');
+  // Hand every ask of the batch to the machine first, so all its job records
+  // stand from the start and a refusal says so while the rest of the batch is
+  // still whole enough to talk about.
+  const jobs = [];
+  for (let n = 1; n <= pictures; ++n) {
+    const started = await ui.postJob('/api/generate', payload());
+    if (!started.job) {
+      log('Render refused' + (started.status ? ' ' + started.status : '') +
+        (started.error ? ': ' + started.error : ''), 'err');
+      ui.toastNo('start the image', started);
+      finishPlan(batch, 'never asked for: the machine refused here');
+      batchJobs = null;
+      finishJob();
       return;
     }
-    if (ended !== 'done') {
-      log('The batch stopped at run ' + run + ' of ' + runs +
-        (ended === '' ? ': the run ended without saying how.' : '.'), 'warn');
-      finishPlan(batch, 'never asked for: the batch stopped at run ' + run);
-      return;
+    lastJob = started.job;
+    // The run the machine just took carries the next of the pictures this page
+    // planned for the batch, and the machine's own job id is what ties them to
+    // it from here on - one job, one picture.
+    bindPlannedPictures(batch, started.job, 1);
+    jobs.push(started.job);
+    if (jobs.length === 1) {
+      running = started.job;
+      const cancelBtn = E('cancel-btn');
+      cancelBtn.disabled = false;
+      cancelBtn.title = 'Stop this ask: every job of it that the machine has not drawn.';
+      ui.headProgress(0, 'starting · ' + model, 'image');
     }
-    if (run < runs) log('Run ' + run + ' of ' + runs + ' is drawn; starting the next.', 'ok');
   }
-  log('The ask is drawn: ' + pictures + ' pictures in the gallery.', 'ok');
+  batchJobs = jobs.slice();
+  // Follow the batch job by job, each by its own name. The machine draws them in
+  // the order it took them; a job that failed or was stopped is counted as what
+  // it was, and never hides the pictures that did come out.
+  let drawn = 0;
+  for (let k = 0; k < jobs.length; ++k) {
+    running = jobs[k];
+    // A finished job's watch hands the header and the cancel hand back between
+    // jobs; the ask is not over, so the hand stands back up until its last job.
+    if (k > 0) {
+      const cancelBtn = E('cancel-btn');
+      cancelBtn.disabled = false;
+      cancelBtn.title = 'Stop this ask: every job of it that the machine has not drawn.';
+    }
+    const ended = await streamJob(jobs[k], model, 'generate');
+    if (ended === 'done') ++drawn;
+  }
+  batchJobs = null;
+  finishJob();
+  finishPlan(batch, 'never drawn');
+  if (drawn === pictures) {
+    log('The ask is drawn: ' + drawn + ' pictures, each its own job, in the gallery.', 'ok');
+  } else if (drawn > 0) {
+    log('The ask ended short: ' + drawn + ' of ' + pictures + ' pictures drawn; ' +
+      (pictures - drawn) + ' job' + (pictures - drawn === 1 ? '' : 's') + ' did not come out.', 'warn');
+  } else {
+    log('None of the ' + pictures + ' jobs came out.', 'warn');
+  }
 }
 
 // One picture of the current ask, on the stack before the machine is asked for it.
@@ -3837,14 +3880,25 @@ async function main() {
   // whole ask is never trimmed for want of space.
   ui.onPress(E('gen-16x'), function () { generateMany(kMaxBatchPictures); });
   ui.onPress(E('cancel-btn'), function () {
-    if (!lastJob) { log('No render was asked from this page: there is nothing here to stop.', 'warn'); return; }
+    // The hand stops this page's whole ask: every job it handed over that the
+    // machine has not drawn. A job already drawn, failed, or stopped answers
+    // that it is not running, which is the truth and is left at that.
+    const targets = batchJobs && batchJobs.length ? batchJobs.slice() : (lastJob ? [lastJob] : []);
+    if (!targets.length) { log('No render was asked from this page: there is nothing here to stop.', 'warn'); return; }
     void (async function () {
-      const stopped = await ui.api('/api/jobs/' + lastJob + '/cancel', 'POST');
-      if (!stopped) {
-        log('That render is not running: ' + (ui.apiError || 'the server gave no words'), 'err');
-        return;
+      let stopped = 0;
+      let words = '';
+      for (const job of targets) {
+        const answer = await ui.api('/api/jobs/' + encodeURIComponent(job) + '/cancel', 'POST');
+        if (answer) ++stopped;
+        else if (!words) words = ui.apiError || '';
       }
-      log('Cancel sent.', 'warn');
+      if (stopped) {
+        log('Cancel sent for ' + stopped + ' job' + (stopped === 1 ? '' : 's') +
+          ' of this ask; the drawn ones stay drawn.', 'warn');
+      } else {
+        log('None of this ask is running any more: ' + (words || 'the server gave no words'), 'err');
+      }
     })();
   });
   // Each button names a step; the step is clamped to the ones that exist rather

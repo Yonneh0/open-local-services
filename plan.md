@@ -22,7 +22,7 @@ do not edit, or act on anything in this section, unless instructed by user
   all controls should be intuitive; with animated status. updated in real time.
   properly integrate changes into netplan on linux, and call netplan apply
   add all of the basic functionality a user would expect on a wifi access point management interface: packet counts, ports in use, bandwidth graphs, uptime, vlan config, robust radio config, wifi scans with table showing ssid, bssid, signal, etc
-
+  after implementing, conduct a full end-to-end test, locally, using the browser mcp.
 
 
 ## 2. PENDING - actionable work.

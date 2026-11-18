@@ -3167,3 +3167,439 @@ a:focus-visible {
 .model-bar.is-running {
   border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
 }
+
+/* ---------- the network panel ----------
+   One card per adapter, a section per subject (wifi, what the machine
+   will change), all of it read from one document and answered through one
+   door. The colours are the page's own: a link up breathes in the ok green so
+   the panel reads alive at a glance, a refusal wears red, and a state nobody
+   stated stays its own orange. */
+.net-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.net-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.net-card-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* The kind of link, worn as a small word in its own colour so a row of cards
+   can be told apart before any of their words is read. */
+.net-kind {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--fg-dim);
+}
+
+.net-kind-ethernet {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.net-kind-wifi {
+  color: var(--accent2);
+  border-color: color-mix(in srgb, var(--accent2) 45%, var(--line));
+}
+
+.net-kind-bond {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.net-kind-vlan {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.net-state {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.net-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--fg-dim);
+}
+
+/* The live dot: green and breathing while a link carries, and still — a
+   thing that does not move is a thing that is not working. */
+.net-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--fg-dim);
+}
+
+.net-dot.up {
+  background: var(--ok);
+  animation: net-breathe 2.4s ease-in-out infinite;
+}
+
+.net-dot.down {
+  background: var(--err);
+  opacity: 0.55;
+}
+
+.net-dot.other {
+  background: var(--unknown);
+}
+
+@keyframes net-breathe {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 12%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .net-dot.up {
+    animation: none;
+  }
+}
+
+/* The rate figure: the newest words on the left, the four minutes of it to
+   the right, on the same measure every other figure on the page keeps. */
+.net-rate {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.net-rate-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  flex: 0 1 210px;
+  min-width: 0;
+}
+
+.net-rate-word {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-chart {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.net-chart>.trace>.graph {
+  display: block;
+  width: 100%;
+  height: 46px;
+}
+
+.net-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.net-fact {
+  display: flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  min-width: 0;
+}
+
+.net-fact>span:last-child {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-fact-name {
+  flex: 0 0 84px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  line-height: 1.9;
+}
+
+/* Folded forms: nobody sees the hands until a setting is being changed, and
+   a person mid-typing is never standing on a redraw. */
+.net-form {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg2);
+}
+
+.net-form>summary {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.net-form>summary::-webkit-details-marker {
+  display: none;
+}
+
+.net-form>summary::before {
+  content: '▸ ';
+}
+
+.net-form[open]>summary::before {
+  content: '▾ ';
+}
+
+.net-form[open]>summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.net-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.net-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.net-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.net-field-name {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.net-input {
+  font-size: 12px;
+  min-width: 130px;
+  height: var(--field-h);
+}
+
+/* The hands of this panel: the page's button, a step smaller so five of them
+   fit one card row, and the ones that take something away speak amber and
+   red before they are pressed. */
+.net-hand {
+  font-size: 12px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.net-hand.net-ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.net-hand.net-err {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, var(--line));
+}
+
+.net-hand.net-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.net-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.net-section-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.net-section-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* Tables: scan rows and port rows are both read across, so both take the
+   row grid the status wall uses; the two tables state their own columns. */
+.net-table {
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.net-tr {
+  display: grid;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--grid);
+  align-items: center;
+  min-width: 640px;
+}
+
+.net-tr:last-child {
+  border-bottom: none;
+}
+
+.net-tr>span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.net-mono {
+  font-family: var(--mono);
+}
+
+.net-th {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  background: var(--bg2);
+}
+
+.net-scan .net-tr {
+  grid-template-columns: 76px minmax(120px, 2fr) 148px 56px 34px minmax(110px, 1.4fr) 72px 128px;
+}
+
+.net-tr:hover {
+  background: var(--bg2);
+}
+
+.net-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.net-signal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Five bars, rising: the shape reads across the table before the number
+   beside it is found. */
+.net-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.net-bars i {
+  width: 4px;
+  background: var(--line);
+  border-radius: 1px;
+}
+
+.net-bars i:nth-child(1) {
+  height: 3px;
+}
+
+.net-bars i:nth-child(2) {
+  height: 5px;
+}
+
+.net-bars i:nth-child(3) {
+  height: 7px;
+}
+
+.net-bars i:nth-child(4) {
+  height: 10px;
+}
+
+.net-bars i:nth-child(5) {
+  height: 12px;
+}
+
+.net-bars i.lit {
+  background: var(--err);
+}
+
+.net-bars i.lit.fair {
+  background: var(--warn);
+}
+
+.net-bars i.lit.strong {
+  background: var(--ok);
+}
+
+.net-signal-pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  font-style: normal;
+}
+
+.net-ap {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.net-last .meta {
+  white-space: normal;
+}
+
+.net-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  padding: 0;
+}

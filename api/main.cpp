@@ -7,6 +7,7 @@
 #include "ImageService.h"
 #include "VoiceService.h"
 #include "Deployment.h"
+#include "NetworkService.h"
 
 #include <cctype>
 #include <chrono>
@@ -417,6 +418,10 @@ int main(int argc, char **argv)
   // ask only takes the one-time trouble of finding the card out of the first
   // page read.
   api.preloadBackends();
+  // The network sampler starts before the doors: by the time the first page is
+  // read, the bandwidth history behind it already has a few seconds of real
+  // readings, and the uptime trackers have seen the links once.
+  ols::net::init();
   // nothing is read here: no model is opened, no table is built, no engine is
   // stood up. the port is taken next, and the first page read asks the machine.
   if (!api.start(port))

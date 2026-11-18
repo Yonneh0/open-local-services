@@ -253,6 +253,7 @@ add_executable(open-local-services
   VerifiedRoom.cpp
   Deployment.cpp
   VoiceService.cpp
+  NetworkService.cpp
   WebAssets.cpp
   "${WEBUI_EMBEDDED_CPP}"
   "${VERSION_STAMP_CPP}")

@@ -3635,6 +3635,17 @@ namespace ols
           sd_cancel_generation(probe->ctx, SD_CANCEL_ALL);
       };
       std::lock_guard<std::mutex> generationLock(gGenerationMutex);
+      // A stop asked of this job while it waited behind the run before it is
+      // believed here: the engine is not started for a picture nobody wants any
+      // more. An ask of several pictures queues several jobs deep behind this
+      // lock, and the cancel hand speaks to every job of the ask, so the ones
+      // that never reached the engine end as stopped rather than as work nobody
+      // asked for.
+      if (cancelledRequested(job))
+      {
+        markState(job, ols::kStateCancelled);
+        return;
+      }
       sd_set_progress_callback(thunk, &probe);
 
       sd_image_t *images = nullptr;

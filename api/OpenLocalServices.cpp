@@ -2,6 +2,7 @@
 #include "Deployment.h"
 #include "ImageService.h"
 #include "MonitorService.h"
+#include "NetworkService.h"
 #include "VoiceService.h"
 #include "WebAssets.h"
 #include "Common.h"
@@ -628,6 +629,10 @@ namespace ols
           {"/api/jobs", 2},
           {"/api/timings", 2},
           {"/api/system", 2},
+          // The network document is composed fresh every read and its every
+          // number moves within seconds; and the scan door answers a forced
+          // scan, which no browser may answer out of its own pocket.
+          {"/api/network", 0},
           {"/api/service", 4},
           {"/api/config", 15},
           {"/api/models", 2},
@@ -2794,6 +2799,32 @@ namespace ols
       const std::string imageJobs = m_image ? m_image->jobsListJson() : std::string("[]");
       const std::string voiceJobs = m_voice ? m_voice->jobsListJson() : std::string("[]");
       return jsonResponse(200, monitor::snapshot(systemJson(), imageJobs, voiceJobs));
+    }
+
+    // The network door. Reading it hands back the whole document this machine's
+    // network makes up: its adapters and their settings, the rates between two
+    // peeks of the counters, the wifi state, and what this kind of machine can
+    // change from here at all.
+    // Working it posts one action and its parts, and the answer is the machine's
+    // own tools' words - netsh on Windows, netplan and the rest on Linux - never
+    // a guess about what probably happened.
+    if (path == "/api/network")
+    {
+      if (get)
+        return jsonResponse(200, ols::net::snapshotJson());
+      if (!post)
+        return jsonError(405, "That door is read with a GET and worked with a POST");
+      if (nlohmann::json::parse(req.body, nullptr, false).is_discarded())
+        return jsonError(400, "Send one json object naming an action and its parts");
+      return jsonResponse(200, ols::net::actJson(req.body));
+    }
+
+    if (get && path == "/api/network/scan")
+    {
+      // A plain read answers from the scan the machine last ran; asking with
+      // fresh=1 wakes the radio itself, which costs about a second and a half.
+      const bool fresh = truthyValue(queryValue(req.query, "fresh"));
+      return jsonResponse(200, ols::net::scanJson(fresh));
     }
 
     // A path nothing answers is the caller's mistake, not a broken service:

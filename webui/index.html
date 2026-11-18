@@ -65,6 +65,28 @@
     </section>
 
     <section class="panel">
+      <div class="panel-title">network
+        <button class="title-hand" id="net-scan-hand"
+          title="Wake this machine's radio and list the networks around it. The radio takes a second or two; the answer is the machine's own scan, not a guess.">re-scan
+          wifi</button>
+      </div>
+      <!-- The network's own badges: links up, traffic moving now, what the
+           radio is doing, and whether the last change the page asked for was
+           done or refused. network.js writes them from one document read at
+           /api/network; nothing is claimed before the machine answers. -->
+      <div class="machine-chips" id="net-chips">
+        <span class="chip" id="net-chip-links"><span class="cr">links: not read</span></span>
+        <span class="chip" id="net-chip-rates"><span class="cr">traffic: not read</span></span>
+        <span class="chip" id="net-chip-wifi"><span class="cr">wifi: not read</span></span>
+        <span class="chip" id="net-chip-doors"><span class="cr">changes: not read</span></span>
+      </div>
+      <div class="meta" id="net-line">network not read yet</div>
+      <div id="net-adapters"></div>
+      <div id="net-wifi"></div>
+      <div id="net-settings"></div>
+    </section>
+
+    <section class="panel">
       <div class="panel-title">the log</div>
       <div class="meta" id="log-line">what the pages of this machine have said as they worked, oldest first…</div>
       <div class="log-panel" id="log"
@@ -82,6 +104,7 @@
   <script src="common.js"></script>
   <script src="config.js"></script>
   <script src="monitor.js"></script>
+  <script src="network.js"></script>
 </body>
 
 </html>
