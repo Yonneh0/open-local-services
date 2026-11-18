@@ -1949,6 +1949,20 @@ namespace ols
 #endif
     }
 
+    // Whole bytes of device memory the card states, or 0 when no card answers.
+    static long long cudaDeviceTotalBytes()
+    {
+#ifdef OLS_CUDART_LINKED
+      size_t total = 0;
+      size_t freeBytes = 0;
+      if (cudaMemGetInfo(&freeBytes, &total) != 0)
+        return 0;
+      return static_cast<long long>(total);
+#else
+      return 0;
+#endif
+    }
+
     static std::string currentChosenQuant(const std::string &modelId)
     {
       std::lock_guard<std::mutex> lock(gMutex);
@@ -2156,7 +2170,6 @@ namespace ols
           return found->second;
         }
       }
-      params.max_vram = nullptr;
       static std::once_flag sdLogOnce;
       std::call_once(sdLogOnce, []()
       {
@@ -2165,6 +2178,21 @@ namespace ols
             { std::cerr << "[sd " << (level == SD_LOG_DEBUG ? "debug" : level == SD_LOG_INFO ? "info" : level == SD_LOG_WARN ? "warn" : "error") << "] " << text; },
             nullptr);
       });
+      static const std::string kVramBudget = []()
+      {
+        // The engine cuts its graphs and settles weights against this budget;
+        // without it the manager asks the card for the whole run at once and a
+        // big clip dies where a spill to memory would have served. Four GiB
+        // stay outside the budget for what the engine does not track.
+        const long long total = cudaDeviceTotalBytes();
+        if (total <= 0)
+          return std::string();
+        long long gib = (total - 4LL * 1024 * 1024 * 1024) / (1024LL * 1024 * 1024);
+        if (gib < 4)
+          gib = 4;
+        return std::to_string(gib);
+      }();
+      params.max_vram = kVramBudget.empty() ? nullptr : kVramBudget.c_str();
       sd_ctx_t *ctx = new_sd_ctx(&params);
       bool freed = false;
       while (!ctx)
