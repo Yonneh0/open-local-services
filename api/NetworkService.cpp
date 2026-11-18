@@ -485,9 +485,20 @@ namespace ols
 #else
       std::string readTinyFile(const std::string &path)
       {
+        // A down interface answers a read of some of these attributes - speed
+        // and duplex are the ones - with an invalid argument, and the file
+        // stream reports that by throwing. The setting is not stated rather
+        // than wrong, so the answer is the same empty one a missing file gets.
         std::string text;
-        if (!ols::readFileText(path, text))
+        try
+        {
+          if (!ols::readFileText(path, text))
+            return std::string();
+        }
+        catch (const std::exception &)
+        {
           return std::string();
+        }
         return trim(text);
       }
 
