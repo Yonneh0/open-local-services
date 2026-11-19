@@ -870,10 +870,12 @@ namespace ols
         json &record = gJobs[job];
         // a run's progress only moves forward: the engine calls its progress hook
         // for its own passes in whatever order it likes, and a page would draw the
-        // bar of a three-step run shrinking back to two.
+        // bar of a three-step run shrinking back to two. One tick is believed
+        // backwards: the engine's own "sampling starts" call at zero, which is
+        // what lifts the bar off whatever the loading and the encoding left it at.
         const int kept = record.contains("done") ? record["done"].get<int>() : 0;
         const int window = record.contains("max") ? record["max"].get<int>() : 0;
-        if (window == total && done < kept)
+        if (window == total && done < kept && done > 0)
           return;
         record["done"] = done;
         record["max"] = total;
@@ -3764,6 +3766,18 @@ namespace ols
         const int window = probe->sampleSteps > 0 ? probe->sampleSteps : 1;
         const int ticks = stepsTotal > 0 ? stepsTotal : 1;
         const int pictures = probe->pictures > 0 ? probe->pictures : 1;
+        // the engine's own opening tick of a sampling window - zero of its own
+        // steps - starts this picture's count from nothing, whatever the weight
+        // loading and the text encoding left standing before it; the window of
+        // the pictures already made is the only ground it may stand on.
+        if (step == 0 && ticks == window)
+        {
+          const int grounded = probe->picturesDone * window;
+          noteProgress(jobId, grounded, window * pictures);
+          if (cancelledRequested(jobId))
+            sd_cancel_generation(probe->ctx, SD_CANCEL_ALL);
+          return;
+        }
         int within = static_cast<int>((static_cast<long long>(step + 1) * window) / ticks);
         if (within > window)
           within = window;

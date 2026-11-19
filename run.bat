@@ -436,6 +436,21 @@ if not defined SD_DONE (
     )
     cmake --build !SD_ROOT! --config Release %PARALLEL%
     if errorlevel 1 exit /b 1
+) else (
+    rem an engine root that stands here is asked for anything new on every run,
+    the way the api is asked below: the engine's sources belong to this tree,
+    and an edit no build ever reads is an edit that never happened. The same
+    studio environment the configure above stands in is stood in here, since
+    a bare shell hands the compiler a standard library from another visual
+    studio than the one whose clang it is.
+    if defined CUDA_ON (
+        call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+    ) else (
+        !ENGINE_VC!
+        !ENGINE_NINJA_PATH!
+    )
+    cmake --build !SD_ROOT! --config Release %PARALLEL%
+    if errorlevel 1 exit /b 1
 )
 
 rem ---- build open-local-services: configure once, then a quick incremental build ----
