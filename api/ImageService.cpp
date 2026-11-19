@@ -3583,7 +3583,22 @@ namespace ols
       // vae tiling follows the page's switch when the run names nothing, the way
       // the device switches do - a switch that only works when a run happens to
       // name it is a switch the page should not be asked to leave standing.
-      img.vae_tiling_params.enabled = request.value("tiling", prefOn("tiling"));
+      // Three cards are clip DiTs whose untiled vae decode crawls the conv path
+      // at a small fraction of its speed on this gpu's driver - measured here at
+      // 725 s against the same decode tiled at 241, and at never coming back
+      // against one that came back in 912 - so tiling stands on for them unless
+      // a run says it wants the untiled road after all.
+      static const char *const kTiledCards[] = {"z-image-turbo", "qwen-image-2.1",
+                                                "qwen-image-2.1-turbo"};
+      bool tilingOn = request.value("tiling", prefOn("tiling"));
+      if (!request.contains("tiling") && !tilingOn)
+        for (const char *const tiled : kTiledCards)
+          if (def->id == tiled)
+          {
+            tilingOn = true;
+            break;
+          }
+      img.vae_tiling_params.enabled = tilingOn;
       // The text encoder stops after this many blocks. Left at -1 the engine
       // answers for the model's family - 2 for SD 2 and SDXL, 1 for SD 1.5
       // (src/conditioning/conditioner.hpp:459) - which is right for the families
