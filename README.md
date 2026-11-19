@@ -11,7 +11,7 @@ build-rel.bat           # Windows release artifacts
 build-rel.sh            # Linux release artifacts
 ```
 
-The development scripts build missing parts, then start the server. Pass `build` to stop before starting. `run.bat` accepts `vulkan`, `cuda`, `key=`, `rate=`, `arch=`, and `fresh-full-rebuild`. `run.sh` accepts `build`, `key=`, `rate=`, and `fresh-full-rebuild`.
+The development scripts build missing parts, then start the server. Pass `build` to stop before starting. `run.bat` accepts `vulkan`, `cuda`, `nodevice`, `key=`, `rate=`, `arch=`, and `fresh-full-rebuild`. With no shape word it reads the machine: a CUDA toolkit and a named card build the CUDA shape, a Vulkan SDK alone builds the Vulkan shape, and neither at all builds with no device backend. `run.sh` accepts `build`, `key=`, `rate=`, and `fresh-full-rebuild`.
 
 Release builds require committed `api/` and `webui/` changes. They write finished binaries into `Release/<target>/` with `build-info.txt`.
 
