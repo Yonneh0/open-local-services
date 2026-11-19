@@ -297,11 +297,17 @@ namespace ols
     // versionLine below, so the wording lives here, in one place.
     std::string buildVersion();
 
-    // The moment this code was compiled, in the compiler's own words (its
-    // __DATE__ and __TIME__ macros).
+    // The moment this binary was built, carried in a file of its own that the
+    // build step beside it writes afresh for every build. Not __DATE__ and
+    // __TIME__: those are words each object says for itself, and an incremental
+    // build re-links objects it never touched - their dates would speak for a
+    // binary made later than every byte they describe. The build step stands
+    // outside the up-to-date rules, so what this answers is always the moment
+    // this binary was made, never the moment some older object was.
+    std::string buildMoment();
     inline std::string buildStamp()
     {
-      return std::string(__DATE__) + " " + __TIME__;
+      return buildMoment();
     }
 
     // The one line every surface states the version with. A development name is

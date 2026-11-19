@@ -245,6 +245,19 @@ else()
   file(REMOVE "${VERSION_STAMP_STANDING}")
 endif()
 
+# The build's moment rides the same single-file road as the version, with one
+# rule more: it is written by a build step that never counts itself up to
+# date, so every build of the server stamps the binary afresh - a bare re-link
+# after a single .cpp included. The compiler's own dates cannot say this:
+# __DATE__ and __TIME__ are words each object speaks for itself, and an
+# incremental build re-links objects it never touched, letting an old object
+# date a newer binary.
+set(BUILD_MOMENT_CPP "${CMAKE_BINARY_DIR}/build-moment.cpp")
+add_custom_target(build-moment ALL
+  COMMAND ${CMAKE_COMMAND} -Dout="${BUILD_MOMENT_CPP}"
+          -P "${CMAKE_CURRENT_LIST_DIR}/cmake/write-build-moment.cmake")
+set_source_files_properties("${BUILD_MOMENT_CPP}" PROPERTIES GENERATED TRUE)
+
 add_executable(open-local-services
   main.cpp
   OpenLocalServices.cpp
@@ -256,7 +269,9 @@ add_executable(open-local-services
   NetworkService.cpp
   WebAssets.cpp
   "${WEBUI_EMBEDDED_CPP}"
-  "${VERSION_STAMP_CPP}")
+  "${VERSION_STAMP_CPP}"
+  "${BUILD_MOMENT_CPP}")
+add_dependencies(open-local-services build-moment)
 
 set_property(TARGET open-local-services PROPERTY CXX_STANDARD 17)
 
