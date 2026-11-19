@@ -135,9 +135,9 @@ rem a box that carries none.
 set VULKAN_DIR=
 call :find_vulkan_sdk
 IF DEFINED VULKAN_DIR (
-  rem the engine builds find the sdk where the loader does: the name every cmake
-  step reads is this one, restated from the folder actually found rather than
-  left at whatever stale path the environment carried.
+  rem the engine builds find the sdk where the loader does: the name every
+  rem cmake step reads is this one, restated from the folder actually found
+  rem rather than left at whatever stale path the environment carried.
   SET VULKAN_SDK=!VULKAN_DIR!
   SET VULKAN_INCLUDE_DIR=!VULKAN_DIR!\include
   SET VULKAN_LIB_DIR=!VULKAN_DIR!\lib
