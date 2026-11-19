@@ -3626,7 +3626,22 @@ namespace ols
         asked["sampler"] = samplerUsed;
         asked["scheduler"] = schedulerUsed;
         asked["cache"] = cacheOn;
-        asked["device"] = cpuAsked ? std::string("cpu") : std::string("card");
+        // Which part of the machine this run really worked on, in that part's own
+        // name - "cpu", or the device the engine named ("Vulkan0 AMD Radeon(TM)
+        // 890M Graphics", tomorrow a CUDA row). A plain "card" here filed work
+        // done on different cards and drivers under one row, and an estimate
+        // carried from a faster card onto a slower one is a wrong number, not a
+        // near one. The open's own record answers, because that is where a card
+        // asked for and a cpu delivered is settled.
+        const bool stoodOnCpu = [this]
+        {
+          std::lock_guard<std::mutex> ctxLock(gCtxMutex);
+          return gCtxCpu.count(modelId) ? gCtxCpu[modelId] : cpuAsked;
+        }();
+        std::string deviceName;
+        if (!stoodOnCpu)
+          deviceName = gpuDeviceName();
+        asked["device"] = stoodOnCpu || deviceName.empty() ? std::string(stoodOnCpu ? "cpu" : "card") : deviceName;
         asked["sage_attn"] = sageAsked;
         asked["batch"] = img.batch_count;
         asked["refs"] = static_cast<int>(sources.size());

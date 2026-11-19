@@ -1037,6 +1037,12 @@ const aggregateRate = {};
 // by no seed, because another seed is the same work at these settings.
 let costRows = [];
 let openRows = [];
+// The card of this machine in its own full name, as the machine names it at
+// /api/system ("Vulkan0 AMD Radeon(TM) 890M Graphics"). The cost ledger keys a
+// run by that name now, because a "card" that meant one machine's card would
+// quote another machine's numbers; a page that has not read the name yet says
+// 'card', which matches no ledger row and so states no time.
+let cardNamed = '';
 
 // The settings a run of this model would be asked for, in the fields the machine
 // keys its costs by: the card's numbers as this page's dials and switches leave
@@ -1068,7 +1074,7 @@ function askFields(model, defaultsOnly) {
     // a row the machine wrote carries the form the weights really stood as, and
     // these two are the same reading of the same files.
     quant: card.uses_quant ? String(card.uses_quant) : 'as shipped',
-    device: ui.isOn(pillKeys.cpu) ? 'cpu' : 'card',
+    device: ui.isOn(pillKeys.cpu) ? 'cpu' : (cardNamed || 'card'),
     sage_attn: ui.isOn(pillKeys.sage_attn),
     batch: defaultsOnly ? 1 : (Number(body.count) > 1 ? Number(body.count) : 1),
     refs: defaultsOnly ? 0 : (body.references ? body.references.length : 0),
@@ -2234,6 +2240,18 @@ async function refresh() {
   if (costs) {
     costRows = Array.isArray(costs.generations) ? costs.generations : [];
     openRows = Array.isArray(costs.loads) ? costs.loads : [];
+  }
+  // The card's full name, asked once and kept: it is a fact about the machine
+  // for as long as this page stands, and the cost rows are keyed by it.
+  if (!cardNamed) {
+    const sys = await ui.api('/api/system');
+    const devs = sys && Array.isArray(sys.devices) ? sys.devices : [];
+    for (const d of devs) {
+      if (d.type === 'gpu' || d.type === 'accel') {
+        cardNamed = String(d.name);
+        break;
+      }
+    }
   }
 
   const prefs = await ui.api('/api/prefs');
