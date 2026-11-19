@@ -49,7 +49,8 @@ namespace ols
       explicit VerifiedRoom(const std::string &root);
 
       // Is this file here, and do its bytes stand proved as they are right now?
-      // Reads the records and the file's own length and date, never its content.
+      // Reads the records and the file's own length, never its content and
+      // never its date - a date moved by a copy says nothing about bytes.
       bool proved(const std::string &path);
 
       // Read this file once and write down what was seen; the answer is whether

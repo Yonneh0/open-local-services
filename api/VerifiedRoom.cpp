@@ -177,14 +177,21 @@ namespace ols
       const auto found = state->records.find(relOf(state->root, path));
       if (found == state->records.end() || !found->is_object())
         return false;
-      // A proved row stands for these bytes while its length and its date stand
-      // for it still; anything else - an unpaid row, a row nothing vouched, a row
-      // for other bytes - is answered here without reading a byte of the file.
+      // A proved row stands for these bytes while its length stands for it
+      // still - and on its length, its parts, and its voucher, nothing else.
+      // The date is only ever the short cut the header promises, never the
+      // answer on its own: a copy from another machine carries the very bytes
+      // the sums were taken over to a new date, and dates answering here read
+      // a room of present, proved weights as missing - measured on MSI
+      // 2026-11-19, 46 vouched rows, every byte identical after the copy,
+      // every page calling them undownloaded and asking a fetch to read the
+      // room afresh, forever. Anything else - an unpaid row, a row nothing
+      // vouched, a row for other bytes - is answered here without reading a
+      // byte of the file.
       const json &row = *found;
       if (!row.contains("parts") || !row.contains("vouch"))
         return false;
-      return row.value("bytes", -1LL) == static_cast<long long>(size) &&
-             row.value(std::string("touched"), std::string()) == touchedOf(path);
+      return row.value("bytes", -1LL) == static_cast<long long>(size);
     }
 
     bool VerifiedRoom::prove(const std::string &path, const std::string &voucher,
@@ -247,10 +254,16 @@ namespace ols
       if (found == state->records.end() || !found->is_object() ||
           !found->contains("parts"))
         return false;
-      // Only bytes standing as they were read can be vouched after the fact: the
-      // voucher belongs to the sums that were taken, not to whatever the name
-      // holds by the time the caller got around to saying so.
-      if (found->value("touched", std::string()) != touchedOf(path))
+      // Only bytes standing at the length they were read at can be vouched
+      // after the fact: the voucher belongs to the sums that were taken, not
+      // to whatever the name holds by the time the caller got around to saying
+      // so. The length is that question; a date that moved because a copy
+      // carried the bytes across a machine says nothing about them either way.
+      std::error_code ec{};
+      const uintmax_t size = std::filesystem::file_size(path, ec);
+      if (ec)
+        return false;
+      if (found->value("bytes", -1LL) != static_cast<long long>(size))
         return false;
       (*found)["vouch"] = voucher;
       saveRecords(*state);
