@@ -3661,6 +3661,11 @@ namespace ols
         asked["sampler"] = samplerUsed;
         asked["scheduler"] = schedulerUsed;
         asked["cache"] = cacheOn;
+        // The vae road this run really took, as the run was answered rather
+        // than as it was asked: a tiled decode and an untiled one are different
+        // work on several of these cards, and one cost row for both would let a
+        // 241 s tiled row price a 725 s untiled ask.
+        asked["tiling"] = img.vae_tiling_params.enabled;
         // Which part of the machine this run really worked on, in that part's own
         // name - "cpu", or the device the engine named ("Vulkan0 AMD Radeon(TM)
         // 890M Graphics", tomorrow a CUDA row). A plain "card" here filed work
