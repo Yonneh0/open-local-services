@@ -123,13 +123,16 @@ if not defined VULKAN_DIR (
     for /f "tokens=2 delims=  " %%V in ("%%L") do if not defined VULKAN_DIR if exist "%%V\Include\*" set VULKAN_DIR=%%V
   )
 )
-if not defined VULKAN_DIR (
-  echo No Vulkan SDK found; none of these targets builds without its Vulkan backend.
-  exit /b 1
+rem the CUDA targets ask nothing of the Vulkan sdk - nvcc, ninja and the studio
+rem environment are their whole toolchain. only a target that names the Vulkan
+rem backend needs the sdk, and such a target refuses for itself when it is asked.
+if defined VULKAN_DIR (
+  set VULKAN_INCLUDE_DIR=%VULKAN_DIR%\include
+  set VULKAN_LIB_DIR=%VULKAN_DIR%\lib
+  echo Vulkan SDK found at !VULKAN_DIR!
+) else (
+  echo No Vulkan SDK here; the CUDA targets build without one, a Vulkan target will refuse for itself.
 )
-set VULKAN_INCLUDE_DIR=%VULKAN_DIR%\include
-set VULKAN_LIB_DIR=%VULKAN_DIR%\lib
-echo Vulkan SDK found at !VULKAN_DIR!
 set MSVC_BIN=
 rem the compiler can be named the way the sdk can: a box with more than one
 rem toolchain picks the one its last release was built with, and what is named
