@@ -3653,7 +3653,7 @@ namespace ols
         // carried from a faster card onto a slower one is a wrong number, not a
         // near one. The open's own record answers, because that is where a card
         // asked for and a cpu delivered is settled.
-        const bool stoodOnCpu = [this]
+        const bool stoodOnCpu = [&]()
         {
           std::lock_guard<std::mutex> ctxLock(gCtxMutex);
           return gCtxCpu.count(modelId) ? gCtxCpu[modelId] : cpuAsked;
