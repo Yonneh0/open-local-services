@@ -128,7 +128,7 @@ memory pool before every row. Times are the engine's own wall clock.
 | flux-3-klein | 1024x1024 · 16 steps | | 312 s | |
 | z-image-turbo | 1024x1024 · 8 steps | | 241 s † | |
 | qwen-image-2.1-turbo | 1024x1024 · 8 steps | | 912 s † | |
-| qwen-image-2.1 | 1024x1024 · 25 steps | | ‡ | |
+| qwen-image-2.1 | 1024x1024 · 25 steps | | 1306 s ‡ | |
 
 † The three clip DiT cards run their vae decode tiled - the way their cards
 say, since the untiled conv routes this driver answers slowly: z-image-turbo
@@ -137,8 +137,9 @@ come back at 35 minutes against 912 s tiled. A run may still name `tiling`
 itself and overrule the card.
 
 ‡ The 25-step qwen-image-2.1 untiled sat in decode past 105 minutes and was
-ended by hand; the tiled 25-step run has not been measured yet - its 8-step
-sibling above is the same work at a third of the steps.
+ended by hand; tiled it completes whole: 1306 s cold and alone - about 50 s
+a step for a 20B model on an 89 GB/s pipe, plus a 44 s tiled decode. The
+slowest still image this machine draws, and it draws it honestly.
 
 cyberrealistic-xl costs more per step than its XL siblings because its card
 runs the dpm++2m_sde_bt ancestral sampler, the most expensive sampler in the
