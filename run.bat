@@ -7,8 +7,9 @@ REM this box as nvidia-smi names it, an arch=<number> word, or the environment -
 REM builds whole on CUDA: every part, the image engine, the server's own device
 REM probe, and the voice engine's device code, compiled on nvcc, and nothing of
 REM the Vulkan sdk is asked of that machine. A box that names no card builds
-REM with no device backend at all - the shape build-rel.sh names with
-REM -DOLS_NO_DEVICE=1 - and the engines work where the threads are.
+REM on the Vulkan sdk it carries, in the plain roots; only a box with no card
+REM and no sdk builds with no device backend at all - the shape build-rel.sh
+REM names with -DOLS_NO_DEVICE=1 - and there the engines work where the threads are.
 REM Pass "vulkan" for the sdk's shape - the one that needs the Vulkan sdk and
 REM builds in the plain roots - "cuda" is taken as the default it names, and
 REM "nodevice" forces the device-free shape where a card could be named.
@@ -126,20 +127,25 @@ if not defined CMAKE_OK (
   EXIT /B 1
 )
 rem ---- the SDK the Vulkan shape asks for ----
-rem looked for only when the vulkan word names that shape. the CUDA build asks
-rem nothing of it: nvcc, ninja and the studio environment are the whole toolchain
-rem that path needs, so a box carrying no SDK at all compiles on its own card.
+rem looked for on every run: a box that names no CUDA card builds on it when it
+rem stands here, and the CUDA build asks nothing of it - nvcc, ninja and the
+rem studio environment are the whole toolchain that path needs. what was found
+rem is restated by the shape's own line below; only the vulkan word refuses for
+rem a box that carries none.
 set VULKAN_DIR=
-if defined VULKAN_WANTED call :find_vulkan_sdk
+call :find_vulkan_sdk
 IF DEFINED VULKAN_DIR (
+  rem the engine builds find the sdk where the loader does: the name every cmake
+  step reads is this one, restated from the folder actually found rather than
+  left at whatever stale path the environment carried.
+  SET VULKAN_SDK=!VULKAN_DIR!
   SET VULKAN_INCLUDE_DIR=!VULKAN_DIR!\include
   SET VULKAN_LIB_DIR=!VULKAN_DIR!\lib
-  echo Vulkan SDK found at !VULKAN_DIR!
 )
 IF DEFINED VULKAN_WANTED IF NOT DEFINED VULKAN_DIR (
   echo No Vulkan SDK found; the Vulkan engines will not build.
-  echo Name the SDK in VULKAN_SDK, or drop the vulkan word and build on the CUDA
-  echo card this box carries, which is what this script does with no word at all.
+  echo Name the SDK in VULKAN_SDK, or drop the vulkan word and let this script
+  echo choose the shape this box can stand: its CUDA card, its sdk, or the cpu.
   EXIT /B 1
 )
 rem MSVC compiler: newest cl.exe on the box, whatever the edition folder says
@@ -184,9 +190,9 @@ if exist "!MSVC_STUDIO!\VC\Auxiliary\Build\vcvars64.bat" set VS_ROOT=!MSVC_STUDI
 rem ---- the vulkan driver manifest: the newest driver-store package that has one.
 rem without it the sdk loader points at a stale directory and reports no drivers.
 rem only the Vulkan shape reads a manifest: a CUDA card is answered by its own
-rem runtime, and a manifest pointing at nothing is no part of that path.
+rem runtime, and a manifest pointing at nothing is no part of that path. the
+rem search waits for the shape below, which a card-less box may still take.
 set VK_DRIVER_DIR=
-if defined VULKAN_WANTED call :find_vk_driver
 rem ---- the CUDA path, the one this script takes by default ----
 rem a card that speaks CUDA builds whole on it: the image engine, the server's own
 rem device probe, and the voice engine's device code all take the CUDA backend.
@@ -240,17 +246,25 @@ set NINJA_DIR=
 if defined NINJA_EXE for %%P in ("!NINJA_EXE!\..") do set NINJA_DIR=%%~fP
 rem what the shape this run builds asks of the machine, said before any build is
 rem asked of it: the CUDA path needs the toolkit, ninja, and the studio
-rem environment, and asks nothing of an SDK; the Vulkan path needed its SDK, and
-rem refused for it above. a box that names no card and holds no toolkit is not a
-rem CUDA machine: it takes the shape with no device backend, as build-rel.sh
-rem names it for a card-less box. a card named by word or environment with no
-rem toolkit under it stays the refusal it always was - that shape was asked for
-rem by name, and this script does not answer a named shape with another.
+rem environment, and asks nothing of an SDK; the Vulkan path needs its SDK, and
+rem refuses for it above. a box that names no card and holds no toolkit is not a
+rem CUDA machine: it builds on the Vulkan sdk it carries, the shape the vulkan
+rem word names, and only a box carrying no sdk too takes the shape with no
+rem device backend, as build-rel.sh names it for such a box. a card named by
+rem word or environment with no toolkit under it stays the refusal it always
+rem was - that shape was asked for by name, and this script does not answer a
+rem named shape with another.
 if defined CUDA_ON if not defined CUDA_HOME if not defined CUDA_ARCH (
-  echo No CUDA toolkit here and nvidia-smi names no card: this build carries no
-  echo device backend, the shape build-rel.sh names -DOLS_NO_DEVICE=1.
   set CUDA_ON=
-  set NODEVICE=1
+  if defined VULKAN_DIR (
+    echo No CUDA toolkit here and nvidia-smi names no card, but the Vulkan sdk
+    echo stands here: this build takes the sdk's shape, in the plain roots.
+    set VULKAN_WANTED=1
+  ) else (
+    echo No CUDA toolkit here, nvidia-smi names no card, and no Vulkan sdk stands here:
+    echo this build carries no device backend, the shape build-rel.sh names -DOLS_NO_DEVICE=1.
+    set NODEVICE=1
+  )
 )
 if defined CUDA_ON (
   if not defined CUDA_HOME (
@@ -270,6 +284,9 @@ if defined CUDA_ON (
   )
   echo CUDA toolkit at !CUDA_HOME!, ninja at !NINJA_EXE!, card at sm_!CUDA_ARCH!
 )
+rem the manifest waits for the settled shape: only a build that reads Vulkan
+rem through the sdk loader asks the driver store for it.
+if defined VULKAN_WANTED call :find_vk_driver
 if defined VULKAN_WANTED echo Vulkan compute with the SDK at !VULKAN_DIR!, in the plain roots
 if defined NODEVICE echo No device backend: the engines and the server build on the cpu alone
 rem the roots each backend builds in, named for it: always a build subfolder

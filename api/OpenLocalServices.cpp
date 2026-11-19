@@ -1816,22 +1816,15 @@ namespace ols
 #endif
 
   // The ggml the voice models run on is linked into this binary, and it is the
-  // machine's device probe. The backend this build was asked for is compiled into
-  // it, so there is nothing here to go looking for: what this function used to do
-  // was read the plugin libraries lying beside the server, and on a release folder
-  // those are the chat engine's own ggml dlls.
-  //
-  // Measured on MSI's cuda-75 release (2026-10-28): the same RTX 2080 was
-  // registered twice - once by the ggml inside the server, once by ggml-cuda.dll
-  // loaded as a plugin from the folder - the start log printed ggml_cuda_init
-  // twice for the one card, and the process failed (0xC0000409) as a finished
-  // picture was handed back, with one copy's tensor standing in the other's
-  // hands. The chat engine reads the ggml dlls it needs from chat-engine\ beside
-  // its loader, in its own process, which is where those libraries belong; the
-  // release scripts no longer lay a second copy of them beside the server.
-  //
-  // The probe is still asked for here, before the port is taken, so the first page
-  // read states the device instead of paying for finding it.
+  // machine's device probe: the backend this build was asked for is compiled
+  // into it, so the probe only enumerates what this binary already carries.
+  // Plugin ggml libraries must never be read from beside the server: measured
+  // on the 2026-10-28 release, a plugin dll the loader picked up registered the
+  // same card a second time beside the ggml inside the process, and the process
+  // failed (0xC0000409) as a finished picture was handed back, with one copy's
+  // tensor standing in the other's hands. The probe is still asked for here,
+  // before the port is taken, so the first page read states the device instead
+  // of paying for finding it.
   void OpenLocalServices::preloadBackends()
   {
 #ifdef _WIN32
@@ -1940,7 +1933,7 @@ namespace ols
   {
     nlohmann::json devices = nlohmann::json::array();
     std::vector<std::string> names;
-    // The same ggml the chat engines run on knows the machine's devices: it is
+    // The same ggml the voice engine runs on knows the machine's devices: it is
     // asked first, so the gpu and its memory are stated with the numbers the
     // backends themselves see. What it cannot name, the image service may still
     // list by name, and a device no library names is not drawn.
