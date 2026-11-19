@@ -2116,12 +2116,15 @@ namespace ols
       }
       const std::string device = onCpu ? std::string("cpu") : card;
       params.backend = device.c_str();
-      // A clip's weights stream: the engine's own recipe for these video models
-      // keeps the params on the cpu and lets the card hold the working set.
-      // Left on the card the manager asks for every byte at once and refuses
-      // any clip bigger than a postcard.
-      const bool streamWeights = def->video && !onCpu;
-      params.params_backend = streamWeights ? "*=cpu" : device.c_str();
+      // A clip's weights ask the card first like every other model: the steps
+      // and the weights standing on the same part of the machine is what makes
+      // the steps fast, and one machine's card is another machine's whole
+      // memory. A card that runs out of room answers the open with a refusal,
+      // and only then does the run fall back to the engine's streaming recipe -
+      // weights on the cpu, the card holding the working set - which is what a
+      // small card has to be asked with.
+      const bool videoWantsCard = def->video && !onCpu;
+      params.params_backend = device.c_str();
       params.auto_fit = true;
 
       std::shared_ptr<std::mutex> guard;
@@ -2219,6 +2222,7 @@ namespace ols
       params.max_vram = kVramBudget.empty() ? nullptr : kVramBudget.c_str();
       sd_ctx_t *ctx = new_sd_ctx(&params);
       bool freed = false;
+      bool streamed = false;
       while (!ctx)
       {
         std::string victim;
@@ -2228,10 +2232,26 @@ namespace ols
           if (!victim.empty())
             closeContextLocked(victim);
         }
-        if (victim.empty())
-          break;
-        freed = true;
-        ctx = new_sd_ctx(&params);
+        if (!victim.empty())
+        {
+          freed = true;
+          ctx = new_sd_ctx(&params);
+          continue;
+        }
+        // Nothing else stands in the way and the card still refused: a clip is
+        // where the streaming recipe earns its keep, so ask that once before
+        // saying the machine cannot hold the model at all.
+        if (!streamed && videoWantsCard)
+        {
+          streamed = true;
+          params.params_backend = "*=cpu";
+          std::fprintf(stderr, "[image] %s does not stand on the card whole: its weights will stream from the cpu\n",
+                       modelId.c_str());
+          std::fflush(stderr);
+          ctx = new_sd_ctx(&params);
+          continue;
+        }
+        break;
       }
       if (!ctx)
       {
