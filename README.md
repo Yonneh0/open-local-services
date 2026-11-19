@@ -104,3 +104,90 @@ generate` before `netplan apply` ever sees it; a refused file is rolled back.
 Changing settings needs the machine's manager: elevation on Windows, root on
 Linux - read-only either way without it. The server's own notes on the network
 it made (bonds, vlans, sharing) live in `data/network-state.json`.
+
+## Performance
+
+Measured on the machine this repository stands on: AMD Ryzen AI 9 HX 470,
+Radeon 890M iGPU on the AMD Vulkan driver, 128 GiB of unified memory, nothing
+else running. Every row is one whole job seen by the server - the model
+unloaded first, so the row carries its own load from NVMe - at the card's own
+default size, steps, sampler and scheduler, batch 1, fixed seed, a clean
+memory pool before every row. Times are the engine's own wall clock.
+
+### Images
+
+| model | card default | cpu | vulkan | cuda |
+|---|---|---|---|---|
+| sdxl-turbo | 512x512 · 4 steps | | 11 s | |
+| realvisxl-v5-lightning | 1024x1024 · 5 steps | | 48 s | |
+| pony-diffusion-v6 | 1024x1024 · 25 steps | | 125 s | |
+| cyberrealistic-xl | 1024x1024 · 28 steps | | 174 s | |
+| animagine-xl-3.1 | 1024x1024 · 28 steps | | 197 s | |
+| lustify-sdxl | 832x1152 · 30 steps | 4859 s | 152 s | |
+| juggernaut-xl-v9 | 832x1216 · 35 steps | | 204 s | |
+| flux-3-klein | 1024x1024 · 16 steps | | 312 s | |
+| z-image-turbo | 1024x1024 · 8 steps | | 241 s † | |
+| qwen-image-2.1-turbo | 1024x1024 · 8 steps | | 912 s † | |
+| qwen-image-2.1 | 1024x1024 · 25 steps | | ‡ | |
+
+† The three clip DiT cards run their vae decode tiled - the way their cards
+say, since the untiled conv routes this driver answers slowly: z-image-turbo
+took 725 s untiled against 241 s tiled, and qwen-image-2.1-turbo had never
+come back at 35 minutes against 912 s tiled. A run may still name `tiling`
+itself and overrule the card.
+
+‡ The 25-step qwen-image-2.1 untiled sat in decode past 105 minutes and was
+ended by hand; the tiled 25-step run has not been measured yet - its 8-step
+sibling above is the same work at a third of the steps.
+
+cyberrealistic-xl costs more per step than its XL siblings because its card
+runs the dpm++2m_sde_bt ancestral sampler, the most expensive sampler in the
+house on this driver.
+
+### Video
+
+| model | workload | cpu | vulkan | cuda |
+|---|---|---|---|---|
+| minimax-h3 | 960x544 · 24 frames · 8 steps | | 23 min | |
+| minimax-h3 | 960x544 · 124 frames · 8 steps | | 124 min | |
+
+A 31 GB audio-video DiT on an 89 GB/s memory pipe is as slow as physics says.
+At 124 frames the driver will not hand over the 5.4 GB pinned buffer the
+graph asks for, ggml says so, splits the graph between cpu and card, and the
+clip finishes - which it does now; while the weights were streamed instead of
+resident, that same clip ended the server.
+
+### Speech
+
+| model | task | cpu | vulkan | cuda |
+|---|---|---|---|---|
+| kokoro-82m-q8 (af_heart) | speak, five varied prompts | | first 15.5 s cold, then 1.4-1.9 s | |
+| qwen3-tts-customvoice-1.7b-q8 (serena) | speak, the same five | | first 34.9 s cold, then 9.3-12.0 s | |
+| moonshine-streaming-small-q8 | listen, 8.4 s recording | | 2.2 s | |
+
+The speech rows ran on the same server; the speech engines choose their own
+device, and these three numbers are the same model cold and warm - the cold
+first call carries the engine's own start, the warm ones are what a page
+conversation feels.
+
+### The columns that stand open
+
+The cpu column carries only what finished on this machine: sdxl-turbo
+measured 33-50 s at its card default on an idle machine (156-221 s when a DiT
+decode was eating the memory bus beside it), lustify-sdxl 4859 s. The pass
+that would fill the rest was stopped by its owner; `run.bat nodevice` builds
+it and the harness is kept. The cuda column is a different machine's table:
+`run.bat cuda` builds this repository in that shape and the same numbers are
+waiting for it.
+
+The machine runs at its hardware ceiling for these models: both memory
+channels are full (2 x 48 GB DDR5-5600) and the 89 GB/s they give is the wall
+every row above leans against. The one lever still on the table is the SoC's
+power window, shipped at the 28 W cTDP default with room in the bios to 54 W.
+
+How to reproduce: build the wanted shape with `run.bat` (or
+`run.bat nodevice`), start the server, and send each card's defaults through
+`POST /api/generate` / `/voice/api/speak` with the prompt from `GET
+/api/models`. `GET /api/timings` keeps what this machine measured - every
+cost row filed under the device that did it, in that device's own name - and
+the job records carry the same numbers the table was cut from.
