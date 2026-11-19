@@ -480,6 +480,13 @@ namespace ols
     static std::condition_variable gCondition;
     static std::map<std::string, sd_ctx_t *> gCtx;
     static std::mutex gCtxMutex;
+    // The card is one worker. The engine stages a run's weights against the
+    // card's whole budget, and it cannot see a second run staging the same
+    // bytes for itself: sixty pictures failed in four seconds on one 8 GiB
+    // card when six runs sampled at once, each reading the others' leftovers
+    // as free memory. A run that asks the card while another holds it waits
+    // here, job standing, in the order it came.
+    static std::mutex gCardGate;
     // Resident models are charged with the bytes of weights they hold and stamped
     // with the tick of their last use, so a load can keep room by closing the
     // least recently used idle model first.
@@ -2157,6 +2164,13 @@ namespace ols
         if (found != gCtx.end())
         {
           touchContext(modelId, openedForm, openedBytes);
+          // Room is asked for on reuse too, never only at an open: a model
+          // that stands open answers from here, and the neighbour whose
+          // weights moved onto the card since it last drew would else stand
+          // there unevicted - a juggernaut then sampling segments beside flux
+          // weights took three times as long, and beside a second sampler,
+          // it failed outright.
+          trimOverBudgetLocked(modelId);
           if (openedFormOut)
             *openedFormOut = openedForm;
           if (openedBytesOut)
@@ -2179,6 +2193,7 @@ namespace ols
         if (found != gCtx.end())
         {
           touchContext(modelId, openedForm, openedBytes);
+          trimOverBudgetLocked(modelId);
           if (openedFormOut)
             *openedFormOut = openedForm;
           if (openedBytesOut)
@@ -3459,6 +3474,13 @@ namespace ols
         }
         hasRef = true;
       }
+      // The whole of a run that stands on the card - opening what it draws
+      // with, staging weights, and every step - happens one run at a time,
+      // behind the gate beside the contexts. Counting the run busy before the
+      // gate is crossed would let a queued run cast the standing one out of
+      // the card's memory while that one still holds it; waiting first means
+      // whoever holds the card is whoever holds it.
+      std::lock_guard<std::mutex> cardGate(gCardGate);
       {
         std::lock_guard<std::mutex> lock(gCtxMutex);
         ++gGenerating[modelId];
