@@ -1565,5 +1565,28 @@
   setInterval(ask, 60000);
 })();
 
+// The browser's tab names the machine, not the program: with three machines
+// answered from one desk, three tabs all reading open-local-services say
+// nothing. The machine states its name, its operating system and the device
+// its binary drives (X1 (win11 vulkan1.4)), once, at the first read of the
+// system snapshot - none of it moves while the server stands. The pages' own
+// icons, one per page, ride on beside the words untouched.
+(function mountTitle() {
+  const ask = async function () {
+    let doc = null;
+    try {
+      const res = await fetch('/api/system');
+      if (res.ok) doc = await res.json();
+    } catch (e) { /* the tab keeps the plain program name it was written with */ }
+    if (doc === null || typeof doc !== 'object') return;
+    const host = typeof doc.hostname === 'string' ? doc.hostname : '';
+    const shape = [doc.os, doc.backend]
+      .filter(function (word) { return typeof word === 'string' && word; }).join(' ');
+    if (!host && !shape) return;
+    document.title = (host || 'open-local-services') + (shape ? ' (' + shape + ')' : '');
+  };
+  ask();
+})();
+
 // the one alias every page script uses
 const ui = window.ols;

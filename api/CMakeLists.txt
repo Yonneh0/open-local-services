@@ -276,6 +276,30 @@ add_dependencies(open-local-services build-moment)
 
 set_property(TARGET open-local-services PROPERTY CXX_STANDARD 17)
 
+# The shape this binary is, told to the process as it is compiled: the pages
+# put these words in the browser's tab beside the machine's name, so three
+# open tabs say which machine stands behind each. The device follows the same
+# choice made at the top of this file - CUDA where the build named it, Vulkan
+# on Windows, CUDA elsewhere, and no device at all when the shape asked for
+# none. The cuda architecture is the first one the build was pointed at, which
+# every script here passes as -DCMAKE_CUDA_ARCHITECTURES.
+if(OLS_NO_DEVICE)
+  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ols_cpu_isa)
+  if(ols_cpu_isa STREQUAL "amd64")
+    set(ols_cpu_isa "x86_64")
+  endif()
+  target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="cpu" OLS_CPU_ISA="${ols_cpu_isa}")
+elseif(ENGINE_ENABLE_CUDA)
+  set(ols_cuda_arch "")
+  if(CMAKE_CUDA_ARCHITECTURES)
+    list(GET CMAKE_CUDA_ARCHITECTURES 0 ols_cuda_arch)
+    string(REGEX REPLACE "-.*" "" ols_cuda_arch "${ols_cuda_arch}")
+  endif()
+  target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="cuda" OLS_CUDA_ARCH="${ols_cuda_arch}")
+else()
+  target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="vulkan")
+endif()
+
 # A small console entry that starts the linked voice engine and speaks one
 # line, used by the release scripts to prove the engine really runs inside
 # the shipped binary before anything gets deployed.

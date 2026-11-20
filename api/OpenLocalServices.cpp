@@ -30,6 +30,11 @@
 #include "Platform.h"
 #include "HardwareInfo.h"
 
+#ifndef _WIN32
+#include <dlfcn.h>
+#include <unistd.h>
+#endif
+
 namespace ols
 {
   namespace
@@ -2002,6 +2007,125 @@ namespace ols
   }
 #endif
 
+  namespace
+  {
+    // The words a browser tab carries so three open tabs say which machine
+    // stands behind each: the name the machine goes by on the network, the
+    // operating system it says it runs, and the device this binary was built
+    // to drive. Each states only what the machine itself answers; where it
+    // answers nothing, the page keeps the plain program name instead.
+    std::string selfHostName()
+    {
+      std::string host;
+#ifdef _WIN32
+      char text[256] = {0};
+      DWORD length = static_cast<DWORD>(sizeof(text));
+      if (GetComputerNameA(text, &length))
+        host = text;
+#else
+      char text[256] = {0};
+      if (gethostname(text, sizeof(text) - 1) == 0)
+        host = text;
+#endif
+      // Written in capitals whichever platform it came from, so the tab reads
+      // the machine's name as a name - UM780 beside X1 - and not whatever
+      // letter case the box happened to be named under.
+      for (char &c : host)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+      return host;
+    }
+
+    std::string selfOsName()
+    {
+#ifdef _WIN32
+      // The kernel's own answer, asked of ntdll directly: the version api a
+      // manifest-less process is handed otherwise lies about being ten.
+      using RtlGetVersion_t = LONG(WINAPI *)(PRTL_OSVERSIONINFOW);
+      const HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+      auto rtl = ntdll ? reinterpret_cast<RtlGetVersion_t>(
+                           GetProcAddress(ntdll, "RtlGetVersion"))
+                       : nullptr;
+      OSVERSIONINFOW info = {};
+      info.dwOSVersionInfoSize = sizeof(info);
+      if (!rtl || rtl(&info) != 0)
+        return std::string();
+      if (info.dwMajorVersion < 10)
+        return "win" + std::to_string(info.dwMajorVersion);
+      return info.dwBuildNumber >= 22000 ? "win11" : "win10";
+#else
+      // The distribution's own record: its name and version, told apart from
+      // a desktop by the session managers a desktop would have installed.
+      std::ifstream record("/etc/os-release");
+      std::string id, version, line;
+      while (std::getline(record, line))
+      {
+        for (const char *key : {"ID=", "VERSION_ID="})
+        {
+          std::string &into = key[1] == 'D' ? id : version;
+          const std::string word(key);
+          if (line.rfind(word, 0) != 0)
+            continue;
+          std::string value = line.substr(word.size());
+          if (value.size() > 1 && value.front() == '"')
+            value = value.substr(1, value.size() - 2);
+          into = value;
+        }
+      }
+      if (id.empty())
+        return std::string();
+      std::error_code ignored;
+      const bool desktop = std::filesystem::exists("/usr/bin/gnome-session", ignored) ||
+                           std::filesystem::exists("/usr/share/xsessions", ignored);
+      std::string word = id + (desktop ? "" : "-server");
+      if (!version.empty())
+        word += "-" + version;
+      return word;
+#endif
+    }
+
+    std::string selfBackend()
+    {
+#ifndef OLS_BACKEND
+      return std::string();
+#else
+      std::string word = OLS_BACKEND;
+#ifdef OLS_CUDA_ARCH
+      word += OLS_CUDA_ARCH;
+#endif
+#ifdef OLS_CPU_ISA
+      word += "-" OLS_CPU_ISA;
+#endif
+      if (word == "vulkan")
+      {
+        // A vulkan build asks the machine's own loader the highest version its
+        // devices can speak. A loader too old to be asked says nothing, and
+        // the word stands alone rather than invented.
+        uint32_t version = 0;
+#ifdef _WIN32
+        const HMODULE loader = LoadLibraryA("vulkan-1.dll");
+        using Entry_t = uint32_t(__cdecl *)(uint32_t *);
+        const Entry_t entry = loader ? reinterpret_cast<Entry_t>(
+                                         GetProcAddress(loader, "vkEnumerateInstanceVersion"))
+                                     : nullptr;
+#else
+        void *loader = dlopen("libvulkan.so.1", RTLD_LAZY);
+        using Entry_t = uint32_t(*)(uint32_t *);
+        const Entry_t entry = loader ? reinterpret_cast<Entry_t>(
+                                         dlsym(loader, "vkEnumerateInstanceVersion"))
+                                     : nullptr;
+#endif
+        if (entry && entry(&version) == 0 && version > 0)
+          word += std::to_string(version >> 22) + "." + std::to_string((version >> 12) & 0x3FFu);
+#ifndef _WIN32
+        if (loader)
+          dlclose(loader);
+#endif
+      }
+      return word;
+#endif
+    }
+  } // namespace
+
   std::string OpenLocalServices::systemJson() const
   {
     nlohmann::json devices = nlohmann::json::array();
@@ -2113,6 +2237,21 @@ namespace ols
       out["version"] = buildAt;
       out["compiled"] = platform::buildStamp();
       out["compiled_at"] = platform::buildMomentSeconds();
+    }
+    // The machine by name and shape, for the browser's tab to tell one
+    // machine's pages from another's: X1 (win11 vulkan1.4) reads differently
+    // from UM780 (ubuntu-server-26.10 cuda70), and every word of it is what
+    // this machine states about itself, nothing the page could have guessed.
+    {
+      const std::string host = selfHostName();
+      if (!host.empty())
+        out["hostname"] = host;
+      const std::string os = selfOsName();
+      if (!os.empty())
+        out["os"] = os;
+      const std::string device = selfBackend();
+      if (!device.empty())
+        out["backend"] = device;
     }
     // And the moment the newest page file was written: a server answering from
     // the folder outside hands over whatever was last written there - that one
