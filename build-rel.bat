@@ -55,6 +55,24 @@ rem     the link. rebuilding code that did not change is a defect, not a cost.
 rem   - the version every artifact here carries is the commit its code stands on,
 rem     which this script reads only after checking that the code is committed.
 rem
+rem how a release works here, in plain words - there is no release server, no
+rem pipeline, and no version numbers, and that is the whole design:
+rem   1. the code is committed first. the release refuses an uncommitted tree,
+rem      because a released binary that carries a commit older than its own
+rem      code would lie about what it is.
+rem   2. this script builds each shape and stamps the binary with that commit.
+rem      the commit hash is the version - the only version this project has.
+rem   3. each finished folder is written beside the source as one zip, together
+rem      with its sha256 in Release\SHA256SUMS.txt, and the archives are
+rem      committed. the repository is the release: what is on a machine is what
+rem      the tree says it is, and nothing else publishes anything.
+rem   4. a machine that compiles nothing takes one archive, opens it where it
+rem      stands, and runs the binary inside - the cuda runtime it imports and
+rem      the microsoft c++ runtime it needs travel beside it, read off the
+rem      import tables rather than guessed at. a weights\ folder and a data\
+rem      folder beside the binary are the same folders the development tree
+rem      uses; a .env beside it is read the same way run.bat reads one.
+rem
 rem usage: build-rel.bat                build every windows target this box can
 rem        build-rel.bat build          the same: this script never starts a server
 rem        build-rel.bat cpu-avx512     only that target
@@ -92,6 +110,10 @@ echo the version every artifact here carries: !CODE_VERSION!
 
 set REL=Release
 if not exist "%REL%" mkdir "%REL%"
+rem each run writes the archives of the artifacts and the hashes of those
+rem archives: one file per target to push over the network, and one file that
+rem says what the bytes of every one of them are.
+if exist "%REL%\SHA256SUMS.txt" del "%REL%\SHA256SUMS.txt"
 
 rem the exact vendor commits this code is written against - the same names run.bat
 rem carries, so an artifact is the source the running server runs.
@@ -320,10 +342,34 @@ rem what the artifacts carry, in the note the README points at
   echo     voice engine: api\vendor\audio.cpp at !PIN_VOICE!, compiled in below
   echo     image engine: api\vendor\stable-diffusion.cpp at !PIN_IMAGE!
   echo     image ggml: api\vendor\stable-diffusion.cpp\ggml at !PIN_IMAGE_GGML!
+  echo.
+  echo the release of each target is one zip beside this file, named for the
+  echo commit its binary carries - open-local-services-!CODE_VERSION:~0,7!-win-^<folder^>.zip -
+  echo and the sha256 of every zip stands in Release\SHA256SUMS.txt. inside
+  echo each folder: the cuda runtime the binaries really import and the
+  echo microsoft c++ runtime, carried beside the server rather than left to
+  echo the machine that receives it, and a webui folder served live the way
+  echo the development tree's is. open such a folder where it stands and run
+  echo it; nothing is compiled and nothing is fetched on that machine.
 ) > "%REL%\build-info.txt"
 
 echo.
 echo Release\build-info.txt now says what every artifact here carries.
+rem the repository is the release, so an archive that stands here uncommitted
+rem is a release that has not happened yet. the script never commits anything -
+rem it reads the archive list off git and names the ones the tree has not been
+rem shown, so no finished binary is ever left only on this machine.
+set UNCOMMITTED=
+for /f "delims=" %%F in ('git status --porcelain -- Release 2^>nul') do (
+  set UNCOMMITTED=1
+  echo   %%F
+)
+if defined UNCOMMITTED (
+  echo the archives above are built but not in the repository yet - commit them,
+  echo the same commit discipline as the code: what is committed is what runs.
+) else (
+  echo every archive under Release\ is committed: the release is the repository.
+)
 echo The engine trees are now built the release way; run.bat puts them back the
 echo development way when it runs.
 exit /b 0
@@ -358,6 +404,7 @@ set API_ROOT=
 set SD_ROOT=
 set OUT=
 set CPU_FLAGS=
+set AVX512_WANT=
 set CUDA_ARCH=
 set CUDA_ON=
 if /I "!TARGET!"=="cpu-avx512" (
@@ -365,14 +412,20 @@ if /I "!TARGET!"=="cpu-avx512" (
   set API_ROOT=api\build
   set OUT=%REL%\x64-windows
   set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON
+  set AVX512_WANT=ON
   set BACKEND=Vulkan
   exit /b 0
 )
 if /I "!TARGET!"=="cpu-plain" (
   set SD_ROOT=api\vendor\stable-diffusion.cpp\build-p
-  set API_ROOT=api\build
+  rem the server binary carries the voice engine's ggml inside it, and that ggml
+  rem writes the target's instruction sets into the objects it compiles - so the
+  rem plain shape cannot share an api tree with the avx512 one, and its root
+  takes the same -p name the image engine's plain root has always carried.
+  set API_ROOT=api\build-p
   set OUT=%REL%\x64-windows-plain
   set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+  set AVX512_WANT=OFF
   set BACKEND=Vulkan
   exit /b 0
 )
@@ -432,6 +485,8 @@ rem makes the builders re-link everything they hold, so it is done only when
 rem the cache answers with another path's names.
 set CACHE_VERSION=
 set CACHE_SD=
+set CACHE_NATIVE=
+set CACHE_AVX512=
 rem the names are matched on their prefix, not on a type suffix: these
 rem defines are read-not-declared on the CMake side, so the cache types
 rem them as it likes, and only the name before the colon is stable.
@@ -439,10 +494,19 @@ for /f "usebackq tokens=1,* delims==" %%A in ("!API_ROOT!\CMakeCache.txt") do (
   set CACHE_KEY=%%A
   if /I "!CACHE_KEY:~0,11!"=="OLS_VERSION" set CACHE_VERSION=%%B
   if /I "!CACHE_KEY:~0,12!"=="OLS_SD_BUILD" set CACHE_SD=%%B
+  if /I "!CACHE_KEY:~0,12!"=="GGML_NATIVE:" set CACHE_NATIVE=%%B
+  if /I "!CACHE_KEY:~0,12!"=="GGML_AVX512:" set CACHE_AVX512=%%B
 )
 set NEEDS_RENAME=
 if not "!CACHE_VERSION!"=="!CODE_VERSION!" set NEEDS_RENAME=1
 if not "!CACHE_SD!"=="!SD_ROOT!" set NEEDS_RENAME=1
+rem the instruction sets this target names are part of what the binary is: the
+rem release asks the cache them too, so a tree the development path left native
+rem is restated for the release rather than released under a name it does not
+rem hold. a tree that carries no answer for a name is a tree that was never
+rem configured, and the configure below is what it needs anyway.
+if defined AVX512_WANT if not "!CACHE_NATIVE!"=="OFF" set NEEDS_RENAME=1
+if defined AVX512_WANT if not "!CACHE_AVX512!"=="!AVX512_WANT!" set NEEDS_RENAME=1
 if defined NEEDS_RENAME (
   rem the version and the image library are names the link answers with; the card
   rem generation is the shape every object was compiled for, and that is asked
@@ -457,9 +521,9 @@ if defined NEEDS_RENAME (
   )
   if defined CUDA_ON (
     call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
-    cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!"
+    cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!" !CPU_FLAGS!
   ) else (
-    cmake -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_SD_BUILD=!SD_ROOT!
+    cmake -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_SD_BUILD=!SD_ROOT! !CPU_FLAGS!
   )
   if errorlevel 1 (
     echo Could not configure the api build for !TARGET!.
@@ -501,6 +565,12 @@ if not exist "!OUT!\stable-diffusion.dll" (
   echo stable-diffusion.dll is not there - the image engine build did not produce it.
   exit /b 1
 )
+rem the pages travel with the binary: a webui folder beside the server is served
+rem from disk, so a release folder holds the live structure the development
+rem folder holds - and the copy embedded in the binary only answers when the
+rem folder is moved somewhere without one.
+if exist "!OUT!\webui" rmdir /s /q "!OUT!\webui"
+xcopy /Y /E /Q /I "webui" "!OUT!\webui\" >nul
 rem the image library and the server share one process, so both have to be built
 rem against the same runtime. an image library built for debugging imports the
 rem debug CRT (ucrtbased.dll) while the server carries the release one, and a
@@ -510,13 +580,54 @@ rem moment a finished picture is handed over, which reads as a fault in the code
 rem rather than in the flags a build was configured with. So the runtime is read
 rem off the artifact here - the same way the card architecture below is - and a
 rem debug-shaped image library stops the release rather than shipping in it.
-"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\stable-diffusion.dll" > "!API_ROOT!\ols-deps.txt" 2>nul
+"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\open-local-services.exe" > "!API_ROOT!\ols-deps.txt" 2>nul
+"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\stable-diffusion.dll" >> "!API_ROOT!\ols-deps.txt" 2>nul
 findstr /L /C:"ucrtbased.dll" "!API_ROOT!\ols-deps.txt" >nul
 if not errorlevel 1 (
   echo stable-diffusion.dll in !OUT! was built for debugging: it imports ucrtbased.dll.
   echo the image engine build must name -DCMAKE_BUILD_TYPE=Release; its build root is !SD_ROOT!,
   echo whose CMakeCache.txt states the build type that root was last configured with.
   exit /b 1
+)
+rem a cuda artifact that resolves its runtime from this box's toolkit is not a
+rem release yet: the machine down the network holds a driver and nothing else.
+rem what the two binaries really import is read off them - and every name the
+rem toolkit can supply is laid beside the server, once each, as it is named.
+rem the driver's own cuda.dll belongs to the machine that owns the card and is
+rem never carried.
+if defined CUDA_ON (
+  set RUNTIME_SEEN=!API_ROOT!\ols-runtime.txt
+  if exist "!RUNTIME_SEEN!" del "!RUNTIME_SEEN!"
+  for /f "usebackq tokens=*" %%L in ("!API_ROOT!\ols-deps.txt") do (
+    for %%W in (%%L) do (
+      if /I "%%~xW"==".dll" (
+        if exist "!CUDA_HOME!\bin\x64\%%W" (
+          (findstr /X /C:"%%W" "!RUNTIME_SEEN!" >nul 2>nul) || (
+            echo %%W>> "!RUNTIME_SEEN!"
+            copy /Y "!CUDA_HOME!\bin\x64\%%W" "!OUT!\" >nul
+            echo   carried: %%W
+          )
+        )
+        if exist "!CUDA_HOME!\lib\x64\%%W" (
+          (findstr /X /C:"%%W" "!RUNTIME_SEEN!" >nul 2>nul) || (
+            echo %%W>> "!RUNTIME_SEEN!"
+            copy /Y "!CUDA_HOME!\lib\x64\%%W" "!OUT!\" >nul
+            echo   carried: %%W
+          )
+        )
+      )
+    )
+  )
+)
+rem a machine that never held visual studio has no microsoft c++ runtime of its
+rem own, and this release runs where nothing was installed - so the compiler's
+rem own redist copies of the three runtime dlls come along beside the binary.
+set REDIST_DIR=!MSVC_BIN!\..\..\..\redist\x64\Microsoft.VCRedist.143
+for %%R in ("vcruntime140.dll" "vcruntime140_1.dll" "msvcp140.dll") do (
+  if exist "!REDIST_DIR!\%%~R" (
+    copy /Y "!REDIST_DIR!\%%~R" "!OUT!\" >nul
+    echo   carried: %%~R
+  )
 )
 rem what card architecture a cuda binary really holds is read back off it
 rem rather than trusted from what was asked: the tool that reads it sits beside
@@ -551,6 +662,30 @@ if defined CUDA_ON (
     echo %%~nF: !ARCH_READ!
   )
 )
+
+rem the release of this target is one archive: the folder just above, named for
+rem the commit its binary carries. that file is what gets committed beside the
+rem source, what gets put on a machine, and what that machine opens where it
+rem stands and runs - no builder, no installer, nothing fetched from anywhere.
+rem its sha256 goes into the release's own SHA256SUMS.txt, so a copy that
+rem arrived changed reads as changed before anyone runs it.
+for %%P in ("!OUT!") do set OUT_NAME=%%~nP
+set ARCHIVE=%REL%\open-local-services-!CODE_VERSION:~0,7!-win-!OUT_NAME!.zip
+if exist "!ARCHIVE!" del "!ARCHIVE!"
+tar -a -c -f "!ARCHIVE!" -C "%REL%" "!OUT_NAME!"
+if errorlevel 1 (
+  echo could not write the archive for !TARGET! - the folder stands, unarchived.
+  exit /b 1
+)
+set ARCH_HASH=
+certutil -hashfile "!ARCHIVE!" SHA256 2>nul | findstr /R "^[0-9A-Fa-f][0-9A-Fa-f]*$" > "!API_ROOT!\ols-hash.txt"
+for /f "usebackq delims=" %%H in ("!API_ROOT!\ols-hash.txt") do set ARCH_HASH=%%H
+if not defined ARCH_HASH (
+  echo could not read the sha256 of !ARCHIVE! - certutil answered with nothing.
+  exit /b 1
+)
+echo !ARCH_HASH!  open-local-services-!CODE_VERSION:~0,7!-win-!OUT_NAME!.zip>> "%REL%\SHA256SUMS.txt"
+echo wrote !ARCHIVE!
 
 exit /b 0
 

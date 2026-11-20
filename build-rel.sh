@@ -56,7 +56,30 @@
 #     than left to be discovered at run time.
 #
 # the trees are shared: building the release way leaves the engine trees built
-# with the release settings, and the next run.sh build puts them back the
+# with the release settings, and the next run.sh build
+#
+# how a release works here, in plain words - there is no release server, no
+# pipeline, and no version numbers, and that is the whole design:
+#   1. the code is committed first. the release refuses an uncommitted tree,
+#      because a released binary that carries a commit older than its own
+#      code would lie about what it is.
+#   2. this script builds each shape and stamps the binary with that commit.
+#      the commit hash is the version - the only version this project has.
+#   3. each finished folder is written beside the source as one tar.gz,
+#      together with its sha256 in Release/SHA256SUMS.txt, and the archives
+#      are committed. the repository is the release: what is on a machine is
+#      what the tree says it is, and nothing else publishes anything.
+#   4. a machine that compiles nothing takes one archive, opens it where it
+#      stands, and runs the binary inside - the cuda runtime it imports
+#      travels beside it, read off what the loader really asks for. weights/
+#      and data/ folders and a .env beside the binary are the same folders
+#      and file the development tree uses.
+#   5. the cpu backend of every artifact is the baseline of its architecture
+#      with run-time detection on top: an artifact built on a machine with
+#      avx512 runs untouched on one that has never seen it. the glibc floor
+#      of each artifact is read off the binaries and printed beside them -
+#      which is honest only because linux artifacts are built on the same
+#      ubuntu release as the machines that will run them. puts them back the
 # development way. nothing is wrong about that - each entry point states the
 # kind of binary it makes.
 #
@@ -89,6 +112,12 @@ if [ -z "$CODE_VERSION" ]; then
   exit 1
 fi
 echo "the version every artifact here carries: $CODE_VERSION"
+VERSION7=$(echo "$CODE_VERSION" | cut -c1-7)
+
+# each run writes the archives of the artifacts and the hashes of those
+# archives: one file per target to push over the network, and one file that
+# says what the bytes of every one of them are.
+rm -f Release/SHA256SUMS.txt
 
 # the exact vendor commits this code is written against - the same names run.sh
 # carries, so an artifact is the source the running server runs.
@@ -338,6 +367,15 @@ build_one() {
   # cpu it runs on reports. so an artifact built on a cpu with avx512 runs
   # unchanged on one that has none, and uses avx512 on a cpu that has it.
   COMMON="-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON -DGGML_FMA=ON -DGGML_F16C=ON"
+  # shared libraries find each other by the folder they stand in, not by the
+  # folder they were built in: an artifact unpacked on a machine that never
+  # held this tree has no build roots to fall back on, so every library gets
+  # a run path of its own folder - and every runtime library it needs is
+  # carried into that folder beside it, below. the server binary names the
+  # image library's build folder too, so the development path still finds it
+  # in the tree it was built in.
+  RPATH_SD="-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=\$ORIGIN"
+  RPATH_API="-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=\$ORIGIN;$(pwd)/$SD_BUILD/bin"
 
   CUDA_FLAG=OFF
   [ "$CUDA" = on ] && CUDA_FLAG=ON
@@ -355,7 +393,7 @@ build_one() {
     check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH" || return 1
     check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "$CUDA_FLAG" || return 1
   fi
-  if ! configure_engine -S "$SD" -B "$SD_BUILD" $COMMON $COMP_OPTS $OLS_GUARD \
+  if ! configure_engine -S "$SD" -B "$SD_BUILD" $COMMON $RPATH_SD $COMP_OPTS $OLS_GUARD \
     -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
     -DGGML_CUDA=$CUDA_FLAG -DGGML_VULKAN=OFF; then
     echo "[$TARGET] could not configure the image engine"; return 1
@@ -386,12 +424,18 @@ build_one() {
     check_shape "$API_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH" || return 1
     CACHE_VERSION=$(sed -n 's/^OLS_VERSION[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
     CACHE_SD=$(sed -n 's/^OLS_SD_BUILD[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-    if [ "$CACHE_VERSION" = "$CODE_VERSION" ] && [ "$CACHE_SD" = "$SD_BUILD" ]; then
+    # the instruction sets the binary carries are part of what it is: the voice
+    # engine's ggml is inside this one executable, and a tree the development
+    # path left native must be restated for the release rather than released
+    # under a name it does not hold.
+    CACHE_NATIVE=$(sed -n 's/^GGML_NATIVE:[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
+    if [ "$CACHE_VERSION" = "$CODE_VERSION" ] && [ "$CACHE_SD" = "$SD_BUILD" ] &&
+       [ "$CACHE_NATIVE" = "OFF" ]; then
       NEEDS_RENAME=""
     fi
   fi
   if [ -n "$NEEDS_RENAME" ]; then
-    if ! configure_engine -S api -B "$API_BUILD" $COMP_OPTS $API_OPTS $COMMON; then
+    if ! configure_engine -S api -B "$API_BUILD" $COMP_OPTS $API_OPTS $COMMON $RPATH_API; then
       echo "[$TARGET] could not configure open-local-services"; return 1
     fi
   fi
@@ -403,6 +447,38 @@ build_one() {
   for SO in "$SD_BUILD"/*.so "$SD_BUILD"/bin/*.so; do
     [ -f "$SO" ] && cp -f "$SO" "$OUT/"
   done
+  # the voice engine's phonemizer reads its data beside the binary - the same
+  # data the tree carries. the windows packager has always copied it; a linux
+  # artifact that arrived without it arrived mute.
+  rm -rf "$OUT/espeak-ng-data"
+  cp -r api/espeak-ng-data "$OUT/espeak-ng-data"
+  # the pages travel with the binary: a webui folder beside the server is
+  # served from disk, so the release folder holds the live structure the
+  # development folder holds, and the copy embedded in the binary answers
+  # only when it is moved somewhere without one.
+  rm -rf "$OUT/webui"
+  cp -r webui "$OUT/webui"
+  # a cuda artifact that resolves its runtime from this box's toolkit is not
+  # a release yet: the machine down the network holds a driver and nothing
+  # else. what the loader really asks for is read off the artifacts, and every
+  # name the toolkit resolves is carried beside the binary as its real file.
+  # the driver's own libcuda belongs to the machine that owns the card and is
+  # never carried - the filter only ever names files inside the toolkit.
+  if [ "$CUDA" = on ]; then
+    for F in "$OUT/open-local-services" "$OUT"/*.so*; do
+      [ -f "$F" ] || continue
+      ldd "$F" 2>/dev/null | awk '$2 == "=>" && $3 ~ /^\/usr\/local\/cuda/ {print $1" "$3}'
+    done | sort -u > "$OUT/.ols-cuda-needs"
+    while read -r LIB_REAL; do
+      LIB=${LIB_REAL%% *}
+      REAL=${LIB_REAL#* }
+      [ -n "$LIB" ] || continue
+      [ -f "$OUT/$LIB" ] && continue
+      echo "[$TARGET] carried: $LIB"
+      cp -L -f "$REAL" "$OUT/$LIB"
+    done < "$OUT/.ols-cuda-needs"
+    rm -f "$OUT/.ols-cuda-needs"
+  fi
   return 0
 }
 
@@ -416,6 +492,14 @@ say_target() {
   echo "runtime libraries it asks for, beyond the system ones:"
   ldd "$OUT/open-local-services" 2>/dev/null | grep -E 'stable-diffusion|cudart|cublas|libcuda' ||
     echo "  none: the engines are inside the binary"
+  # the newest glibc any part of this asks a symbol from is the floor of
+  # systems it can run on: stated off the binaries, never assumed. built on a
+  # box of the same ubuntu release as its landing machine, it reads as that
+  # release's own version - which is the whole point of building linux
+  # artifacts on the crash-test dummy.
+  FLOOR=$(objdump -T "$OUT/open-local-services" "$OUT"/lib* 2>/dev/null |
+          sed -n 's/.*\(GLIBC_[0-9][0-9.]*\).*/\1/p' | sort -uV | tail -n 1)
+  [ -n "$FLOOR" ] && echo "the newest glibc symbol any of it asks for: $FLOOR"
   if [ -n "$NVCC" ]; then
     echo "cuda architectures the tools read back from the binaries:"
     for T in open-local-services; do
@@ -481,6 +565,23 @@ for SPEC in $PLAN; do
   esac
   build_one "$TARGET" "$KIND" "$CUDA" "$CUDA_ARCH" || FAILED="$FAILED $TARGET"
   say_target "$TARGET"
+  # the release of this target is one archive: the folder just above it,
+  # named for the commit its binary carries. that file is what gets committed
+  # beside the source, what is put on a machine, and what that machine opens
+  # where it stands and runs - no builder, no installer, nothing fetched from
+  # anywhere. its sha256 joins the release's own SHA256SUMS.txt, so a copy
+  # whose bytes changed on the way reads as changed before anyone runs it.
+  if [ -f "$REL/$TARGET/open-local-services" ]; then
+    ARCHIVE_NAME=open-local-services-$VERSION7-linux-$TARGET.tar.gz
+    rm -f "$REL/$ARCHIVE_NAME"
+    if tar -c -z -f "$REL/$ARCHIVE_NAME" -C "$REL" "$TARGET"; then
+      ( cd "$REL" && sha256sum "$ARCHIVE_NAME" >> SHA256SUMS.txt )
+      echo "wrote Release/$ARCHIVE_NAME"
+    else
+      echo "could not write the archive for $TARGET - the folder stands, unarchived."
+      FAILED="$FAILED $TARGET"
+    fi
+  fi
 done
 
 # what the tree holds, and what it does not: the note the README points at.
@@ -495,6 +596,14 @@ done
   echo "    (its ggml stands in that same tree, so it carries no .pin of its own)"
   echo "  image engine: api/vendor/stable-diffusion.cpp at $PIN_IMAGE"
   echo "  image ggml: api/vendor/stable-diffusion.cpp/ggml at $PIN_IMAGE_GGML"
+  echo ""
+  echo "the release of each target is one archive beside this file, named for"
+  echo "the commit its binary carries - open-local-services-$VERSION7-linux-<target>.tar.gz -"
+  echo "and the sha256 of every archive stands in SHA256SUMS.txt. inside each:"
+  echo "the binary, the image engine beside it, the cuda runtime it really"
+  echo "imports, the phonemizer data, and the webui folder it serves from disk."
+  echo "open such a folder where it stands and run it; nothing is compiled and"
+  echo "nothing is fetched on the machine that receives it."
   echo ""
   for SPEC in $PLAN; do
     N=${SPEC%%:*}
@@ -520,5 +629,18 @@ done
 for N in $FAILED; do echo "$N did not finish."; done
 echo ""
 echo "Release/build-info.txt now says what every artifact here carries."
+# the repository is the release, so an archive that stands here uncommitted
+# is a release that has not happened yet. this script never commits anything -
+# it reads the archive list off git and names the ones the tree has not been
+# shown, so no finished binary is ever left only on this machine.
+UNCOMMITTED=$(git status --porcelain -- Release 2>/dev/null)
+if [ -n "$UNCOMMITTED" ]; then
+  echo "the archives below are built but not in the repository yet - commit"
+  echo "them with the same discipline as the code: what is committed is what"
+  echo "runs."
+  echo "$UNCOMMITTED" | sed 's/^/  /'
+else
+  echo "every archive under Release/ is committed: the release is the repository."
+fi
 echo "the engine trees are now built the release way; run.sh puts them back the"
 echo "development way when it runs."
