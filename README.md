@@ -6,6 +6,17 @@ All jokes aside- this has not been validated by and first parties- let alone sec
 
 A local server for image generation, video clips, speech synthesis, transcription, and listening tasks. One server process serves the web UI and all API endpoints from one fixed port. The voice engine is linked into the server. The image engine is served through its own library because it has a separate ggml copy.
 
+## Repository
+
+This is the canonical repository: [https://github.com/Yonneh0/open-local-services](https://github.com/Yonneh0/open-local-services).
+
+```sh
+git clone git@github.com:Yonneh0/open-local-services.git   # ssh
+git clone https://github.com/Yonneh0/open-local-services.git
+```
+
+Weights, generated data, and `.env` are not in the repository and never are; they live beside the server as `weights/`, `data/`, and the settings file named below.
+
 ## Quick start
 
 ```sh
