@@ -28,6 +28,7 @@
 #include <nlohmann/json.hpp>
 #include "ggml-backend.h"
 #include "Platform.h"
+#include "HardwareInfo.h"
 
 namespace ols
 {
@@ -2132,6 +2133,51 @@ namespace ols
     }
     if (memTotal > 0)
       out["memory"] = {{"total_bytes", memTotal}, {"free_bytes", memFree}};
+    // What the memory sticks themselves are, as the machine's inventory states
+    // them - the technology, the speed they run at, how wide a path they lay
+    // across the board together, and the rate that path can carry. This is the
+    // rating a reader brings to the memory graph: what this machine could move
+    // when it moved perfectly. A machine whose inventory names no sticks states
+    // no rating here, and the memory panel says nothing rather than inventing one.
+    {
+      const platform::MemorySticks &sticks = platform::memorySticks();
+      if (sticks.ok)
+      {
+        nlohmann::json hw = {{"speed_mts", sticks.configuredMts},
+                             {"rated_mts", sticks.ratedMts},
+                             {"modules", sticks.modules},
+                             {"data_bits", sticks.dataBits},
+                             {"bytes", sticks.bytes},
+                             {"bandwidth_gbps", sticks.bandwidthGbps()}};
+        if (!sticks.kind.empty())
+          hw["kind"] = sticks.kind;
+        if (!sticks.maker.empty())
+          hw["maker"] = sticks.maker;
+        if (!sticks.part.empty())
+          hw["part"] = sticks.part;
+        out["memory_hw"] = hw;
+      }
+    }
+    // How fast the picture card is running, and its ceiling, only where the card
+    // itself states it through the vendor management library. The library answers
+    // for cards of the one maker whose clocks this server will bind to; an AMD
+    // core keeps its clocks out of any such library, and reads as no clocks here
+    // - the panel then says the card states none rather than guessing a figure
+    // off the product name, the same way it refuses to draw a line with no numbers
+    // behind it. Where the card shares the machine's own memory, the memory panel's
+    // rating is the graphics memory's rating, so the graphics panel borrows it.
+    {
+      const platform::GpuClocks clocks = platform::gpuClocks();
+      if (clocks.ok)
+      {
+        nlohmann::json g = {{"core_mhz", clocks.coreMhz}, {"mem_mhz", clocks.memMhz}};
+        if (clocks.coreMaxMhz > 0)
+          g["core_max_mhz"] = clocks.coreMaxMhz;
+        if (clocks.memMaxMhz > 0)
+          g["mem_max_mhz"] = clocks.memMaxMhz;
+        out["gpu_clocks"] = g;
+      }
+    }
     if (m_image)
       out["loaded"] = nlohmann::json::parse(m_image->statusJson(), nullptr, false);
     if (m_voice)

@@ -268,6 +268,7 @@ add_executable(open-local-services
   VoiceService.cpp
   NetworkService.cpp
   WebAssets.cpp
+  HardwareInfo.cpp
   "${WEBUI_EMBEDDED_CPP}"
   "${VERSION_STAMP_CPP}"
   "${BUILD_MOMENT_CPP}")

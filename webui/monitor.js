@@ -174,16 +174,6 @@ function meanOf(values) {
   return count ? sum / count : null;
 }
 
-// Shared bytes words leave an empty reading as empty; a pool that is empty is a
-// real reading, so it is stated, and only a number that was not stated stays
-// "not stated".
-function bytesText(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return 'not stated';
-  if (n === 0) return 'nothing used';
-  return ui.sizeText(n);
-}
-
 // ---------- the figures every card draws ----------
 // A figure is a reading of numbers this machine stated: a line of where a value
 // has been, or a bar per job for what each job did. A value that was not stated
@@ -598,10 +588,72 @@ function drawMachine(system, summary, history, jobs) {
     return 'ok';
   };
 
+  // What the memory sticks under the numbers state that they are, in the
+  // machine's own inventory words: the technology, the speed they are running
+  // at, how many of them lay how wide a path, and the rate that path can carry
+  // at full stretch. An inventory that names no sticks gets no line - nothing
+  // here is ever read off a product name.
+  const hw = system.memory_hw || {};
+  const busText = function (withSticks) {
+    const speed = Number(hw.speed_mts || 0);
+    const bits = Number(hw.data_bits || 0);
+    const modules = Number(hw.modules || 0);
+    if (!(speed > 0) || !(bits > 0) || !(modules > 0)) return null;
+    const parts = [];
+    const kind = String(hw.kind || '');
+    parts.push(kind ? kind + '-' + speed : speed + ' MT/s');
+    if (withSticks && Number(hw.bytes || 0) > 0) {
+      const per = ui.sizeText(Math.round(Number(hw.bytes) / modules)).replace(/\.0(?= [KMGT]?B$)/, '');
+      parts.push(whole(modules) + ' × ' + per);
+    }
+    parts.push(whole(bits) + '-bit');
+    const rate = Number(hw.bandwidth_gbps || 0);
+    if (rate > 0) parts.push('≈' + rate.toFixed(1) + ' GB/s');
+    return parts.join(' · ');
+  };
+  const busTip = function (what) {
+    const stated = [];
+    stated.push(what);
+    if (Number(hw.rated_mts || 0) > 0 && Number(hw.rated_mts) !== Number(hw.speed_mts)) {
+      stated.push('The sticks are rated for ' + Number(hw.rated_mts) + ' MT/s and run at ' + Number(hw.speed_mts) + ' MT/s.');
+    } else if (Number(hw.rated_mts || 0) > 0) {
+      stated.push('The sticks run at the ' + Number(hw.rated_mts) + ' MT/s they are rated for.');
+    }
+    if (hw.maker || hw.part) {
+      stated.push('As the inventory names them: ' + [hw.maker, hw.part].filter(Boolean).join(' '));
+    }
+    return stated.join('\n');
+  };
+  // The memory panel's rating: the machine's own sticks, at their own speed.
+  const memoryFoot = (function () {
+    const text = busText(true);
+    if (!text) return null;
+    return { text: text, title: busTip('The machine\'s inventory of its own memory: what these sticks are and the ceiling their bus can carry.') };
+  })();
+  // The graphics panel's rating: where a management library makes the card
+  // state its own clocks, they ride here beside the ceiling the card names;
+  // where none answers - an AMD core keeps its clocks to itself - the honest
+  // speed a graphics memory here runs at is the system bus above, which is
+  // what this machine's graphics really reads. A core clock is never guessed.
+  const gpuFoot = (function () {
+    const clocks = system.gpu_clocks || {};
+    const core = Number(clocks.core_mhz || 0);
+    const mem = Number(clocks.mem_mhz || 0);
+    if (core > 0 || mem > 0) {
+      const parts = [];
+      if (core > 0) parts.push('core ' + core + ' MHz' + (Number(clocks.core_max_mhz) > 0 ? ' (max ' + Number(clocks.core_max_mhz) + ')' : ''));
+      if (mem > 0) parts.push('mem ' + mem + ' MHz' + (Number(clocks.mem_max_mhz) > 0 ? ' (max ' + Number(clocks.mem_max_mhz) + ')' : ''));
+      return { text: parts.join(' · '), title: 'The card\'s own statement of the clocks it runs at this moment, beside the ceiling it states.' };
+    }
+    const text = busText(false);
+    if (!text) return null;
+    return { text: 'bus ' + text, title: busTip('The card itself states no clocks to this server, and nothing is guessed for it; its memory is this machine\'s own, and runs at this bus.') };
+  })();
+
   // A panel: its name, the numbers it states beside that name, and the line of
   // where those numbers have been. series is the lines this panel draws; a panel
   // that has no line to draw keeps the place and names why in gap.
-  const panel = function (cls, title, chips, series, unit, notes, gap) {
+  const panel = function (cls, title, chips, series, unit, notes, gap, foot) {
     const card = document.createElement('div');
     card.className = 'gauge ' + cls;
     const tips = [];
@@ -643,6 +695,16 @@ function drawMachine(system, summary, history, jobs) {
     } else {
       noFigure(plot, gap && gap.words ? gap.words : 'no line drawn',
         gap && gap.reason ? gap.reason : 'This machine states nothing here to draw a line from.');
+    }
+    // The one line this panel does not measure: what the hardware under the
+    // numbers states that it is, pinned to the foot of the panel so a row of
+    // them reads as a wall of nameplates.
+    if (foot && foot.text) {
+      const line = document.createElement('div');
+      line.className = 'gauge-foot';
+      line.textContent = foot.text;
+      if (foot.title) line.setAttribute('title', foot.title);
+      card.appendChild(line);
     }
     machinePanel.appendChild(card);
     return card;
@@ -721,41 +783,12 @@ function drawMachine(system, summary, history, jobs) {
       { value: whole(share) + '%', unit: 'used', cls: levelWord(share) },
       { value: ui.sizeText(memory.used) + ' / ' + ui.sizeText(memory.total) },
     ], [{ points: traceOf(samples, (sample) => (Array.isArray(sample.ram) && sample.ram.length > 1) ? sample.ram[1] : null) }],
-      'bytes', ['As reported by this machine; the line is this page\'s own readings of it.'], null);
+      'bytes', ['As reported by this machine; the line is this page\'s own readings of it.'], null, memoryFoot);
   } else {
     panel('mem', 'memory', [{ value: 'not stated', cls: 'none' }], [], '',
       ['No driver states this machine\'s memory; nothing is drawn.'],
       { words: 'no memory stated', reason: 'No driver states this machine\'s memory.' });
   }
-
-  // open models and jobs in motion, drawn as a pair of lines against one
-  // another: what the engines hold and what they are doing at the same moment.
-  const openNow = ui.openModels(system);
-  const runningNow = Number(summary.active || 0);
-  panel('tally', 'open · running', [
-    { value: whole(openNow.labels.length), unit: 'models', cls: openNow.labels.length ? '' : 'none' },
-    { value: whole(runningNow), unit: 'jobs', cls: runningNow ? 'warn' : 'none' },
-  ], [
-    { points: traceOf(samples, (sample) => sample.open), name: 'open', cls: 'a' },
-    { points: traceOf(samples, (sample) => sample.run), name: 'running', cls: 'b' },
-  ], '',
-    ['Open in an engine now: the picture engine names its models and their bytes, and a model ' +
-      'loaded in the linked voice engine is open with no port to name. Each open model has its ' +
-      'own card on this page.',
-      'Jobs in motion at each moment this page read the machine.'], null);
-
-  // what the engines hold of the machine, against the budget they are given.
-  const loaded = (system.loaded && Array.isArray(system.loaded.loaded)) ? system.loaded : {};
-  const heldBytes = Number(loaded.resident_bytes || 0);
-  const budget = Number(loaded.budget_bytes || 0);
-  const heldShare = (budget > 0) ? Math.round((heldBytes / budget) * 100) : null;
-  panel('held', 'engine memory', [
-    { value: bytesText(heldBytes) },
-    budget ? { value: 'of ' + bytesText(budget) } : { value: 'no budget stated', cls: 'none' },
-    heldShare === null ? null : { value: whole(heldShare) + '%', unit: 'held', cls: levelWord(heldShare) },
-  ], [{ points: traceOf(samples, (sample) => sample.bytes) }], 'bytes',
-    [Array.isArray(loaded.lru) && loaded.lru.length > 1 ? 'Eviction order: ' + loaded.lru.join(' < ') : null],
-    { words: 'nothing held', reason: 'The engines state no held bytes to draw a line from.' });
 
   // each device the machine states memory for gets its own panel, named by its
   // own name, drawn the way the machine's memory is drawn - the driver's words
@@ -779,7 +812,7 @@ function drawMachine(system, summary, history, jobs) {
       [device.description ? String(device.description).trim() : null,
         'As reported by the driver; the line is this page\'s own readings of it.',
       at >= 0 ? null : 'This device has not been open during enough of this page\'s readings to draw a line.'],
-      at >= 0 ? null : { words: 'no line yet', reason: 'Too few readings of this device to draw a line.' });
+      at >= 0 ? null : { words: 'no line yet', reason: 'Too few readings of this device to draw a line.' }, gpuFoot);
   }
   if (!devicesStated.length) {
     panel('dev', 'gpu', [{ value: 'no driver found', cls: 'warn' }], [], '',

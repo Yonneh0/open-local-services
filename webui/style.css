@@ -2497,6 +2497,20 @@ main.monitor {
   max-width: calc(100% - 12px);
 }
 
+/* The foot of a panel is the hardware's own sentence - what the thing under the
+   numbers states that it is - not a reading to watch, so it stands dimmer than
+   any chip, on the line the plot's flex leaves it at the foot of the panel. */
+.gauge-foot {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
 /* The lines. The line the panel is about is drawn filled under itself, the
    colour of the panel: the machine's own lines are the page's blue, and the
    pair of lines in the open panel is drawn in the two colours the panel names
@@ -2534,11 +2548,6 @@ main.monitor {
   stroke-width: 1px;
   stroke-dasharray: 3 4;
   opacity: 0.55;
-}
-
-.gauge.tally {
-  --tint-a: var(--accent4);
-  --tint-b: var(--accent2);
 }
 
 /* The three numbers a figure states, set beside the places they were read. */
