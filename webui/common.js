@@ -1402,19 +1402,89 @@
         s.classList.toggle('on', want.indexOf(s.dataset.s) >= 0);
     }
   };
+  // The queue's claim on the clock. While jobs run or stand in line the face
+  // turns orange and counts the hours and minutes the whole queue away - a
+  // statement the machine makes about its own work, read from the monitor
+  // document's queue block, never guessed here: each standing job is weighed
+  // by the pace it has itself held, or by what this machine states its model
+  // has cost, or by its engine's own kept completions. What blinks every three
+  // seconds in this mode is the colon, not the digits: the digits count real
+  // remaining work and deserve to stand while it does. Where no job could be
+  // weighed the face burns orange with its digits dark and its colon blinking,
+  // saying work without inventing a time. The reading is one poll cycle old at
+  // most; past four seconds the cache copy answers and the page's own polling
+  // has already paid for the request, so the clock adds no ask of its own to a
+  // busy page. When the queue stands empty the claim lapses and the clock is
+  // itself again.
+  const IDLE_TITLE = 'a clock nobody set blinks 12:00. tap it to let it tell the time, tap again to put it back to blinking.';
+  const CLOCK_AGE_MAX = 15000;
+  let drain = null; // { standing, left (seconds|null), unmeasured, at }
+  const drainHolds = () => drain && Date.now() - drain.at < CLOCK_AGE_MAX;
+  const askQueue = async function () {
+    try {
+      const res = await fetch('/api/monitor');
+      if (!res.ok) return;
+      const data = await res.json();
+      const q = data && data.queue ? data.queue : {};
+      const left = Number(q.left_s);
+      drain = Number(q.standing) > 0
+        ? {
+          standing: Number(q.standing),
+          left: isFinite(left) && left >= 0 ? left : null,
+          unmeasured: Number(q.unmeasured || 0),
+          at: Date.now(),
+        }
+        : null;
+    } catch (gone) {
+      // Unreachable machine: the last reading stands until it ages out, and a
+      // dead server is not entitled to hold an orange clock up forever.
+    }
+  };
+  askQueue();
+  setInterval(askQueue, 4000);
+  const drainWords = function () {
+    if (drain.left === null)
+      return 'the queue is working, and this machine has stated no cost yet to set a clock against.';
+    const total = Math.round(drain.left);
+    const h = Math.floor(total / 3600);
+    const m = Math.round((total - h * 3600) / 60);
+    let line = 'the queue is working: ' + drain.standing + ' job' + (drain.standing > 1 ? 's' : '') +
+      ' · about ' + (h > 0 ? h + ' h ' : '') + m + ' min to go, at what this machine states its work costs';
+    if (drain.unmeasured > 0) line += ' · ' + drain.unmeasured + ' it cannot yet weigh';
+    return line + '.';
+  };
+  const drainPaint = function () {
+    face.classList.add('queue');
+    face.title = drainWords();
+    if (drain.left === null) { paint('    '); return; }
+    let total = Math.round(drain.left);
+    let h = Math.floor(total / 3600);
+    let m = Math.round((total - h * 3600) / 60);
+    if (m >= 60) { h += 1; m = 0; }
+    if (h > 99) { h = 99; m = 59; }
+    paint(('    ' + (h * 100 + m)).slice(-4));
+  };
   const show = () => {
+    if (drainHolds()) { drainPaint(); return; }
+    face.classList.remove('queue');
+    face.title = IDLE_TITLE;
     if (!isSet()) { paint('1200'); return; }
     const now = new Date();
     const hour = now.getHours() % 12 || 12;
     paint(('   ' + hour + String(now.getMinutes()).padStart(2, '0')).slice(-4));
   };
   show();
-  // the unset blink: every three seconds the whole face dims to its ghosts
-  // for a moment - the segments stay standing, only the light leaves them.
+  // Every three seconds something gives way to its ghosts for a moment - the
+  // segments stay standing, only the light leaves them. What blinks is the
+  // mode that says so: an unset clock dims its whole face and holds its colon
+  // burning the way a stove does; a working queue keeps its count lit and lets
+  // the colon go dark instead, because the thing to notice there is that the
+  // time is counting, not that the hour is unknown. A set clock idle does not
+  // blink at all.
   setInterval(() => {
-    if (isSet()) { face.classList.remove('blink'); return; }
+    if (!drainHolds() && isSet()) { face.classList.remove('blink'); return; }
     face.classList.add('blink');
-    setTimeout(() => { if (!isSet()) face.classList.remove('blink'); }, 900);
+    setTimeout(() => face.classList.remove('blink'), 900);
   }, 3000);
   setInterval(show, 1000);
   face.addEventListener('click', () => {

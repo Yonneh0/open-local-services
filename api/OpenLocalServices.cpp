@@ -2951,7 +2951,11 @@ namespace ols
     {
       const std::string imageJobs = m_image ? m_image->jobsListJson() : std::string("[]");
       const std::string voiceJobs = m_voice ? m_voice->jobsListJson() : std::string("[]");
-      return jsonResponse(200, monitor::snapshot(systemJson(), imageJobs, voiceJobs));
+      // The queue estimate asks for the picture engine's cost ledger only
+      // while jobs stand, so the way to it is passed rather than the answer.
+      return jsonResponse(200, monitor::snapshot(systemJson(), imageJobs, voiceJobs,
+                                                 [this]
+                                                 { return m_image ? m_image->timingsJson() : std::string("{}"); }));
     }
 
     // The network door. Reading it hands back the whole document this machine's

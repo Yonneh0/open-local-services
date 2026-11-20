@@ -123,6 +123,128 @@ namespace ols
       return out;
     }
 
+    // What the standing queue owes the waiting person: the seconds until every
+    // job that runs or stands in line has finished. Each job is weighed by the
+    // first yardstick that honestly names it - its own held pace, once it has
+    // done measurable steps of its window; else what this machine states this
+    // model has cost, from the settings ledger it keeps of its own finished
+    // runs; else the average of the engine's own kept completions. A job none
+    // of these reaches is counted unmeasured, and the answer that states no
+    // number is preferred to one that guesses: left_s rides only for what was
+    // weighed, and unmeasured rides beside it when some jobs were not.
+    static json queueBlock(const json &jobs, long long now,
+                           const std::function<std::string()> &timings)
+    {
+      int standing = 0;
+      for (const auto &record : jobs)
+      {
+        if (ols::jobStanding(record))
+          ++standing;
+      }
+      json out = {{"standing", standing}};
+      if (standing == 0)
+        return out;
+
+      // What the engines' own kept completions say a job of theirs costs.
+      long long imageMs = 0;
+      int imageDone = 0;
+      long long voiceMs = 0;
+      int voiceDone = 0;
+      for (const auto &record : jobs)
+      {
+        if (ols::jobState(record) != ols::kStateDone)
+          continue;
+        const long long ms = ols::statedCount(record, "elapsed_ms");
+        if (ms <= 0)
+          continue;
+        if (ols::statedString(record, "engine") == "voice")
+        {
+          voiceMs += ms;
+          ++voiceDone;
+        }
+        else
+        {
+          imageMs += ms;
+          ++imageDone;
+        }
+      }
+
+      // The picture engine's cost ledger, read only while a queue stands.
+      json ledger = json::object();
+      const json parsed = json::parse(timings(), nullptr, false);
+      if (!parsed.is_discarded() && parsed.is_object())
+        ledger = parsed;
+
+      // What one run of one model costs, stated as the ledger's own weighted
+      // mean across every row it kept for that model.
+      const auto modelMeanSeconds = [&ledger](const char *ledgerKey, const std::string &model) -> long long
+      {
+        if (!ledger.contains(ledgerKey) || !ledger.at(ledgerKey).is_array())
+          return 0;
+        long long total = 0;
+        long long count = 0;
+        for (const auto &row : ledger.at(ledgerKey))
+        {
+          if (!row.is_object() || ols::statedString(row, "model") != model)
+            continue;
+          const long long at = ols::statedCount(row, "count");
+          const long long ms = ols::statedCount(row, "total_ms");
+          if (at <= 0 || ms <= 0)
+            continue;
+          total += ms;
+          count += at;
+        }
+        return count > 0 ? total / count / 1000 : 0;
+      };
+
+      long long left = 0;
+      int unmeasured = 0;
+      for (const auto &record : jobs)
+      {
+        if (!ols::jobStanding(record))
+          continue;
+        const bool running = ols::jobState(record) == ols::kStateRunning;
+        const long long started = ols::statedCount(record, "started_at");
+        const long long held = (running && started > 0 && now > started) ? now - started : 0;
+        const long long max = ols::statedCount(record, "max");
+        const long long done = ols::statedCount(record, "done");
+        long long seconds = -1;
+        if (running && max > 0 && done >= 1 && done < max)
+        {
+          seconds = (max - done) * held / done;
+        }
+        else
+        {
+          const std::string kind = ols::statedString(record, "kind");
+          const std::string model = ols::statedString(record, "model");
+          long long average = 0;
+          if (!model.empty() && (kind == "generate" || kind == "load"))
+            average = modelMeanSeconds(kind == "load" ? "loads" : "generations", model);
+          if (average <= 0)
+          {
+            const bool voice = ols::statedString(record, "engine") == "voice";
+            const long long engineMs = voice ? voiceMs : imageMs;
+            const long long engineDone = voice ? voiceDone : imageDone;
+            if (engineDone > 0)
+              average = engineMs / engineDone / 1000;
+          }
+          if (average > 0)
+            seconds = running && average > held ? average - held : (running ? 0 : average);
+        }
+        if (seconds < 0)
+        {
+          ++unmeasured;
+          continue;
+        }
+        left += seconds;
+      }
+      if (unmeasured > 0)
+        out["unmeasured"] = unmeasured;
+      if (unmeasured < standing)
+        out["left_s"] = left;
+      return out;
+    }
+
     // What this status document remembers across its readings: the level each
     // pool has reached over time, so the page can draw the memory line, not
     // just its current point. This is the monitor's own record of its own
@@ -535,7 +657,8 @@ namespace ols
     }
 
     std::string snapshot(const std::string &systemJson, const std::string &imageJobsJson,
-                         const std::string &voiceJobsJson)
+                         const std::string &voiceJobsJson,
+                         const std::function<std::string()> &timings)
     {
       json system = json::parse(systemJson, nullptr, false);
       if (system.is_discarded())
@@ -567,6 +690,7 @@ namespace ols
                   {"system", system},
                   {"jobs", jobs},
                   {"summary", summary},
+                  {"queue", queueBlock(jobs, nowSeconds(), timings)},
                   {"history", drawHistory()},
                   {"models", drawModels(rowsOf(jobs, system))}};
       return out.dump();

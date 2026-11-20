@@ -3082,6 +3082,7 @@ main.monitor {
   user-select: none;
   --c7-ghost: rgba(255, 72, 52, 0.09);
   --c7-lit: #ff4a38;
+  --c7-glow: rgba(255, 70, 50, 0.85);
 }
 
 #topbar>.config-btn {
@@ -3170,7 +3171,7 @@ main.monitor {
 
 .clock7 i.on {
   background: var(--c7-lit);
-  filter: drop-shadow(0 0 3px rgba(255, 70, 50, 0.85));
+  filter: drop-shadow(0 0 3px var(--c7-glow));
 }
 
 /* the blink of the unset hour: the light leaves every lit digit segment and the
@@ -3178,6 +3179,30 @@ main.monitor {
    straight through it, the way a stove holds its two dots while its 12:00
    blinks. */
 .clock7.blink .c7s.on {
+  background: var(--c7-ghost);
+  filter: none;
+}
+
+/* The queue's claim: while the engines have work standing, the face burns
+   amber instead of the clock-red of idle hours - the color of an appliance
+   busy, not broken - and it counts hours and minutes the whole queue away.
+   Here the blink belongs to the colon, not the digits: the count is real
+   remaining work and stands lit while the two dots give way every three
+   seconds, which is what tells a reader the number is counting something
+   down rather than stating the hour wrong. */
+#topbar>.clock7.queue {
+  --c7-ghost: rgba(255, 158, 46, 0.10);
+  --c7-lit: #ff9e2e;
+  --c7-glow: rgba(255, 158, 46, 0.85);
+  border-color: #46301a;
+}
+
+.clock7.queue.blink .c7s.on {
+  background: var(--c7-lit);
+  filter: drop-shadow(0 0 3px var(--c7-glow));
+}
+
+.clock7.queue.blink .c7dot.on {
   background: var(--c7-ghost);
   filter: none;
 }
