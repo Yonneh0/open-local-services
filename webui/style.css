@@ -547,15 +547,26 @@ main {
      directions. */
   gap: var(--gap);
   min-height: 100%;
+  /* Air at the top, so the plate of the first panel's name - half of which
+     rides over the panel's edge - is never cut by the bar above. */
+  padding-top: 6px;
 }
 
 #left {
   background: var(--bg2);
   overflow-y: auto;
+  /* The column stacks as a column of its own, and keeps a thumb's width of air
+     at the top, so the plate of the first panel's name - which rides half over
+     its panel's edge - is never cut by the column's own top. */
+  display: flex;
+  flex-direction: column;
+  padding-top: 6px;
 }
 
 #studio {
   background: var(--bg);
+  display: flex;
+  flex-direction: column;
 }
 
 .panel {
@@ -569,13 +580,64 @@ main {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* The panel is what its name plate stands on: the title is set on the panel's
+     own top edge, so the panel holds that place. */
+  position: relative;
 }
 
-.panel-title {
+/* A panel with a name keeps room under the edge for the half of the plate that
+   hangs in. A panel without one keeps its old top. */
+.panel:has(> .panel-title) {
+  padding-top: 26px;
+}
+
+/* The name of a panel is no longer whispered inside its top: the first name of
+   a panel is set as a plate on the panel's edge itself. The text is centred on
+   the rule, so the edge is struck straight through the word, and the plate -
+   nearly the panel's own colour - lets that edge show faintly through it. The
+   letters themselves are darkened toward the panel and kept readable by a sharp
+   bright outline, fuller and twice the size they were; and one drop of the
+   page's colour stands before every name, so a panel is found by colour before
+   it is read. A second name standing further inside the same panel is not the
+   panel's edge's to hold, and keeps the small inline voice it always had. */
+.panel > .panel-title {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.08em;
   color: var(--fg-dim);
+}
+
+.panel > .panel-title:first-child {
+  position: absolute;
+  top: 0;
+  left: 12px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 0 10px;
+  background: color-mix(in srgb, var(--bg2) 78%, transparent);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: 0.3em;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 42%, var(--bg2));
+  -webkit-text-stroke: 1.25px var(--fg);
+  paint-order: stroke fill;
+}
+
+.panel > .panel-title:first-child::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 /* A hand set in a panel's own title line: the title's voice and size, so it
@@ -583,9 +645,10 @@ main {
    own. It takes the line's own border until the pointer is on it, then the
    accent, which is how every other hand on these pages answers. */
 .title-hand {
-  margin-left: 10px;
+  /* The title line's own gap spaces it from the words; no margin of its own. */
+  margin-left: 0;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--fg-dim);
   background: transparent;
