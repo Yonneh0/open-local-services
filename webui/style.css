@@ -476,12 +476,12 @@ body {
   color: var(--fg);
 }
 
-/* The studios' load bubbles: what an engine stands in memory, worn on the
-   top-right corner of the studio's tab like an unread mark. The queue clock's
-   amber turned inside out - an amber wash for the face, black for the words -
-   and two small lines: the count, and under it the weight the machine states
-   for those models. Nothing standing, nothing worn; and the bubble is not
-   there to be pressed, so a click on it is a click on the tab it stands on. */
+/* The studios' load bubbles: how many models an engine stands in memory, worn
+   on the top-right corner of the studio's tab like an unread mark. The queue
+   clock's amber turned inside out - an amber wash for the face, black for the
+   count - and nothing else, so the mark reads at a glance. Nothing standing,
+   nothing worn; and the bubble is not there to be pressed, so a click on it is
+   a click on the tab it stands on. */
 #nav a .tab-bubble {
   position: absolute;
   top: -9px;
@@ -490,14 +490,18 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  line-height: 1.1;
-  min-width: 24px;
-  padding: 2px 5px;
+  line-height: 1;
+  min-width: 22px;
+  padding: 3px 6px;
   border-radius: 999px;
   background: rgba(255, 158, 46, 0.55);
   color: #000;
   text-align: center;
-  text-transform: lowercase;
+  /* The panel titles' own trick, thinned for small type: a faint white stroke
+     laid under the black fill, so the words stay legible on any page the tab
+     stands over. */
+  -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.5);
+  paint-order: stroke fill;
   pointer-events: none;
 }
 
@@ -506,12 +510,7 @@ body {
 }
 
 #nav a .tab-bubble b {
-  font-size: 11px;
-}
-
-#nav a .tab-bubble small {
-  font-size: 8px;
-  letter-spacing: 0.2px;
+  font-size: 12px;
 }
 
 /* The machine's health is shown rather than written anywhere: the home tab

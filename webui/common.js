@@ -206,19 +206,17 @@
   };
 
   // ---------- the studios' load bubbles ----------
-  // Each studio wears, on the top-right corner of its tab, what its engine
-  // stands in memory: the count of models, with the weight the machine states
-  // for them underneath. The numbers are the machine's own statements - the
-  // picture engine names its resident models and their bytes, the voice engine
-  // names the models standing in it and weighs them - and the bubble copies
-  // that stating, claiming nothing of its own. A studio whose engine has
-  // nothing standing wears nothing at all: the absence is the message, an
-  // unread marker being only worn when there is something to read. The bubble
-  // catches no click: a press on it lands on the tab it stands on, exactly as
-  // it did before the bubble was there. It is painted from the same merged
-  // reading the header chips come from, so a bubble and a chip can never tell
-  // different stories, and an unread machine leaves them silent rather than
-  // inventing a zero.
+  // Each studio wears, on the top-right corner of its tab, how many models its
+  // engine stands in memory - the machine's own count and nothing else, so a
+  // corner mark stays readable at a glance. (What those models weigh is stated
+  // where models are read: the studios and the machine panel.) A studio whose
+  // engine has nothing standing wears nothing at all: the absence is the
+  // message, an unread marker being only worn when there is something to read.
+  // The bubble catches no click: a press on it lands on the tab it stands on,
+  // exactly as it did before the bubble was there. It is painted from the same
+  // merged reading the header chips come from, so a bubble and a chip can never
+  // tell different stories, and an unread machine leaves them silent rather
+  // than inventing a zero.
   const bubbles = {};
   const mountBubble = function (kind, href) {
     const tab = document.querySelector('#nav a[href="' + href + '"]');
@@ -230,7 +228,7 @@
     tab.appendChild(bubble);
     return bubble;
   };
-  const paintBubble = function (kind, href, count, bytes, names, words) {
+  const paintBubble = function (kind, href, count, names, words) {
     let bubble = bubbles[kind];
     if (bubble === undefined) bubble = bubbles[kind] = mountBubble(kind, href);
     if (!bubble) return;
@@ -238,30 +236,25 @@
       bubble.hidden = true;
       return;
     }
-    let face = '<b>' + count + '</b>';
-    if (bytes > 0) face += '<small>' + UI.sizeText(bytes) + '</small>';
-    bubble.innerHTML = face;
+    bubble.innerHTML = '<b>' + count + '</b>';
     bubble.hidden = false;
-    bubble.title = words + ': ' + names.join(', ') +
-      (bytes > 0 ? ' - weighing ' + UI.sizeText(bytes) : '');
+    bubble.title = words + ': ' + names.join(', ') + '.';
   };
   const engineBubbles = function (system) {
     const weights = (system.loaded && system.loaded.loaded) ? system.loaded : {};
     const resident = Array.isArray(weights.resident) ? weights.resident : [];
-    let imageBytes = 0;
     const imageNames = [];
     for (const item of resident) {
-      imageBytes += Number(item.bytes || 0);
-      imageNames.push(String(item.model) + (item.quant ? ' as ' + String(item.quant) : ''));
+      imageNames.push(String(item.model) + (item.quant ? ' (' + String(item.quant) + ')' : ''));
     }
     if (!resident.length && Array.isArray(weights.loaded)) {
       for (const model of weights.loaded) imageNames.push(String(model));
     }
-    paintBubble('image', 'imagegen.html', imageNames.length, imageBytes, imageNames,
+    paintBubble('image', 'imagegen.html', imageNames.length, imageNames,
       'Picture models standing in memory');
     const voice = system.voice || {};
     const standing = Array.isArray(voice.open_models) ? voice.open_models.map(String) : [];
-    paintBubble('voice', 'voice.html', standing.length, Number(voice.open_bytes || 0), standing,
+    paintBubble('voice', 'voice.html', standing.length, standing,
       'Voice models standing in memory');
   };
 
