@@ -572,7 +572,10 @@ for SPEC in $PLAN; do
   # anywhere. its sha256 joins the release's own SHA256SUMS.txt, so a copy
   # whose bytes changed on the way reads as changed before anyone runs it.
   if [ -f "$REL/$TARGET/open-local-services" ]; then
-    ARCHIVE_NAME=open-local-services-$VERSION7-linux-$TARGET.tar.gz
+    # the target already names itself with its os word - linux-x86_64-cuda-70 -
+    # so the archive says it once, the way the windows archives say win once
+    # beside their own folder names.
+    ARCHIVE_NAME=open-local-services-$VERSION7-$TARGET.tar.gz
     rm -f "$REL/$ARCHIVE_NAME"
     if tar -c -z -f "$REL/$ARCHIVE_NAME" -C "$REL" "$TARGET"; then
       ( cd "$REL" && sha256sum "$ARCHIVE_NAME" >> SHA256SUMS.txt )
