@@ -1,3 +1,7 @@
+# DISCLAIMER
+This project has been gingerly touched by the gentle hand of AI. If that tickles your raspberries in the wrong way, feel free to leave.
+All jokes aside- this has not been validated by and first parties- let alone second parties. It very well could turn your H200 into a P100. No warranties, or promises.
+
 # open-local-services
 
 A local server for image generation, video clips, speech synthesis, transcription, and listening tasks. One server process serves the web UI and all API endpoints from one fixed port. The voice engine is linked into the server. The image engine is served through its own library because it has a separate ggml copy.
