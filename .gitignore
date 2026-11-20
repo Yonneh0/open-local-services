@@ -26,6 +26,11 @@ Release/.build/
 bin/**/*.obj
 api/open-local-services
 api/open-local-services.new
+# the development tree runs the way the release folder will: with the image
+# engine copied beside the source it links against. built bytes, laid down by
+# run.bat on every build, never a source.
+api/stable-diffusion.dll
+api/open-local-services.exe
 weights/
 data/
 vendor/

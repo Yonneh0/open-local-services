@@ -333,10 +333,12 @@ rem When ninja is not found the trees fall back to the Visual Studio generator
 rem and its limits.
 set ENGINE_GEN=
 if defined NINJA_EXE set ENGINE_GEN=-G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!"
-set ENGINE_VC=
-if defined NINJA_EXE if defined VS_ROOT set ENGINE_VC=call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
-set ENGINE_NINJA_PATH=
-if defined NINJA_DIR set ENGINE_NINJA_PATH=set "PATH=!NINJA_DIR!;!PATH!"
+rem the studio environment is stood once per run by :stand_studio below: each
+rem call to vcvars prepends its folders to PATH again, and a run that stood it
+rem in at every site eventually asks cmd to carry a PATH line longer than the
+rem eight thousand characters cmd can read. a ninja builder needs no PATH
+rem entry either: -DCMAKE_MAKE_PROGRAM hands it over whole, and the build
+rem reads that absolute name from the cache.
 set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON
 set NOVEC_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
 rem the one word the api build takes for a box with no device backend, the way
@@ -419,15 +421,13 @@ if not defined SD_DONE (
     )
     echo Building the image engine as a shared library with !BACKEND! compute
     if defined CUDA_ON (
-        call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+        call :stand_studio
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api\vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH! !OLS_GUARD!
     ) else if defined NODEVICE (
-        !ENGINE_VC!
-        !ENGINE_NINJA_PATH!
+        call :stand_studio
         cmake !ENGINE_GEN! -S api\vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
     ) else (
-        !ENGINE_VC!
-        !ENGINE_NINJA_PATH!
+        call :stand_studio
         cmake !ENGINE_GEN! -S api\vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
     )
     if errorlevel 1 (
@@ -443,12 +443,7 @@ if not defined SD_DONE (
     rem studio environment the configure above stands in is stood in here, since
     rem a bare shell hands the compiler a standard library from another visual
     rem studio than the one whose clang it is.
-    if defined CUDA_ON (
-        call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
-    ) else (
-        !ENGINE_VC!
-        !ENGINE_NINJA_PATH!
-    )
+    call :stand_studio
     cmake --build !SD_ROOT! --config Release %PARALLEL%
     if errorlevel 1 exit /b 1
 )
@@ -460,7 +455,7 @@ rem is the one that names a commit, and only after it checked the tree.
 if not exist "!API_ROOT!\CMakeCache.txt" (
     echo Configuring the open-local-services build
     if defined CUDA_ON (
-        call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+        call :stand_studio
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!
     ) else (
         cmake -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT! !OLS_NODEVICE!
@@ -500,7 +495,7 @@ if not exist "!API_ROOT!\CMakeCache.txt" (
         rem card generation, the toolkit and the builder are this tree's shape,
         rem and a restate that names them plainly is the one that cannot quietly
         rem write a cuda cache with the sdk's names in it.
-        call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+        call :stand_studio
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!
       ) else (
         cmake -S api -B !API_ROOT! -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT! !OLS_NODEVICE!
@@ -512,7 +507,7 @@ rem The api build is MSVC-compiled. If this shell did not stand the studio
 rem environment before run.bat, the compiler cannot open its own headers and
 rem ninja reports errors like 'atomic' or 'string' missing. The incremental
 rem build path below needs the same environment the configure path used above.
-if defined VS_ROOT call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+call :stand_studio
 rem cmake recompiles nothing when everything is current, so this is quick.
 rem a build that does not finish is a build that says so: a source that
 rem does not compile, or a download the network refused, leaves the tree
@@ -610,6 +605,17 @@ echo The page links to the home page, the image studio, and the voice
 echo studio.
 echo The server keeps running in this window; close the window to stop it.
 ENDLOCAL
+exit /b 0
+
+rem stand the studio environment in, once: see the note above where the engine
+rem build names it. a shell that calls this a dozen times a run gets a PATH
+rem with vcvars' folders in it a dozen times over, until the line that carries
+rem it is longer than cmd can read; standing it in once keeps every line short.
+:stand_studio
+if defined OLS_STOOOD exit /b 0
+if not defined VS_ROOT exit /b 0
+call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+set OLS_STOOOD=1
 exit /b 0
 
 :pin

@@ -396,10 +396,13 @@ rem CUDA shape and the .sh side already drive. without ninja the trees fall
 rem back to the Visual Studio generator and its limits.
 set ENGINE_GEN=
 if defined NINJA_EXE set ENGINE_GEN=-G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!"
-set ENGINE_VC=
-if defined NINJA_EXE if defined VS_ROOT set ENGINE_VC=call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
-set ENGINE_NINJA_PATH=
-if defined NINJA_DIR set ENGINE_NINJA_PATH=set "PATH=!NINJA_DIR!;!PATH!"
+rem the studio environment is stood once per run by :stand_studio below, not
+rem by every place that once reached for vcvars: each call prepends vcvars'
+rem folders to PATH again, and by the third target the PATH line passes the
+rem eight thousand characters cmd draws the line at - the release of a whole
+rem matrix died on exactly that. a ninja builder needs no PATH entry either:
+rem the configure lines hand it over whole by -DCMAKE_MAKE_PROGRAM, and the
+rem build reads that absolute name from the cache.
 set API_ROOT=
 set SD_ROOT=
 set OUT=
@@ -457,11 +460,10 @@ if exist "!SD_ROOT!\CMakeCache.txt" (
     )
 )
 if defined CUDA_ON (
-  call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+  call :stand_studio
   cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!" !OLS_GUARD!
 ) else (
-  !ENGINE_VC!
-  !ENGINE_NINJA_PATH!
+  call :stand_studio
   cmake !ENGINE_GEN! -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
 )
 if errorlevel 1 (
@@ -520,7 +522,7 @@ if defined NEEDS_RENAME (
     echo fresh-full-rebuild was given: restating the shape on this tree.
   )
   if defined CUDA_ON (
-    call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+    call :stand_studio
     cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!" !CPU_FLAGS!
   ) else (
     cmake -S api -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_SD_BUILD=!SD_ROOT! !CPU_FLAGS!
@@ -687,6 +689,18 @@ if not defined ARCH_HASH (
 echo !ARCH_HASH!  open-local-services-!CODE_VERSION:~0,7!-win-!OUT_NAME!.zip>> "%REL%\SHA256SUMS.txt"
 echo wrote !ARCHIVE!
 
+exit /b 0
+
+rem stand the studio environment in, once. every call to vcvars64.bat prepends
+rem its folders to PATH again, so a release that stood it in once per target
+rem arrives at the later targets with a PATH longer than cmd can carry in one
+rem line - the whole matrix would have died at the first vulkan target. the
+rem first caller stands it in for every caller after it.
+:stand_studio
+if defined OLS_STOOOD exit /b 0
+if not defined VS_ROOT exit /b 0
+call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
+set OLS_STOOOD=1
 exit /b 0
 
 rem one requested target name. the name is read from CUR_ARG, which the loop

@@ -49,163 +49,53 @@ endif()
 add_subdirectory("${PROJECT_SOURCE_DIR}/vendor/audio.cpp" "${CMAKE_BINARY_DIR}/audio-engine")
 
 # The pages carried inside the binary. The webui folder of the tree this build
-# stands in is read whole into webui-embedded.cpp when the build configures, and
-# that file is compiled into the server: a released .exe carries its own pages,
-# so it answers with them when no webui folder sits beside it, and the expand
-# door writes them out to start serving the outside copies. Nothing is generated
-# at run time and nothing watches the folder - the choice between the outside
-# copy and the inside one is a bool, set when the server is pointed at its
-# pages - so the build is the only place these bytes are read.
-#
-# A page is kept as ordinary string literals, byte for byte: a text page keeps
-# its text with only the few characters a C++ literal needs escaped, and any
-# other file - the icon - goes through octal escapes so its bytes stay exact.
-# Long files are split at line ends, which keeps every literal inside what a
-# compiler takes as one string.
-function(ols_c_escape_text out value)
-  string(REPLACE "\\" "\\\\" escaped "${value}")
-  string(REPLACE "\"" "\\\"" escaped "${escaped}")
-  string(REPLACE "\n" "\\n" escaped "${escaped}")
-  string(REPLACE "\r" "\\r" escaped "${escaped}")
-  string(REPLACE "\t" "\\t" escaped "${escaped}")
-  set(${out} "${escaped}" PARENT_SCOPE)
-endfunction()
-
+# stands in is read whole into webui-embedded.cpp, and that file is compiled
+# into the server: a released .exe carries its own pages, so it answers with
+# them when no webui folder sits beside it, and the expand door writes them
+# out to start serving the outside copies. Nothing is generated at run time;
+# the build watches the folder instead - every page stands as an input of the
+# generated file - so the build is the only place these bytes are read, and
+# the build always sees their newest bytes.
+# The folder is read by a script of its own, and the file it writes is declared
+# an output with every page named among its inputs: any builder then re-reads
+# the folder whenever a page changed - on every generator, including the
+# Visual Studio one, which is not a builder that re-checks globbed lists at
+# build time. A page added rather than edited still needs the configure asked
+# again (CONFIGURE_DEPENDS on the glob below does that where the builder
+# understands it) - and a build that re-reads the same bytes recompiles
+# nothing, because the script stamps by content, not by having run.
 function(ols_write_webui_embedded out_file)
   file(REAL_PATH "${ROOT}/webui" web_root)
   if(NOT IS_DIRECTORY "${web_root}")
     message(FATAL_ERROR "the pages must be in this tree to be carried inside the binary: ${web_root}")
   endif()
-  file(GLOB web_items "${web_root}/*")
+  file(GLOB web_items CONFIGURE_DEPENDS "${web_root}/*")
   if(NOT web_items)
     message(FATAL_ERROR "the pages folder holds nothing to carry inside the binary")
   endif()
-  list(SORT web_items)
-
-  set(declarations "")
-  set(name_list "")
-  set(part_list "")
-  set(held 0)
+  set(page_files "")
   foreach(item ${web_items})
-    if(IS_DIRECTORY "${item}")
-      continue()
+    if(NOT IS_DIRECTORY "${item}")
+      list(APPEND page_files "${item}")
     endif()
-    set(src "${item}")
-    get_filename_component(page_name "${src}" NAME)
-    string(REPLACE "." "_" cid "${page_name}")
-    string(REGEX REPLACE "[^A-Za-z0-9_]" "_" cid "${cid}")
-    math(EXPR held "${held} + 1")
-    string(APPEND name_list "\"${page_name}\", ")
-    string(APPEND part_list "kOlsParts_${cid}, ")
-    set(one_file "static const char *const kOlsParts_${cid}[] = {\n")
-    get_filename_component(page_ext "${src}" LAST_EXT)
-    if(page_ext MATCHES "^\\.(html|js|css|svg|txt|md)$")
-      file(READ "${src}" page_text)
-      # The whole page is escaped in one pass, then cut into literals at line
-      # ends. A cut only ever sits after the two characters a line end became,
-      # so no escape is split between two literals. Eight thousand bytes is the
-      # ceiling a literal gets: an older MSVC refuses one past about sixteen
-      # thousand of its own characters, and that compiler is what the other
-      # Windows box builds with.
-      ols_c_escape_text(whole "${page_text}")
-      set(rest "${whole}")
-      while(1)
-        string(LENGTH "${rest}" rest_len)
-        if(rest_len LESS_EQUAL 8000)
-          if(NOT rest STREQUAL "")
-            string(APPEND one_file "  \"${rest}\",\n")
-          endif()
-          break()
-        endif()
-        string(SUBSTRING "${rest}" 4000 4000 tail)
-        string(FIND "${tail}" "\\n" found)
-        if(found EQUAL -1)
-          # a stretch with no line end in it is cut plainly, and a cut that
-          # would fall inside an escaped pair is moved back by one.
-          set(cut 8000)
-          string(SUBSTRING "${rest}" 7990 10 probe)
-          set(run 0)
-          set(i 9)
-          while(i GREATER_EQUAL 0)
-            string(SUBSTRING "${probe}" "${i}" 1 ch)
-            if(ch STREQUAL "\\")
-              math(EXPR run "${run} + 1")
-            else()
-              set(i -1)
-            endif()
-            math(EXPR i "${i} - 1")
-          endwhile()
-          math(EXPR odd "${run} % 2")
-          if(odd EQUAL 1)
-            math(EXPR cut "8000 - 1")
-          endif()
-        else()
-          math(EXPR cut "4000 + ${found} + 2")
-        endif()
-        string(SUBSTRING "${rest}" 0 "${cut}" piece)
-        string(SUBSTRING "${rest}" "${cut}" -1 rest)
-        string(APPEND one_file "  \"${piece}\",\n")
-      endwhile()
-    else()
-      # The bytes of a picture or an icon become octal escapes, taken a whole
-      # byte at a time and closed when the bytes run out - a loop that counts the
-      # bytes it has read, never one that counts the bytes left standing. A byte
-      # costs four characters of source - a backslash and three digits - so the
-      # ceiling the words above ask for is three and a half thousand bytes, and a
-      # count in bytes that forgot the cost would pass it more than once over.
-      file(READ "${src}" page_hex HEX)
-      string(LENGTH "${page_hex}" hex_len)
-      set(hex_pos 0)
-      set(accum "")
-      set(accum_bytes 0)
-      while(hex_pos LESS hex_len)
-        string(SUBSTRING "${page_hex}" "${hex_pos}" 2 hex_byte)
-        math(EXPR byte_value "0x${hex_byte}")
-        math(EXPR oct_a "${byte_value} / 64")
-        math(EXPR oct_b "(${byte_value} / 8) % 8")
-        math(EXPR oct_c "${byte_value} % 8")
-        string(APPEND accum "\\${oct_a}${oct_b}${oct_c}")
-        math(EXPR accum_bytes "${accum_bytes} + 1")
-        math(EXPR hex_pos "${hex_pos} + 2")
-        if(accum_bytes GREATER_EQUAL 3500)
-          string(APPEND one_file "  \"${accum}\",\n")
-          set(accum "")
-          set(accum_bytes 0)
-        endif()
-      endwhile()
-      if(NOT accum STREQUAL "")
-        string(APPEND one_file "  \"${accum}\",\n")
-      endif()
-    endif()
-    string(APPEND one_file "  nullptr,\n};\n")
-    string(APPEND declarations "${one_file}")
   endforeach()
-
-  # The stamped copy is put in place only when its bytes differ: a configure
-  # that read the same pages leaves the file the compiler already saw, with its
-  # date, so the build after it compiles nothing new.
-  set(stamped "${CMAKE_BINARY_DIR}/webui-embedded.stamped.cpp")
-  file(WRITE "${stamped}"
-    "// written by the api build from ${web_root} when it configured - do not edit\n"
-    "#include \"WebAssets.h\"\n"
-    "namespace ols { namespace webres {\n"
-    "${declarations}"
-    "const char *const kEmbeddedNames[${held}] = { ${name_list} };\n"
-    "const char *const *const kEmbeddedParts[${held}] = { ${part_list} };\n"
-    "const int kEmbeddedCount = ${held};\n"
-    "} }\n")
-  file(SHA256 "${stamped}" stamped_sum)
-  set(standing_sum "")
-  if(EXISTS "${out_file}")
-    file(SHA256 "${out_file}" standing_sum)
+  list(SORT page_files)
+  set(web_script "${CMAKE_CURRENT_LIST_DIR}/cmake/write-webui-embedded.cmake")
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} "-Dweb_root=${web_root}" "-Dout=${out_file}" -P "${web_script}"
+    RESULT_VARIABLE web_stamp_result
+    OUTPUT_VARIABLE web_stamp_line
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT web_stamp_result EQUAL 0)
+    message(FATAL_ERROR "the pages could not be read into the binary: ${web_stamp_line}")
   endif()
-  if(NOT stamped_sum STREQUAL standing_sum)
-    file(RENAME "${stamped}" "${out_file}")
-    message(STATUS "pages carried inside this binary: ${held} files, from ${web_root} (written again)")
-  else()
-    file(REMOVE "${stamped}")
-    message(STATUS "pages carried inside this binary: ${held} files, from ${web_root} (unchanged)")
-  endif()
+  message(STATUS "${web_stamp_line}")
+  add_custom_command(
+    OUTPUT "${out_file}"
+    COMMAND ${CMAKE_COMMAND} "-Dweb_root=${web_root}" "-Dout=${out_file}" -P "${web_script}"
+    DEPENDS ${page_files} "${web_script}"
+    COMMENT "reading the pages the binary carries"
+    VERBATIM)
 endfunction()
 
 set(WEBUI_EMBEDDED_CPP "${CMAKE_BINARY_DIR}/webui-embedded.cpp")
