@@ -446,8 +446,9 @@ int main(int argc, char **argv)
               << std::endl;
   else
     std::cout << "API doors ask for nothing: this machine sets no key" << std::endl;
-  // The rooms ask of the same credential these doors do; a page that arrives
-  // without one is walked to the door, so no letter of it is printed here.
+  // The rooms ask of the same credential these doors do; a page that reaches
+  // its doors without one asks the browser there, so no letter of it is printed
+  // here.
   if (rate > 0)
     std::cout << "Rate limit: " << rate << " requests per minute (token bucket; refused requests return HTTP 429 with Retry-After)"
               << std::endl;

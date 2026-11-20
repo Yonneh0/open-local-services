@@ -827,7 +827,8 @@
     if (said) return said;
     const code = Number(answer && answer.status || 0);
     if (code === 429) return 'the machine is busy and asked for a moment between requests';
-    if (code === 401 || code === 403) return 'this page was not let through the door of this machine';
+    if (code === 401 || code === 403)
+      return 'the key this page carries was refused - the page will ask for one again';
     if (code === 404) return 'that door is not on this machine';
     if (code === 0) return 'the machine gave no answer at all';
     return 'no reason given';
@@ -1370,19 +1371,13 @@
 // met at startup, by its own sweep or at its own door - the header carries a
 // pick of them. Choosing one leaves this machine entirely: the browser opens
 // the same room on that address, carrying this visit's credential once, in the
-// one place a credential is ever named in an address. If the other machine
-// keeps a different key it simply walks the visit to its own door, as honest
-// as any stranger's visit. With no other server standing there is nothing to
-// pick, and the header says nothing.
+// one place a credential is ever named in an address - the page that wakes
+// there takes it up as its own, and one it cannot open will ask for its own.
+// With no other server standing there is nothing to pick, and the header says
+// nothing.
 (function mountHostPick() {
   const top = document.getElementById('topbar');
   if (!top) return;
-  // A jump that arrived by the picker still had the credential in its address;
-  // the door wrote it onto the connection on the way in, and the room lets go
-  // of it before anything else reads the address.
-  if (window.location.search.indexOf('key=') >= 0) {
-    try { window.history.replaceState(null, '', window.location.pathname); } catch (noHistory) {}
-  }
   const read = function () {
     fetch('/api/peers').then(function (res) {
       // A machine too young to keep a table has none to read; the header stays
@@ -1419,12 +1414,14 @@
       pick.appendChild(opt);
     }
     pick.onchange = function () {
-      const to = pick.value;
-      if (!to) return;
-      let url = to;
+      if (!pick.value) return;
+      // The way over carries the key this browser carries in the address: the
+      // page that wakes there takes it up as its own and wipes the address
+      // clean, so the visit carries it from the first ask.
+      const to = new URL(pick.value, window.location.href);
       const carried = window.olsKey ? window.olsKey.get() : '';
-      if (carried) url += '?key=' + encodeURIComponent(carried);
-      window.location.href = url;
+      if (carried) to.searchParams.set('key', carried);
+      window.location.href = to.href;
     };
     top.appendChild(pick);
     }).catch(function () { });

@@ -17,6 +17,9 @@ const sinceLine = E('since');
 const machinePanel = E('machine-metrics');
 const cardsHost = E('model-cards');
 const keyStateLine = E('key-state');
+// Whether the press that hands the key has been wired: the door line is
+// redrawn with every reading, and the hand must be hung once.
+let pressWired = false;
 const modelEngineSelect = E('model-engine');
 const modelSearchInput = E('model-search');
 const modelPageLine = E('model-page-line');
@@ -1987,7 +1990,7 @@ function offline(failed) {
   const said = document.createElement('div');
   said.className = served ? 'log warn' : 'meta';
   said.textContent = served
-    ? 'This machine stands here and went quiet: after a few refusals at its doors in a row it answers nothing at all, so a read can look like no machine. The door page is walked from here and reads its own doors.'
+    ? 'This machine stands here and went quiet: after a few refusals at its doors in a row it answers nothing at all, so a read can look like no machine. A quiet door opens again by itself once enough time passes without a new refusal.'
     : 'No server to read. Start it with run.bat on Windows or run.sh on Linux, then reload this page.';
   if (served) said.setAttribute('title',
     'After a few refusals in a row the doors answer nothing, so a read can look like no machine. A quiet door opens again by itself once enough time passes without a new refusal.');
@@ -2015,6 +2018,21 @@ function drawKeyState() {
   }
   keyStateLine.textContent = 'at the doors: ' + state.text;
   keyStateLine.className = state.state === 'accepted' ? 'meta-ok' : 'meta';
+  // A visit standing without a credential is one press from asking again: the
+  // page's own prompt, not a walk to some other address. The hand is wired
+  // once, however many times this line is redrawn.
+  const stuck = state.state === 'held' || state.state === 'refused';
+  if (stuck && window.olsKey) {
+    keyStateLine.textContent += ' · press to hand the key';
+    keyStateLine.title = 'this machine asks for its key: press and the page asks you for it';
+    keyStateLine.className = 'meta-press';
+    if (!pressWired) {
+      pressWired = true;
+      ui.onPress(keyStateLine, function () { void window.olsKey.ask(); });
+    }
+  } else {
+    keyStateLine.removeAttribute('title');
+  }
 }
 
 // The quant a model's weights are kept at, read off the file names of the files

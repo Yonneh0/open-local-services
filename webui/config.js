@@ -264,7 +264,7 @@
       row.setAttribute('title',
         'Edit ' + option.name + ': type the new value and press Enter' +
         (option.live ? '' : ' — applies at the next start') +
-        (authRow ? '; this api key is what every door of this machine answers to - the rooms open only with it, handed at the door page' : ''));
+        (authRow ? '; this api key is what every door of this machine answers to - the rooms ask the browser for it the moment the value moves' : ''));
       const words = document.createElement('span');
       words.textContent = option.name + ' — ' + describe(option);
       if (authRow && window.olsKeyState) words.textContent += ' · ' + window.olsKeyState.text;
@@ -284,7 +284,7 @@
       field.maxLength = 4096;
       field.placeholder = 'New value, then Enter';
       field.setAttribute('aria-label', authRow ?
-        'new api key for this machine - the rooms are opened at the door page, not here' : 'new value for ' + option.name);
+        'new api key for this machine - this browser hands its own at the page prompt, not in this row' : 'new value for ' + option.name);
       field.addEventListener('keydown', function (event) {
         if (event.key !== 'Enter') return;
         window.ols.flash(field);
@@ -307,7 +307,7 @@
           // The row speaks from the newest answer, so the doors are re-asked
           // after this auth setting moves: what the doors answer to is exactly
           // what they ask of. No browser credential changes here - that is
-          // handed at the door page, never typed into a row.
+          // handed at the page prompt, never typed into a row.
           if (authRow && window.olsKey) await window.olsKey.check();
           say('Saved: ' + option.name + ' — ' + describe(updated) +
             (updated.live ? '' : ' (applies at the next start)'));

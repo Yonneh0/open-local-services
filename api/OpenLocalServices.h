@@ -107,7 +107,6 @@ namespace ols
     // loading a second copy of it registers the same card twice.
     void preloadBackends();
     void setApiKey(const std::string &key) { m_apiKey = key; }
-    std::string apiKey() const { return m_apiKey; }
     void setRateLimit(int requestsPerMinute)
     {
       if (requestsPerMinute < 0)
@@ -146,9 +145,8 @@ namespace ols
     HttpResponse certifyAnswer(const HttpRequest &req);
     // A door answers in the shape its reader can read. A program that asks with
     // no Accept, or with */*, gets the json this machine has always answered; a
-    // browser opening a document gets the same words as a page, because the
-    // walk from a refused room lands a person on this door and a person cannot
-    // read a json answer.
+    // browser opening the bare address is a person opening the front room, and
+    // gets the room rather than the json.
     bool browserOpeningDocument(const HttpRequest &req) const;
 
   private:

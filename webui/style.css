@@ -2253,6 +2253,14 @@ input[type="range"] {
   color: var(--ok);
 }
 
+/* A door line a person can act on: while the visit stands at the doors without
+   a credential, this line is the hand that hands the key. */
+.meta-press {
+  font-size: 11px;
+  color: var(--warn);
+  cursor: pointer;
+}
+
 main.monitor {
   display: flex;
   flex-direction: column;

@@ -478,9 +478,11 @@ namespace ols
     }
 
     // What a request offered as a credential, in the shapes it may be handed:
-    // the header, the standard Authorization form, a ?key= query - a courtesy
-    // for programs, since no page of this machine writes one into an address -
-    // and the cookie a door put on a visiting browser when it accepted.
+    // the header, the standard Authorization form, the cookie a door put on a
+    // visiting browser when it accepted, and a ?key= in the address - the shape
+    // for programs, and for a browser walking over from a machine next door:
+    // a page that wakes with a key in its address takes it up at once and wipes
+    // the address clean.
     std::vector<std::string> givenCredentials(const HttpRequest &req)
     {
       std::vector<std::string> given;
@@ -544,60 +546,6 @@ namespace ols
         out.push_back(hex[byte & 0x0F]);
       }
       return out;
-    }
-
-    // Text a page speaks: only the characters that carry a meaning of their own
-    // are written as words, so a name read off a request cannot open a tag of
-    // its own or close one early.
-    std::string escapeHtmlText(const std::string &raw)
-    {
-      std::string out;
-      for (const char c : raw)
-      {
-        switch (c)
-        {
-        case '&':
-          out += "&amp;";
-          break;
-        case '<':
-          out += "&lt;";
-          break;
-        case '>':
-          out += "&gt;";
-          break;
-        case '"':
-          out += "&quot;";
-          break;
-        default:
-          out.push_back(c);
-          break;
-        }
-      }
-      return out;
-    }
-
-    // The room a refused visit says it came from, kept to what a room's name can
-    // be: one page's name, with no folders and no address in it. The door writes
-    // this word back into its own page, into a link and into a refresh, so a name
-    // holding a quote would have written part of that page itself, and a name
-    // holding a host would have carried the visit off this machine.
-    std::string onePageName(const std::string &room)
-    {
-      size_t from = 0;
-      for (size_t at = 0; at < room.size(); ++at)
-        if (room[at] == '/' || room[at] == '\\')
-          from = at + 1;
-      std::string name;
-      for (size_t at = from; at < room.size(); ++at)
-      {
-        const char c = room[at];
-        const bool whole = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                           (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
-        if (whole)
-          name.push_back(c);
-      }
-      const bool nothing = name.empty() || name.find_first_not_of('.') == std::string::npos;
-      return nothing ? std::string("index.html") : name;
     }
 
     std::string idJson(const std::string &id)
@@ -901,30 +849,27 @@ namespace ols
     return r;
   }
 
-  // What the two doors ask of at this moment: counts only. A letter of a key is
+  // What the doors ask of at this moment: counts only. A letter of a key is
   // never answered here, or anywhere, so nothing a person typed can be read off
   // a machine's words. The pages read this before they carry a credential - it
-  // is how a room learns what is asked of, and how many forms a visit may
-  // hand it.
+  // is how a room learns what is asked of, and whether to ask this browser for
+  // the key it does not yet carry.
   std::string OpenLocalServices::authInfoJson()
   {
-    const bool asked = !m_apiKey.empty();
     nlohmann::json out;
-    out["api_required"] = asked;
-    out["page_required"] = asked;
-    out["page_keys"] = asked ? 1 : 0;
+    out["api_required"] = !m_apiKey.empty();
     // This server keeps a table of its fleet: pages of any age read this word
     // and only ask /api/peers where such a table stands, so a room never
     // rattles a door a younger machine does not have.
     out["peers"] = true;
-    out["rate_limit_per_minute"] = m_rateLimit.load();
     return out.dump();
   }
 
-  // The door that answers a credential as a program hands it: the same decision
-  // every door takes - one key, one answer - stated in words that never repeat
-  // what was handed, and a key this machine takes is written on the connection
-  // so the rest of the visit carries it.
+  // The door that answers a credential as it is handed - by a program, and by a
+  // page whose person answered the prompt: the same decision every door takes -
+  // one key, one answer - stated in words that never repeat what was handed, and
+  // a key this machine takes is written on the connection so the rest of the
+  // visit carries it.
   HttpResponse OpenLocalServices::certifyAnswer(const HttpRequest &req)
   {
     const std::string offered = configTrim(req.body);
@@ -2389,113 +2334,6 @@ namespace ols
     return "That door opens with a post";
   }
 
-  // What a refused room answers with: a browser cannot read a refusal, so the
-  // visitor is walked to the one address of this machine that stands open to
-  // nothing it asks of and takes a credential as it is handed. The room walked
-  // away from is named there, in the address as well as in the answer, so the
-  // page stood there can offer that room back. No credential is ever carried
-  // in an address.
-  static HttpResponse roomWalksToTheDoor(const std::string &room)
-  {
-    HttpResponse r;
-    r.status = 307;
-    nlohmann::json body;
-    body["address"] = "/";
-    body["room"] = room;
-    body["how"] = "hand the key there, then read the room again";
-    r.setJson(body.dump());
-    r.headers["Location"] =
-        room.empty() ? std::string("/") : "/?room=" + encodeCookieValue(room);
-    r.headers["Cache-Control"] = "no-store";
-    return r;
-  }
-
-  // The page a person is stood at that address on: what happened, the form that
-  // hands a credential here, and - when one was taken - the way back to the room
-  // this visit came from. It carries its own sheet rather than the rooms', since
-  // the rooms' sheet is one of the rooms and would be refused again before any
-  // key had been handed.
-  static HttpResponse theDoorAnswer(const std::string &whatHappened,
-                                    const std::string &room, bool offersForm,
-                                    bool walksBack)
-  {
-    std::string here = onePageName(room);
-    const std::string back = "/" + here;
-    const std::string backSafe = escapeHtmlText(back);
-    std::string page =
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n"
-        "<meta charset=\"utf-8\">\n"
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-        "<title>open-local-services - the door of this machine</title>\n"
-        "</head>\n";
-    if (walksBack)
-      page += "<meta http-equiv=\"refresh\" content=\"2; url=" + backSafe + "\">\n";
-    // The door stands open to every visit, so the rooms' sheet cannot answer it -
-    // it is one of the rooms, and a room that refuses is walked away from before
-    // any key has been handed. What this page is dressed in is therefore its own,
-    // and a browser reads a page's own words for its own parts as an attribute on
-    // each part rather than a sheet written into the page, which its policy of
-    // these pages keeps out.
-    page += "<body style=\"background:#151a22;color:#dce3ec;font-family:system-ui,"
-            "sans-serif;max-width:38rem;margin:auto;padding:2rem\">\n";
-    page += "<h1 style=\"font-size:1.3rem\">This machine asks for a key at its doors</h1>\n";
-    page += "<p>" + escapeHtmlText(whatHappened) + "</p>\n";
-    page += "<p>Nothing of this machine - not its pages, not its api doors - is "
-            "served before a key it set for itself opens it. A key is never "
-            "written into an address.</p>\n";
-    if (offersForm)
-    {
-      page += "<p>Hand the key to the form below. A key this machine takes is written on "
-              "this connection, so the rest of this visit carries it.</p>\n";
-      page += "<form method=\"post\" action=\"/\">\n";
-      page += "<p><label for=\"handed\">the key this machine asks for: <input type=\"text\" "
-              "name=\"handed\" placeholder=\"its key\" style=\"color-scheme:dark\"></label></p>\n";
-      page += "<input type=\"hidden\" name=\"room\" value=\"" + escapeHtmlText(here) + "\">\n";
-      page += "<p><button type=\"submit\">hand it over</button></p>\n";
-      page += "</form>\n";
-    }
-    if (walksBack)
-      page += "<p><a href=\"" + backSafe + "\" style=\"color:#8ecff6\">" + escapeHtmlText(here) +
-              "</a> is the room this visit came from. It opens now that the key is on the "
-              "connection.</p>\n";
-    page += "<p>Reading this as a program? The same words as json are at this same "
-            "<p>Reading this as a program? The same words as json are at this same "
-            "address, and a credential a program hands goes in a header: <code>X-Api-Key</code> "
-            "or <code>Authorization: Bearer</code>.</p>\n";
-    page += "</body>\n</html>\n";
-    HttpResponse r;
-    r.setPlain(page, "text/html; charset=utf-8");
-    r.headers["X-Content-Type-Options"] = "nosniff";
-    r.headers["Referrer-Policy"] = "no-referrer";
-    r.headers["Cache-Control"] = "no-store";
-    return r;
-  }
-
-  // What the form on that page hands at the same address: the same decision every
-  // door takes a credential at, carried as a page, and a key this machine takes
-  // is written on the connection exactly as it is written there.
-  static HttpResponse handedAtTheDoor(const HttpRequest &req, const std::string &wanted)
-  {
-    const std::string offered = queryValue(req.body, "handed");
-    const std::string room = queryValue(req.body, "room");
-    const bool asked = !wanted.empty();
-    if (offered.empty())
-      return theDoorAnswer("Nothing was handed to the door.", room, true, false);
-    if (!asked)
-      return theDoorAnswer(
-          "This machine asks for no key, so its rooms are open as they are.", room, false, true);
-    if (!asked || !keysMatch(offered, wanted))
-      return theDoorAnswer(
-          "That is not the key this machine asks for. Nothing was written on this connection.",
-          room, true, false);
-    HttpResponse r = theDoorAnswer(
-        "This machine took the key you handed. It is written on this connection now, and no key "
-        "is named in an address.",
-        room, false, true);
-    r.headers["Set-Cookie"] = "ols-key=" + encodeCookieValue(offered) + "; Path=/; SameSite=Lax";
-    return r;
-  }
-
   HttpResponse OpenLocalServices::route(const HttpRequest &req)
   {
     const std::string path = req.path;
@@ -2510,60 +2348,31 @@ namespace ols
     const bool del = req.method == "DELETE";
     const bool fetch = get;
 
-    // The one address that stands open to nothing it asks of, so a visit reaches
-    // it before anything else can: the bare address of this machine, where a
-    // credential is handed over and where what the doors ask of is stated. A
-    // program that asks with no Accept, or with */*, gets the json this machine
-    // has always answered; a person who was walked here from a refused room gets
-    // a page they can answer, because a person cannot read a json answer.
+    // The one address that stands open to nothing it asks of: the bare address
+    // of this machine, where what the doors ask of is stated and where a
+    // credential is handed over exactly as a program hands one. A program that
+    // asks with no Accept, or with */*, gets the json this machine has always
+    // answered; a person opening this address opens the front room, which asks
+    // the browser for a key itself when this machine asks of one - no address of
+    // this machine is a place a key has to be written.
     if (path == "/")
     {
       if (post)
-      {
-        if (browserOpeningDocument(req))
-          return handedAtTheDoor(req, apiKey());
         return certifyAnswer(req);
-      }
       if (!get && !head)
         return jsonError(405,
                          "This address is read with a GET and handed a credential with a POST");
       if (browserOpeningDocument(req))
-      {
-        const std::string room = queryValue(req.query, "room");
-        std::string lead =
-            "This address is where a visit hands over a key. No room was named on this visit - someone opened the door itself.";
-        if (!room.empty())
-          lead = "The room " + room + " refused this visit: no credential came with it. This is the door where a key is handed over.";
-        return theDoorAnswer(lead, room, true, false);
-      }
+        return serveStatic("/index.html", req);
       return jsonResponse(200, authInfoJson());
     }
 
-    // The rooms and everything they load: nothing of the webui is served
-    // before a credential opens it. A refused room walks to the door naming
-    // the room, because a browser cannot read a refusal and the door is
-    // where a credential is handed over; a refused file the rooms load walks
-    // there plainly, since it asked for no page of its own.
-    if (fetch && (path == "/index.html" || webAssetForPath(path)))
-    {
-      const int open = authGate(req);
-      if (open == -1)
-        return noResponse();
-      if (open == 1)
-      {
-        const size_t dot = path.find_last_of('.');
-        const std::string ext =
-            dot == std::string::npos ? std::string() : lowerText(path.substr(dot));
-        std::string room;
-        if (ext == ".html")
-        {
-          const size_t slash = path.find_last_of('/');
-          room = path.substr(slash == std::string::npos ? 0 : slash + 1);
-        }
-        return roomWalksToTheDoor(room);
-      }
+    // The rooms and everything they load: the pages are shells and stand open,
+    // and every fact behind them - every api door and every file - answers only
+    // to the key. A page that reaches its doors with no credential asks for one
+    // where it stands, and hands it over the same doors any other ask uses.
+    if (fetch && webAssetForPath(path))
       return serveStatic(path, req);
-    }
 
     // Every door answers to the api door's ask: this machine's key.
     const int auth = authGate(req);
