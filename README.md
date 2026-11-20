@@ -9,7 +9,7 @@ All jokes aside- this has not been validated by and first parties- let alone sec
 
 ## License
 
-MIT. The full text stands in the `LICENSE` file beside this readme. (google it yourself <3)
+MIT. Google it yourself <3 (Or read the full unabridged text, in the coveted `LICENSE` file beside this readme.)
 
 ## Aboot
 
