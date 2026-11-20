@@ -9,7 +9,7 @@ All jokes aside- this has not been validated by and first parties- let alone sec
 
 ## License
 
-MIT. (google it yourself <3)
+MIT. The full text stands in the `LICENSE` file beside this readme. (google it yourself <3)
 
 ## Aboot
 
@@ -137,27 +137,68 @@ The config panel uses `GET /api/config` and `POST /api/config`. Secret values ar
 
 Pages are embedded in the binary at build time. If a `webui/` folder exists beside the running server, it is served from disk instead.
 
-- `GET /` returns the credential door.
-- `/index.html` is the home page.
-- `/imagegen.html` is the image studio.
-- `/voice.html` is the voice studio.
-- `POST /api/webui/expand` writes embedded pages to disk.
+- `GET /` returns the credential door: hand over the key once and the room opens.
+- `/index.html` is the home page: cpu, gpu, and memory levels with their recent history, the hardware each engine stands on, the models open in memory, every job standing or running and what it says about itself, the network panel, local settings, and the service door. The corner clock tells the hour - or, while work stands in the queue, how far the queue is away, counted from the machine's own statements and never guessed by the page.
+- `/imagegen.html` is the image studio: prompt and settings beside the gallery of what this machine drew, reference images for image-to-image, the weights room with its downloads and loads, a queue that answers cancelling and reordering, and preferences the page remembers. Still images and video clips are pressed through the same door.
+- `/voice.html` is the voice studio: speak with any opened model and voice, save, rename, and delete voices, hold a text library, transcribe recordings, and read what the engine keeps open and what it costs.
+- `POST /api/webui/expand` writes the binary's embedded pages out beside it, so a binary install can become an editable tree.
 
 ## API
 
-Common endpoints:
+Job doors answer `202` with a `job_id`; the work is watched at the job doors, and what it made is served from `/files/` and `/voice/files/`. Every door below answers under the same key and rate limit.
+
+The machine and the service:
 
 ```text
-GET  /api/monitor
-GET  /api/system
-GET  /api/service
-GET  /api/jobs
-GET  /api/jobs/<id>
-POST /api/jobs/<id>/cancel
+GET  /api/system             the machine: devices, memory pools, load, the dates of the pages
+                             and of the binary
+GET  /api/monitor            one merged reading: system levels, engine state, and the queue
+                             block the corner clock counts
+GET  /api/service            how this server is installed and run; POST acts with
+                             startup_on, startup_off, remove, restart, or shutdown
+GET  /api/config             local settings; secrets read only as set or unset (POST to change)
+GET  /api/timings            the cost ledger: what finished runs cost, per model, device, and kind
+GET  /api/network            the whole network document; POST runs one action;
+     /api/network/scan       answers the last kept wifi scan, ?fresh=1 wakes the radio
 ```
 
-Image, gallery, reference, and preference features use `/api/` paths. Voice features use `/voice/api/` paths. Generated files use `/files/` and `/voice/files/` paths.
-Job endpoints return `202` with `job_id`; jobs are checked with `GET /api/jobs/<id>` or `GET /voice/api/jobs/<id>`.
+Pictures and video:
+
+```text
+GET  /api/models             the weights room: every model card the folder holds
+POST /api/models/<name>/load     ask the engine to take a model up     } each answers a job
+POST /api/models/<name>/download fetch the weights a card asks for     }
+POST /api/generate           one ask: prompt, settings, optional reference; answers 202 with job_id
+POST /api/unload             let the engine put a model down
+GET  /api/gallery            kept results, newest first (?limit= &offset=); GET or DELETE
+                             one at /api/gallery/<id>
+GET  /api/refs               the kept reference images; POST keeps one, drawn from the
+                             gallery or from bytes the browser holds; DELETE /api/refs/<name>
+GET  /api/prefs              the studio's remembered settings (POST to change)
+```
+
+Jobs:
+
+```text
+GET  /api/jobs               every job: queued, running, kept
+GET  /api/jobs/<id>          one job's own record; POST /api/jobs/<id>/cancel stops it
+POST /api/jobs/reorder       move a queued job along the line
+```
+
+Voice:
+
+```text
+GET  /voice/api/status  /voice/api/health   the voice engine's own statement
+GET  /voice/api/models       the voice models; /voice/api/model-cards and
+                             /voice/api/model-stats read their cards and their costs;
+                             /voice/api/models/<name> works one model
+GET  /voice/api/jobs         voice jobs; /voice/api/jobs/<id> for one of them
+POST /voice/api/speak        text to speech, with a named model and voice
+POST /voice/api/listen       a recording to text
+GET  /voice/api/voices       the saved voices; POST voices/save, voices/delete,
+                             voices/rename
+GET  /voice/api/library      the held text library; POST library/delete forgets one
+```
 
 ## Network management
 
@@ -193,7 +234,7 @@ it made (bonds, vlans, sharing) live in `data/network-state.json`.
 ## Performance
 
 Measured on the machine this repository stands on: AMD Ryzen AI 9 HX 470,
-Radeon 890M iGPU on the AMD Vulkan driver, 128 GiB of unified memory, nothing
+Radeon 890M iGPU on the AMD Vulkan driver, 96 GiB of unified memory, nothing
 else running. Every row is one whole job seen by the server - the model
 unloaded first, so the row carries its own load from NVMe - at the card's own
 default size, steps, sampler and scheduler, batch 1, fixed seed, a clean
@@ -216,15 +257,12 @@ memory pool before every row. Times are the engine's own wall clock.
 | qwen-image-2.1 | 1024x1024 · 25 steps | | 1306 s ‡ | |
 
 † The three clip DiT cards run their vae decode tiled - the way their cards
-say, since the untiled conv routes this driver answers slowly: z-image-turbo
-took 725 s untiled against 241 s tiled, and qwen-image-2.1-turbo had never
-come back at 35 minutes against 912 s tiled. A run may still name `tiling`
-itself and overrule the card.
+say, since the untiled conv routes this driver answers slowly. A run may
+still name `tiling` itself and overrule the card.
 
-‡ The 25-step qwen-image-2.1 untiled sat in decode past 105 minutes and was
-ended by hand; tiled it completes whole: 1306 s cold and alone - about 50 s
-a step for a 20B model on an 89 GB/s pipe, plus a 44 s tiled decode. The
-slowest still image this machine draws, and it draws it honestly.
+‡ 1306 s, cold and alone - about 50 s a step for a 20B model on an 89 GB/s
+pipe, plus a 44 s tiled decode. The slowest still image this machine draws,
+and it draws it honestly.
 
 cyberrealistic-xl costs more per step than its XL siblings because its card
 runs the dpm++2m_sde_bt ancestral sampler, the most expensive sampler in the
@@ -239,9 +277,8 @@ house on this driver.
 
 A 31 GB audio-video DiT on an 89 GB/s memory pipe is as slow as physics says.
 At 124 frames the driver will not hand over the 5.4 GB pinned buffer the
-graph asks for, ggml says so, splits the graph between cpu and card, and the
-clip finishes - which it does now; while the weights were streamed instead of
-resident, that same clip ended the server.
+graph asks for; ggml says so and splits the graph between cpu and card, and
+the clip finishes.
 
 ### Speech
 
@@ -260,9 +297,9 @@ conversation feels.
 
 The cpu column carries only what finished on this machine: sdxl-turbo
 measured 33-50 s at its card default on an idle machine (156-221 s when a DiT
-decode was eating the memory bus beside it), lustify-sdxl 4859 s. The pass
-that would fill the rest was stopped by its owner; `run.bat nodevice` builds
-it and the harness is kept. The cuda column is a different machine's table:
+decode was eating the memory bus beside it), lustify-sdxl 4859 s.
+`run.bat nodevice` builds the cpu shape, and the measuring harness stands for
+whatever pass fills the rest. The cuda column is a different machine's table:
 `run.bat cuda` builds this repository in that shape and the same numbers are
 waiting for it.
 
