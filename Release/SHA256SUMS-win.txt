@@ -1,4 +1,1 @@
-cef210b8bdb11fe181e8801c3f95a5bccd51ef75139e0eb7f5bf717ece78ad9f  open-local-services-c6fb4f4-win-x64-cuda-75.zip
-9e9585d6a59d872584af495e17334c31b29862a35a92f55c32b555c4d2f5f133  open-local-services-c6fb4f4-win-x64-cuda-86.zip
-a20bcd504badc319a1ffd69bc3bae7d0417b8363b8da89c39452bdf074a6e4b7  open-local-services-c6fb4f4-win-x64-windows.zip
-2145a37ee407b29771d88780db58704c4bbc5ff18effb93d6556a53edd8d0cbe  open-local-services-c6fb4f4-win-x64-windows-plain.zip
+be5ea35faf70a8e376b78af7f4123475bfcce4552c36c67a41fbf271773ce009  open-local-services-137d5d9-win-x64-cuda-75.zip
