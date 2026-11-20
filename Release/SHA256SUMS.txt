@@ -1,0 +1,4 @@
+58a0261b6110a2e183460d4ecddde11d4023fd7df0d6e6bf42d0ec97c5b0e672  open-local-services-9087fda-win-x64-cuda-75.zip
+529c7437f64989aa2d9bf32d970110336111ead54619edaec2f1fc9ab1250c1d  open-local-services-9087fda-win-x64-cuda-86.zip
+2b9439585759368042135601fcfa75bdc5862d27eee3f5a9ea1c7876bffcb6ff  open-local-services-9087fda-win-x64-windows.zip
+68a993b71bd1182311d0155de0193bdc443a592b47a83b98c2181026d56de5c7  open-local-services-9087fda-win-x64-windows-plain.zip
