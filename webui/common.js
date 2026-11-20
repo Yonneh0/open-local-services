@@ -1448,8 +1448,9 @@
     const total = Math.round(drain.left);
     const h = Math.floor(total / 3600);
     const m = Math.round((total - h * 3600) / 60);
+    const left = h > 0 ? h + ' h ' + m + ' min' : (m > 0 ? m + ' min' : 'under a minute');
     let line = 'the queue is working: ' + drain.standing + ' job' + (drain.standing > 1 ? 's' : '') +
-      ' · about ' + (h > 0 ? h + ' h ' : '') + m + ' min to go, at what this machine states its work costs';
+      ' · about ' + left + ' to go, at what this machine states its work costs';
     if (drain.unmeasured > 0) line += ' · ' + drain.unmeasured + ' it cannot yet weigh';
     return line + '.';
   };
@@ -1462,7 +1463,7 @@
     let m = Math.round((total - h * 3600) / 60);
     if (m >= 60) { h += 1; m = 0; }
     if (h > 99) { h = 99; m = 59; }
-    paint(('    ' + (h * 100 + m)).slice(-4));
+    paint(String(h).padStart(2, '0') + String(m).padStart(2, '0'));
   };
   const show = () => {
     if (drainHolds()) { drainPaint(); return; }
