@@ -485,8 +485,11 @@ namespace ols
     // bytes for itself: sixty pictures failed in four seconds on one 8 GiB
     // card when six runs sampled at once, each reading the others' leftovers
     // as free memory. A run that asks the card while another holds it waits
-    // here, job standing, in the order it came.
-    static std::mutex gCardGate;
+    // here, job standing, in the order it came. The gate is the machine's own
+    // (see the card in Common.h): the voice engine builds its graphs on the
+    // same device, and a speaking run and a drawing run were measured killing
+    // the process between them - the device does not know which module asked.
+    static std::mutex &gCardGate = ols::deviceCard();
     // Resident models are charged with the bytes of weights they hold and stamped
     // with the tick of their last use, so a load can keep room by closing the
     // least recently used idle model first.
@@ -886,6 +889,10 @@ namespace ols
         gEnded[job] = true;
       }
       {
+        // what waits here may close a context, and a close hands the device
+        // back its memory: it stands on the card, as every road that touches
+        // the device does.
+        std::lock_guard<std::mutex> device(ols::deviceCard());
         std::lock_guard<std::mutex> lock(gCtxMutex);
         finishPendingLocked();
       }
@@ -2652,8 +2659,14 @@ namespace ols
       std::string openedForm;
       // The load hand opens the model the way the page's switches name it, so a
       // model loaded by hand stands on the same device the next run would put it
-      // on - and a run that names another of them moves the weights.
-      sd_ctx_t *ctx = openContext(modelId, prefOn("sage_attn"), prefOn("cpu"), error, &openedForm);
+      // on - and a run that names another of them moves the weights. Standing
+      // weights on the device is the device's work: this waits its turn on the
+      // card like every other hand that touches it.
+      sd_ctx_t *ctx = nullptr;
+      {
+        std::lock_guard<std::mutex> device(ols::deviceCard());
+        ctx = openContext(modelId, prefOn("sage_attn"), prefOn("cpu"), error, &openedForm);
+      }
       if (!ctx)
       {
         noteError(job, error);
@@ -5038,6 +5051,9 @@ namespace ols
 
     bool ImageService::unload(const std::string &modelId)
     {
+      // letting a model go hands its weights back to the device: this road
+      // stands on the card first, whatever run is drawing with it now.
+      std::lock_guard<std::mutex> device(ols::deviceCard());
       std::lock_guard<std::mutex> ctxLock(gCtxMutex);
       const auto found = gCtx.find(modelId);
       if (found == gCtx.end() || !found->second)

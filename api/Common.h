@@ -267,6 +267,7 @@ namespace ols
 
 #include <cstddef>
 #include <deque>
+#include <mutex>
 #include <string>
 
 namespace ols
@@ -289,6 +290,19 @@ namespace ols
       order.pop_front();
       (kept.erase(old), ...);
     }
+  }
+
+  // The machine's one working device is one card, whichever engine works with
+  // it. Its graph builder is one-thread work, and every engine in this binary
+  // shares the one backend behind it: a voice graph built while a picture is
+  // drawing walks the same device state from two threads at once, and the file
+  // the crash leaves behind names it an access violation in the allocator.
+  // Every hand that stands weights on the card, draws with them, or takes
+  // memory back off it waits here - whatever module the hand belongs to.
+  inline std::mutex &deviceCard()
+  {
+    static std::mutex card;
+    return card;
   }
 } // namespace ols
 

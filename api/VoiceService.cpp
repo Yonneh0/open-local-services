@@ -365,6 +365,8 @@ namespace ols
           options = makeOptions(parsed);
       }
       audiocpp_model *model = nullptr;
+      // standing the weights up is the device's work: the door that called
+      // this stands on the card for it (see the card in Common.h).
       const audiocpp_status status =
           audiocpp_model_load(gRegistry, absolutePath(weight).c_str(), &config, options, &model);
       if (options)
@@ -383,6 +385,8 @@ namespace ols
     // hold answers false, and changes nothing.
     static bool unloadCard(const std::string &id)
     {
+      // the door that called this stands on the card: a model going back hands
+      // its memory to the device, and its sessions carry graphs built there.
       const auto model = gModels.find(id);
       if (model == gModels.end())
         return false;
@@ -515,6 +519,8 @@ namespace ols
         }
         audiocpp_session *session = nullptr;
         audiocpp_options *options = makeOptions(sessionValues);
+        // a session is stood up on the device it will work on, and graphs are
+        // built there: the run that called this holds the card (see Common.h).
         if (audiocpp_session_create(model->second, want.c_str(), "offline", &device, options,
                                     &session) == AUDIOCPP_OK)
         {
@@ -2188,6 +2194,12 @@ namespace ols
 
       ensureRegistry();
       audiocpp_model *model = nullptr;
+      // The whole of this visit to the engine - finding the model, standing
+      // its session, running, and handing the answer back - happens on the
+      // card (see Common.h): the device is one-thread work, and a put-down
+      // waits here too, so no road frees under a run what a run is drawing
+      // with.
+      std::lock_guard<std::mutex> device(ols::deviceCard());
       {
         std::lock_guard<std::mutex> lock(gEngineMutex);
         const auto found = gModels.find(modelId);
@@ -2450,6 +2462,8 @@ namespace ols
         return;
       }
 
+      // The card was taken above, where this visit to the engine began; what
+      // follows is run, reading, and handing the result back.
       audiocpp_result *result = nullptr;
       const audiocpp_status ran = audiocpp_session_run(session, req, &result);
       audiocpp_request_free(req);
@@ -2620,6 +2634,9 @@ namespace ols
 
       ensureRegistry();
       audiocpp_model *model = nullptr;
+      // the listening run keeps the card too, for the whole of the visit -
+      // see the speaking run and the card in Common.h.
+      std::lock_guard<std::mutex> device(ols::deviceCard());
       {
         std::lock_guard<std::mutex> lock(gEngineMutex);
         const auto found = gModels.find(modelId);
@@ -2704,6 +2721,7 @@ namespace ols
           return;
         }
       }
+      // the card was taken above, where this visit to the engine began.
       audiocpp_result *result = nullptr;
       const audiocpp_status ran = audiocpp_session_run(session, req, &result);
       audiocpp_request_free(req);
@@ -3254,6 +3272,10 @@ namespace ols
     // nothing else reads a model's weights. The answer is the engine's own.
     bool VoiceService::loadModel(const std::string &modelId)
     {
+      // Standing a model up is the device's own work: this waits its turn on
+      // the card, and stands there through the load, so no picture or voice is
+      // ever drawing while the weights move onto it.
+      std::lock_guard<std::mutex> card(ols::deviceCard());
       std::lock_guard<std::mutex> lock(gEngineMutex);
       if (!ensureRegistryLocked())
         return false;
@@ -3274,6 +3296,9 @@ namespace ols
 
     bool VoiceService::unloadModel(const std::string &modelId)
     {
+      // giving a model's memory back touches the device: the card first, so
+      // nothing is ever freed while a run draws with it.
+      std::lock_guard<std::mutex> card(ols::deviceCard());
       std::lock_guard<std::mutex> lock(gEngineMutex);
       const bool put_down = unloadCard(modelId);
       if (put_down)
