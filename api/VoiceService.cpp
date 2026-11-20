@@ -2062,14 +2062,18 @@ namespace ols
     static std::string engineStateJson()
     {
       ensureRegistry();
-      // This door counts what stands loaded and names the ones that do. The
-      // packages themselves - with the words their own files state and the
-      // reason a load was refused - belong to the models door, which answers all
-      // of that once for every package. Repeating that table here was a list of
-      // four hundred the system snapshot then threw away again, and it asked the
-      // disk for each package's files on a door read every few seconds.
+      // This door counts what stands loaded and names the ones that do, and
+      // weighs them: only the standing models are weighed, a handful of files
+      // at most, which is what lets the weight ride a door read every few
+      // seconds. The packages themselves - with the words their own files
+      // state and the reason a load was refused - belong to the models door,
+      // which answers all of that once for every package. Repeating that table
+      // here was a list of four hundred the system snapshot then threw away
+      // again, and it asked the disk for each package's files on a door read
+      // every few seconds.
       json standing = json::array();
       size_t loadedCount = 0;
+      long long standingBytes = 0;
       {
         std::lock_guard<std::mutex> lock(gEngineMutex);
         for (const VoiceModelDef &def : gCardList)
@@ -2077,6 +2081,8 @@ namespace ols
           if (gModels.find(std::string(def.id)) != gModels.end())
           {
             ++loadedCount;
+            for (const std::string &named : def.files)
+              standingBytes += static_cast<long long>(weightBytes(packagePath(named)));
             standing.push_back(std::string(def.id));
           }
         }
@@ -2088,7 +2094,8 @@ namespace ols
                   {"abi_named", engineAbiWords()},
                   {"models_total", static_cast<int>(gCardList.size())},
                   {"models_loaded", static_cast<int>(loadedCount)},
-                  {"open_models", standing}};
+                  {"open_models", standing},
+                  {"open_bytes", standingBytes}};
       {
         std::lock_guard<std::mutex> lock(gEngineMutex);
         const auto registry = gLoadErrors.find("(registry)");

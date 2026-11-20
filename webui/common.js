@@ -87,8 +87,11 @@
     const unknown = 'Server unreachable: value is unknown, not absent';
     UI.chip(E('chip-cpu'), 'cpu: unknown\nmemory: unknown', 'err', unknown);
     UI.chip(E('chip-gpu'), 'gpu: unknown\nvram: unknown', 'err', unknown);
-    UI.chip(E('chip-loaded'), 'in memory: unknown', 'err', unknown);
     UI.chip(E('chip-jobs'), 'jobs: unknown', 'err', unknown);
+    // An unreachable machine is not a machine holding nothing: the bubbles
+    // simply stop wearing a claim they can no longer read.
+    if (bubbles.image) bubbles.image.hidden = true;
+    if (bubbles.voice) bubbles.voice.hidden = true;
     UI.chip(E('chip-version'), 'code: not read', 'err',
       'The code version (a development build says dev, a released one names its commit) was not ' +
       'read.');
@@ -125,8 +128,8 @@
   }
 
   // Header state from the merged snapshot: the bar tracks only counted work
-  // (generation, synthesis, downloads); a load has no percentage and is shown
-  // on the loaded chip instead. The header is where a reader looks for how the
+  // (generation, synthesis, downloads); a load has no percentage and stands
+  // striped. The header is where a reader looks for how the
   // drawing goes, so it carries the time estimate too: the work furthest into
   // its window is measured against the pace it has itself held since its start,
   // and a run whose pace cannot be measured is said without an estimate rather
@@ -202,37 +205,76 @@
     if (onlyLoads) UI.serverGlow('loading');
   };
 
-  // What the engines hold open in memory, in words every page reads the same way:
-  // the picture engine names its models and its bytes, and a model loaded in the
-  // linked voice engine is open with no port to name and no memory of its own. One
-  // place describes that set, so a number on one page and the same number on
-  // another cannot describe different things.
-  UI.openModels = function (system) {
-    const labels = [];
-    let bytes = 0;
+  // ---------- the studios' load bubbles ----------
+  // Each studio wears, on the top-right corner of its tab, what its engine
+  // stands in memory: the count of models, with the weight the machine states
+  // for them underneath. The numbers are the machine's own statements - the
+  // picture engine names its resident models and their bytes, the voice engine
+  // names the models standing in it and weighs them - and the bubble copies
+  // that stating, claiming nothing of its own. A studio whose engine has
+  // nothing standing wears nothing at all: the absence is the message, an
+  // unread marker being only worn when there is something to read. The bubble
+  // catches no click: a press on it lands on the tab it stands on, exactly as
+  // it did before the bubble was there. It is painted from the same merged
+  // reading the header chips come from, so a bubble and a chip can never tell
+  // different stories, and an unread machine leaves them silent rather than
+  // inventing a zero.
+  const bubbles = {};
+  const mountBubble = function (kind, href) {
+    const tab = document.querySelector('#nav a[href="' + href + '"]');
+    if (!tab) return null;
+    const bubble = document.createElement('span');
+    bubble.className = 'tab-bubble';
+    bubble.setAttribute('aria-hidden', 'true');
+    bubble.hidden = true;
+    tab.appendChild(bubble);
+    return bubble;
+  };
+  const paintBubble = function (kind, href, count, bytes, names, words) {
+    let bubble = bubbles[kind];
+    if (bubble === undefined) bubble = bubbles[kind] = mountBubble(kind, href);
+    if (!bubble) return;
+    if (!(count > 0)) {
+      bubble.hidden = true;
+      return;
+    }
+    let face = '<b>' + count + '</b>';
+    if (bytes > 0) face += '<small>' + UI.sizeText(bytes) + '</small>';
+    bubble.innerHTML = face;
+    bubble.hidden = false;
+    bubble.title = words + ': ' + names.join(', ') +
+      (bytes > 0 ? ' - weighing ' + UI.sizeText(bytes) : '');
+  };
+  const engineBubbles = function (system) {
     const weights = (system.loaded && system.loaded.loaded) ? system.loaded : {};
-    const resident = weights.resident || [];
+    const resident = Array.isArray(weights.resident) ? weights.resident : [];
+    let imageBytes = 0;
+    const imageNames = [];
     for (const item of resident) {
-      labels.push('picture ' + String(item.model) + (item.quant ? ' as ' + String(item.quant) : ''));
-      bytes += Number(item.bytes || 0);
+      imageBytes += Number(item.bytes || 0);
+      imageNames.push(String(item.model) + (item.quant ? ' as ' + String(item.quant) : ''));
     }
     if (!resident.length && Array.isArray(weights.loaded)) {
-      for (const model of weights.loaded) labels.push('picture ' + String(model));
+      for (const model of weights.loaded) imageNames.push(String(model));
     }
-    const voiceOpen = Array.isArray((system.voice || {}).open_models) ? system.voice.open_models : [];
-    for (const model of voiceOpen) {
-      labels.push('voice ' + String(model));
-    }
-    return { labels: labels, bytes: bytes };
+    paintBubble('image', 'imagegen.html', imageNames.length, imageBytes, imageNames,
+      'Picture models standing in memory');
+    const voice = system.voice || {};
+    const standing = Array.isArray(voice.open_models) ? voice.open_models.map(String) : [];
+    paintBubble('voice', 'voice.html', standing.length, Number(voice.open_bytes || 0), standing,
+      'Voice models standing in memory');
   };
 
   // The standard header chips from a merged /api/monitor reading, identical on
   // every page: CPU and machine memory (two rows in the cpu chip), GPU and its
-  // memory (two rows in the gpu chip), models the engines hold open, and jobs
-  // running. Only ever drawn from a valid reading — live, or a copy this
-  // browser kept while it still described the machine.
+  // memory (two rows in the gpu chip), and jobs running. What the engines hold
+  // open in memory is no longer a header word - each studio tab wears that
+  // count as its own bubble, mounted below. Only ever drawn from a valid
+  // reading - live, or a copy this browser kept while it still described the
+  // machine.
   UI.monitorChrome = function (snapshot) {
     const system = (snapshot && snapshot.system) || {};
+    engineBubbles(system);
 
     const poolPercent = function (used, total) {
       return total > 0 ? Math.round((used / total) * 100) : 0;
@@ -272,53 +314,7 @@
         : 'No GPU driver was found on this machine.',
       (gpu && vramTotal) ? poolPercent(vramTotal - Number(gpu.free_bytes || 0), vramTotal) : 0);
 
-    const openNow = UI.openModels(system);
-    const open = openNow.labels;
-    const bytes = openNow.bytes;
-
-    // Opening a model is a load: there is no honest percentage, so the
-    // seconds taken are real and the bar is only elapsed time against the
-    // page's own cap (striping marks it as an estimate).
     const jobs = (snapshot && Array.isArray(snapshot.jobs)) ? snapshot.jobs : [];
-    let loadLine = '';
-    let loadFill = 0;
-    let loadTint = '';
-    for (const job of jobs) {
-      if (String(job.state || '') !== 'running' || String(job.kind || '') !== 'load') continue;
-      const secs = Math.max(0, Math.round(Number(job.done || 0)));
-      const cap = Math.max(1, Number(job.max || 0));
-      loadFill = Math.min(100, Math.round((secs / cap) * 100));
-      loadLine = 'loading ' + String(job.model || job.id) + ' - ' + secs + 's so far';
-      // The fill wears the colour of the engine being opened, the way the
-      // header bar does while a job runs.
-      loadTint = TINT[String(UI.jobEngine(job))] || TINT.image;
-    }
-
-    // The chip line counts what is open by engine and stops there: a machine with
-    // dozens open would otherwise wrap a wall of names across the header, and each
-    // open model has its own card naming it. The whole list rides in the tip.
-    const openByEngine = {};
-    for (const label of open) {
-      const engine = String(label).split(' ')[0];
-      openByEngine[engine] = (openByEngine[engine] || 0) + 1;
-    }
-    const openGroups = Object.keys(openByEngine).map(function (engine) {
-      return engine + ' ' + openByEngine[engine];
-    }).join(' · ');
-    const openText = open.length ? open.length + ' in memory: ' + openGroups
-      + (bytes ? ' · ' + UI.sizeText(bytes) : '') : 'nothing open in memory';
-    const openTip = 'Every model the engines currently have open in memory (pictures and voices). ' +
-      'Only picture engines report bytes. If a load does ' +
-      'not fit, ' +
-      'the least recently used idle model is closed first. A "loading" line is real elapsed ' +
-      'seconds; ' +
-      'the bar is only time against the cap the page allows.' +
-      (open.length ? ' Open now: ' + open.join(' · ') + '.' : '');
-    UI.chip(E('chip-loaded'),
-      loadLine && open.length ? openText + '\n' + loadLine : (loadLine || openText),
-      loadLine ? (open.length ? 'loaded loading' : 'loading') : (open.length ? 'loaded' : 'ok'),
-      openTip,
-      loadLine ? loadFill : undefined, loadLine ? loadTint : undefined);
 
     const active = jobs.filter((j) => j.state === 'running');
     UI.chip(E('chip-jobs'),
@@ -1306,9 +1302,9 @@
   };
 
   // ---------- page chrome: the header bar and the nav, defined once ----------
-  // Every page carries the same header (brand, the badges of what is open and of
-  // the work going on, running-state line) and the same nav, which also marks
-  // the page you are on. Page content itself lives in each page's own file.
+  // Every page carries the same header (brand, the badge of the work going on,
+  // running-state line) and the same nav, which also marks the page you are on.
+  // Page content itself lives in each page's own file.
   // The home tab stands at the left, and the two studios read to its right: the
   // machine is what a person looks at first, and the page the bare address opens.
   const NAV = [
@@ -1317,12 +1313,13 @@
     ['voice.html', 'voice studio', 'Speak text with the audio.cpp engines: voices, models, renders.'],
   ];
   // The header carries only what every page needs about the work: what the
-  // engines hold open and what they are doing. The machine's own badges - its
+  // engines are doing. What they hold open in memory is not a header word -
+  // each studio tab wears that count as its own bubble, and what an engine
+  // stands in memory is stated where it is used. The machine's own badges - its
   // cpu, its gpu, the code it runs - are the home page's machine panel, and
   // that page's own markup carries them; where no such element stands, the
   // readings for them are simply not drawn.
   const CHIPS = [
-    ['chip-loaded', 'in memory: not read'],
     ['chip-jobs', 'jobs: not read'],
   ];
 

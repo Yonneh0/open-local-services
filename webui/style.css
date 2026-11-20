@@ -218,11 +218,6 @@ body {
   color: var(--err);
 }
 
-.chip.loaded {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 /* ---------- the timed stack ----------
    A thing worth one look lives here for a moment: short plain words, a bar that
    empties as the time runs out (a running job's bar is its estimated time left),
@@ -479,6 +474,44 @@ body {
 
 #nav a:hover {
   color: var(--fg);
+}
+
+/* The studios' load bubbles: what an engine stands in memory, worn on the
+   top-right corner of the studio's tab like an unread mark. The queue clock's
+   amber turned inside out - an amber wash for the face, black for the words -
+   and two small lines: the count, and under it the weight the machine states
+   for those models. Nothing standing, nothing worn; and the bubble is not
+   there to be pressed, so a click on it is a click on the tab it stands on. */
+#nav a .tab-bubble {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+  min-width: 24px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(255, 158, 46, 0.55);
+  color: #000;
+  text-align: center;
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+#nav a .tab-bubble[hidden] {
+  display: none;
+}
+
+#nav a .tab-bubble b {
+  font-size: 11px;
+}
+
+#nav a .tab-bubble small {
+  font-size: 8px;
+  letter-spacing: 0.2px;
 }
 
 /* The machine's health is shown rather than written anywhere: the home tab
@@ -3364,32 +3397,6 @@ a:focus-visible {
   }
 }
 
-/* The load chip: while an engine is being opened, the chip of what the
-   engines hold wears the loading bar itself — time against the cap the page
-   allows, striped so it says "working, unknown how far" and never "reached
-   this percent". The words carry the real seconds. */
-.chip.loading {
-  position: relative;
-  z-index: 0;
-  border-color: var(--accent3);
-}
-
-.chip.loading::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: var(--fill, 0%);
-  background: repeating-linear-gradient(-45deg,
-      rgba(116, 201, 164, 0.4), rgba(116, 201, 164, 0.4) 8px,
-      rgba(116, 201, 164, 0.1), rgba(116, 201, 164, 0.1) 16px);
-  border-radius: 6px;
-  pointer-events: none;
-  z-index: -1;
-  animation: load-stripes 1.2s linear infinite;
-}
-
 /* A card's line of what a model is made of - "24 layers · 1024 wide · 2 kv" -
    set in a narrow column, so the words must never push anything sideways: they
    wrap inside the card and the card grows as tall as its words need. */
@@ -3402,7 +3409,7 @@ a:focus-visible {
 /* The last word on motion. This block sits after every animation the sheet names,
    so it answers all of them - a name placed earlier would be overridden by the
    animations written below it, and a reader who asked their screen for less
-   movement would still watch a striped load chip. A bar that slides and a picture
+   movement would still watch a striped bar. A bar that slides and a picture
    that steps back are motion: without the animation they simply arrive at their
    size. The colour fades elsewhere are left alone - they carry state (this card
    is open, this word is the one being said), and a colour changing is not
@@ -3424,7 +3431,6 @@ a:focus-visible {
   }
 
   .prog-fill.loading,
-  .chip.loading::before,
   #topbar.indeterminate::before,
   #nav a[href="index.html"]::after {
     animation: none;
