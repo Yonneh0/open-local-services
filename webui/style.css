@@ -1896,19 +1896,6 @@ input[type="range"] {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-/* A run of this ask that stands on the machine: the room its picture will
-   stand in, drawn before the picture - a ghost, not a card of its own. */
-.shot-ghost {
-  width: 52px;
-  height: 52px;
-  flex: 0 0 auto;
-  border: 1px dashed var(--line);
-  border-radius: 4px;
-  opacity: 0.6;
-  background: repeating-linear-gradient(45deg, transparent 0 6px,
-      color-mix(in srgb, var(--line) 30%, transparent) 6px 12px);
-}
-
 /* The picture a press swapped in settles once, from the press that asked for it.
    The viewer's own picture is not settled the same way: its size and place are
    stated by the page on the picture itself, and an animation holding the same

@@ -28,6 +28,11 @@ review format. do not edit or remove this format:
 ## 3. Awaiting User Verification
 when work is complete, edit this document, add any additional user guidance received during the session, and move the work item here, when completed.
 
+- One picture is one job: X4 asks four jobs, X16 asks sixteen, each standing as its own card
+  Prompt: "fix image generation queueing: it is still queueing in batches: x16 button needs to queue 16 individual image generation jobs- with 16 individual icons etc. likewise- ensure x4 creates 4 separate jobs"
+  Follow-on guidance: none this session.
+  Changes: webui/app.js, imagegen.html, style.css. The studio no longer fills a run: every picture is its own job at the machine - X4 hands four jobs and X16 sixteen, each with its own queue line, bar, and stop hand, and stopping one touches none of the others. The standing card and the run's fill part company: a job still standing keeps a card of its own (the grouping keys a standing row by its own id), and only its landed record joins the one card its ask names, so the ghost row inside the pending card and its style went as dead. payload always asks one picture; the images field now says how many pictures the press draws (max 16), each becoming a job of its own; startJob's never-called generate branch went with them. Measured on the live 8765 serve: X4 stood four jobs and four cards, X16 sixteen and sixteen; stopping one queued card cancelled that job alone and its card came down while thirteen stayed on the line; every picture landed in its ask's card, the room's images never re-painted once (zero src resets), and the console stayed clean.
+
 - Gallery flicker and brief reorder while pictures draw: cards now stand instead of being torn down
   Prompt: "fix bug in image gallery: while images are drawing- it randomly flickers and updates/changes order briefly when it gets an update or something"
   Follow-on guidance: none this session.

@@ -921,24 +921,13 @@ async function putInUse(model) {
   paintRunState();
 }
 
-// How many pictures one run of this machine answers for. The engine draws a
-// run's pictures back to back inside one model open and writes them when the
-// run's drawing is done, so the fill is a balance: too many pictures in a run
-// and the room sees nothing for minutes at a stretch, too few and the queue
-// floods and the ask breaks into cards nobody ordered. Four is that balance -
-// the X4 hand is exactly one run, one card, one queue line, and even the X16
-// hand shows new pictures every few seconds of drawing. A run stopped on a
-// word keeps the pictures it had already drawn. Every count on the page - what
-// it asks a run for, what it plans notices for, and where a run's boundary
-// sits - is read from this one number, so the pictures the page laid out and
-// the pictures the machine makes are the same pictures.
-const kRunPictures = 4;
-
-function picturesPerRun(model) {
-  // A model that moves makes one clip per run: an ask of clips is several runs.
-  const found = findModel(String(model || '')) || {};
-  return found.video === true ? 1 : kRunPictures;
-}
+// Every picture is its own job: this studio never hands the machine an ask of
+// several at once. One job draws one picture, stands as one line in the queue,
+// carries its own card and its own stop hand, and a batch is as many jobs as
+// the ask counts pictures - so an ask of sixteen is sixteen jobs drawn one
+// after another, and stopping one touches no other. What one run of the engine
+// could draw back to back inside one model open is the machine's own business;
+// the line into it is one picture deep.
 
 // What the ask on this page will make: what its own images field named, kept
 // inside the deepest ask this studio makes. Each picture is a job of its own, so
@@ -949,7 +938,7 @@ function askedPictures() {
   return chosen > kMaxBatchPictures ? kMaxBatchPictures : chosen;
 }
 
-function payload(count) {
+function payload() {
   const size = sizePick();
   const body = {
     model: modelChoice(),
@@ -958,10 +947,10 @@ function payload(count) {
     width: size.width,
     height: size.height,
     seed: ui.numberField('seed', -1),
-    // How many pictures this run draws: back to back inside one model open, in
-    // the machine's own order, each written as its own file. The ask hands over
-    // its count here so a batch is one job and one line in the queue.
-    count: Math.max(1, Math.min(kMaxBatchPictures, Math.round(Number(count) || 1))),
+    // One picture per job, always: a batch is several such jobs handed over one
+    // at a time, each its own line in the queue, so the run this body starts
+    // draws one picture and no more.
+    count: 1,
   };
   const steps = ui.textField('steps').trim();
   if (steps !== '') body.steps = Number(steps);
@@ -1009,17 +998,17 @@ function modelName(id) {
 // same numbers a few seconds later.
 const jobTimes = {};
 
-/* ---------- one card per ask, in the gallery ----------
-   A batch is watched as the one ask it is: an ask of sixteen pictures stands as
-   one card from the moment it is made, the runs still to come or standing on
-   the machine shown as ghosts in the card's row beside the pictures that have
-   landed. Nothing on a card is invented: the steps, the state, and the moment a
-   picture is drawn come from the machine's record of the job the card's head
-   stands in; the number of runs comes from what this page asked, which is the
-   only place that number exists; and the time given is a rate measured from the
-   ticks the machine really made - the rate this run is holding now, otherwise
-   the rate a finished run here showed, and when neither is measured the card
-   states no time. */
+/* ---------- standing jobs stand on their own, landed asks share a card ----------
+   A batch is watched as the queue it is: an ask of sixteen pictures stands as
+   sixteen cards from the moment it is made, each job with its own bar, its own
+   place in the line, and its own stop hand, until its picture lands and joins
+   the one card its ask names. Nothing on a card is invented: the steps, the
+   state, and the moment a picture is drawn come from the machine's record of
+   the job the card stands for; the number of pictures comes from what this page
+   asked, which is the only place that number exists; and the time given is a
+   rate measured from the ticks the machine really made - the rate this job is
+   holding now, otherwise the rate a finished run here showed, and when neither
+   is measured the card states no time. */
 const plannedPictures = [];
 // The nodes of the standing cards, kept by picture key so a paint pass can move
 // a bar and a line of words without drawing the gallery again. renderGallery
@@ -1222,8 +1211,8 @@ function picturePosition(entry, position, standing) {
 // picture: the prompt it will draw with and the settings the ask named. A
 // setting the ask did not name is not claimed - the machine's own default stays
 // the machine's. The whole row of settings comes back too: it is what a standing
-// card stacks under, what its placeholder is shaped like, and what a cost row is
-// keyed by before any machine record speaks.
+// card is shaped like, and what a cost row is keyed by before any machine
+// record speaks.
 function describeAsk() {
   const body = payload();
   const parts = [];
@@ -1261,13 +1250,13 @@ function refThumbUrl(id) {
   return '';
 }
 
-// A row the gallery can draw as a card: shaped like a gallery record enough to
-// join the stack its own ask names (the stack key reads these fields), and
-// carrying its whole state so a paint pass can fill it without a second look.
-// A standing card stated in the same fields the machine states about a landed
-// render - no more. A record names its guidance to nobody: a card that stated
-// one would stand in a stack of its own rather than join the ask it belongs
-// to. The card's own lines still say everything the dials hold.
+// A row the gallery can draw as a card: shaped like a gallery record - the
+// fields a record states about itself, and its whole state besides, so a paint
+// pass can fill it without a second look. A standing card is stated in the same
+// fields the machine states about a landed render - no more. It keeps a card of
+// its own while it stands, for its job is a job of its own; the fields are what
+// its record will read as when it lands and joins the card of the ask. The
+// card's own lines still say everything the dials hold.
 function pendingItem(row) {
   const video = row.video === true;
   return {
@@ -1283,10 +1272,10 @@ function pendingItem(row) {
 
 // A standing card, drawn once and then only filled: the shape the picture will
 // come back at, the words it will draw with, its state as one line, its bar,
-// and its own stop hand. It stands where the gallery puts the ask it belongs
-// to - at the head of that stack - and when the picture lands the real record
-// takes its place under the same key.
-function pendingCard(item, earlier) {
+// and its own stop hand. It stands as a card of its own for as long as its job
+// stands - one card, one job, one stop hand - and when the picture lands the
+// record joins the card of its ask and this card comes down.
+function pendingCard(item) {
   const shot = document.createElement('div');
   shot.className = 'shot pending-shot';
   const box = document.createElement('div');
@@ -1336,37 +1325,6 @@ function pendingCard(item, earlier) {
   stop.title = 'Stop this run: on the machine if it runs - keeping any picture it has already drawn - or off the line if its turn has not come.';
   act.appendChild(stop);
   shot.appendChild(act);
-  if (earlier && earlier.length) {
-    // Every other run of this ask joins this card's row: the landed ones with
-    // their pictures, the standing ones as ghosts - an ask stands as one card
-    // from the moment it is asked, not as one card per run that settles last.
-    const landed = earlier.filter(function (past) { return !past.pending; });
-    const row = document.createElement('div');
-    row.className = 'shot-stack';
-    const words = document.createElement('span');
-    words.className = 'stack-count';
-    words.textContent = 'the ' + (earlier.length + 1) + ' runs of this ask';
-    words.title = 'The renders this same prompt and these same settings made and stand for, newest first. A ghost is a run standing on the machine.';
-    row.appendChild(words);
-    landed.forEach(function (past, at) {
-      const thumb = document.createElement('img');
-      thumb.setAttribute('width', '52');
-      thumb.setAttribute('height', '52');
-      thumb.setAttribute('alt', 'an earlier run of this ask');
-      thumb.title = 'run ' + (at + 2) + ' of this prompt and these settings · ' + ui.whenText(past.created) +
-        ' · press to open it';
-      thumb.src = ui.fileSrc(cardPicture(past));
-      ui.onPress(thumb, function () { openRender(past); });
-      row.appendChild(thumb);
-    });
-    for (let g = landed.length; g < earlier.length; ++g) {
-      const ghost = document.createElement('div');
-      ghost.className = 'shot-ghost';
-      ghost.title = 'a run of this ask standing on the machine';
-      row.appendChild(ghost);
-    }
-    shot.appendChild(row);
-  }
   const els = {
     shot: shot, fill: fill, said: said, meta: meta, queue: queue, stop: stop, item: item,
   };
@@ -1429,21 +1387,17 @@ function askedSteps(model) {
 }
 
 // The pictures this page is going to ask for, in the order it asks for them: the
-// whole batch is put on the stack at once, so the run that has not been asked
-// yet is visible as a queue rather than appearing only when its turn comes. The
-// run boundaries and how many pictures a run carries are the model's own, so the
-// notice of a picture names the run it will really be drawn in.
+// whole batch is put on the stack at once, so the job that has not been asked
+// yet is visible as a queue rather than appearing only when its turn comes. Each
+// picture is a job of its own, and the notice of a picture names the place it
+// holds in the ask.
 function planPictures(model, pictures) {
   const batch = 'b' + (++planSeq);
-  const perRun = picturesPerRun(model);
-  const runs = Math.ceil(pictures / perRun);
   const steps = askedSteps(model);
   const ask = describeAsk();
   for (let n = 0; n < pictures; ++n) {
-    const run = Math.floor(n / perRun) + 1;
     const entry = {
       key: 'pic-' + batch + '-' + n, batch: batch, n: n, of: pictures,
-      runs: runs, run: run, inRun: Math.min(perRun, pictures - (run - 1) * perRun),
       model: String(model), job: '', index: -1, asked: false, steps: steps,
       dropped: false, prompt: ask.prompt, settings: ask.settings, fields: ask.fields,
     };
@@ -1469,12 +1423,12 @@ function finishPlan(batch, words) {
   }
 }
 
-// The run the machine just took carries the next of the pictures this page planned
-// for the batch that ask laid out - an ask names its own batch, so two asks
-// standing on the machine at once each keep their own pictures rather than one
-// taking the other's place in the queue. The machine's own job id is what ties
-// them to it from here on, so a page reload finds the same pictures at the same
-// notices through the machine's records.
+// The job the machine just took carries the next of the pictures this page
+// planned for the batch that ask laid out - an ask names its own batch, so two
+// asks standing on the machine at once each keep their own pictures rather than
+// one taking the other's place in the queue. The machine's own job id is what
+// ties the picture to it from here on, so a page reload finds the same pictures
+// at the same notices through the machine's records.
 function bindPlannedPictures(batch, jobId, asked) {
   let bound = 0;
   const want = Math.max(1, Math.round(Number(asked) || 1));
@@ -2199,36 +2153,27 @@ async function streamJob(job, model, action) {
   return ended;
 }
 
-async function startJob(model, action, extra, batch) {
+async function startJob(model, action, extra) {
   // Downloads go to the model's own route, like loads: there is no bare
-  // /api/download in the API, so a bare path would 404.
+  // /api/download in the API, so a bare path would 404. Only these two hands
+  // come through here - a drawing hand has its own ask, with a plan behind it.
   const path = action === 'download' ? '/api/models/' + model + '/download'
-    : (action === 'load' ? '/api/models/' + model + '/load' : '/api/generate');
-  const body = action === 'download' ? { model: model }
-    : (action === 'generate' ? payload() : {});
+    : '/api/models/' + model + '/load';
+  const body = action === 'download' ? { model: model } : {};
   if (extra) {
     for (const key in extra) body[key] = extra[key];
   }
   const started = await ui.postJob(path, body);
   if (!started.job) {
-    log((action === 'generate' ? 'Render refused' : action + ' refused') + ' ' + started.status +
+    log(action + ' refused' + (started.status ? ' ' + started.status : '') +
       (started.error ? ': ' + started.error : ''), 'err');
-    ui.toastNo(action === 'generate' ? 'start the image'
-      : (action === 'load' ? 'load that model' : 'download that model'), started);
-    if (action === 'generate') finishPlan(batch, 'the ask was refused here');
+    ui.toastNo(action === 'load' ? 'load that model' : 'download that model', started);
     return 'error';
-  }
-  if (action === 'generate') {
-    running = started.job;
-    // The run the machine just took carries the next of the pictures this page
-    // planned for the batch this ask laid out, and the machine's own job id is
-    // what ties them to it from here on.
-    bindPlannedPictures(batch, started.job, Number(body.count || 1));
   }
   log('Job ' + started.job + ' started', 'ok');
   // The header shows something running the moment the click happens, before the
   // job's first step.
-  ui.headProgress(0, (action === 'generate' ? 'starting · ' : action + ' · ') + model, 'image');
+  ui.headProgress(0, action + ' · ' + model, 'image');
   return await streamJob(started.job, model, action);
 }
 
@@ -2252,16 +2197,15 @@ function readyToDraw(model) {
   return true;
 }
 
-// The ask every generate hand takes: one picture, or the quick batches. A run
-// draws up to kRunPictures of them back to back inside one model open, so the
-// X4 hand is one run of four and the X16 hand one run of sixteen - one job, one
-// queue line, one standing card - and only an ask deeper than one run's fill
-// comes out as several runs. The whole ask is handed over at once; each picture
-// still lands as its own record, and stopping a run stops the ones not drawn
-// yet without touching the ones already made. Each run is then followed by its
-// own name to its own ending, and what came out is counted from the pictures
-// that really landed, and from a run the machine says finished, never from
-// wishes.
+// The ask every generate hand takes: one picture, or the quick batches. Every
+// picture of an ask is a job of its own at the machine - its own line in the
+// queue, its own card with its own bar and stop hand - so the X4 hand is four
+// jobs and the X16 hand sixteen, drawn one after another, and stopping one job
+// touches none of the others. The whole ask is handed over at once; each picture
+// lands as its own record and joins the card of its ask when it does. Each job
+// is then followed by its own name to its own ending, and what came out is
+// counted from the pictures that really landed, and from a job the machine says
+// finished, never from wishes.
 // The model this ask draws with is the one this page has picked: the ask's own
 // words name that pick, so the hand carries no model that another pick would
 // answer for.
@@ -2275,24 +2219,20 @@ async function drawAsk(pictures) {
     return;
   }
   if (!(pictures > 0) || !readyToDraw(model)) return;
-  // The ask a run takes is the ask this model keeps: what the controls hold now
+  // The ask a job takes is the ask this model keeps: what the controls hold now
   // is written down for it, so a reload of this page opens on what was last asked
   // of this model rather than on a card's opening words.
   keepAsk(model);
   const batch = planPictures(model, pictures);
-  const perRun = picturesPerRun(model);
-  const runs = Math.ceil(pictures / perRun);
   log('An ask of ' + pictures + ' picture' + (pictures === 1 ? '' : 's') + ' with ' + modelName(model) +
-    (runs === 1 ? ', as one job.'
-      : ', in ' + runs + ' runs of up to ' + perRun + ', drawn one after another.'), 'ok');
-  // Hand every run of the batch to the machine first, so all its job records
+    (pictures === 1 ? ', as one job.'
+      : ', as ' + pictures + ' separate jobs, drawn one after another.'), 'ok');
+  // Hand every job of the batch to the machine first, so all its job records
   // stand from the start and a refusal says so while the rest of the batch is
   // still whole enough to talk about.
   const jobs = [];
-  let left = pictures;
-  while (left > 0) {
-    const take = left > perRun ? perRun : left;
-    const started = await ui.postJob('/api/generate', payload(take));
+  for (let n = 0; n < pictures; ++n) {
+    const started = await ui.postJob('/api/generate', payload());
     if (!started.job) {
       log('Render refused' + (started.status ? ' ' + started.status : '') +
         (started.error ? ': ' + started.error : ''), 'err');
@@ -2302,31 +2242,30 @@ async function drawAsk(pictures) {
       paintPictureNotices(lastJobs);
       return;
     }
-    // The run the machine just took carries the next of the pictures this page
-    // planned for the batch, and the machine's own job id is what ties them to
-    // it from here on - one run, its own fill of pictures, in this order. The
+    // The job the machine just took carries the next of the pictures this page
+    // planned for the batch, and the machine's own job id is what ties it to
+    // that picture from here on - one job, one picture, in this order. The
     // card stands with its stop hand from this moment: the line at the machine
     // is the line the cards show.
-    bindPlannedPictures(batch, started.job, take);
-    jobBound[String(started.job)] = take;
+    bindPlannedPictures(batch, started.job, 1);
+    jobBound[String(started.job)] = 1;
     jobs.push(started.job);
-    left -= take;
     if (jobs.length === 1) running = started.job;
     paintPictureNotices(lastJobs);
   }
-  // Follow the batch run by run, each by its own name. The machine draws them in
-  // the order it holds them; a run that failed or was stopped is counted as what
-  // it was - the pictures of it that really landed - and never hides the
+  // Follow the batch job by job, each by its own name. The machine draws them in
+  // the order it holds them; a job that failed or was stopped is counted as what
+  // it was - the picture of it that really landed - and never hides the
   // pictures that did come out.
   let drawn = 0;
   for (let k = 0; k < jobs.length; ++k) {
     running = jobs[k];
     const ended = await streamJob(jobs[k], model, 'generate');
-    // A run that showed pictures is counted by the frames that landed - a run
-    // stopped short of its fill ends as done with fewer of them than it was
-    // asked for, and its own frames are the only honest count. A run that
-    // ended as done without a single frame named is a stream that died silent,
-    // and its fill is all that can be claimed for it.
+    // A job that showed its picture is counted by the frames that landed - a
+    // job stopped before its picture came ends without one, and its own
+    // frames are the only honest count. A job that ended as done without a
+    // single frame named is a stream that died silent, and the picture it was
+    // asked for is all that can be claimed for it.
     const landed = Number(jobLanded['job-' + jobs[k]]) || 0;
     drawn += landed > 0 ? landed
       : ended === 'done' ? Math.max(1, Number(jobBound[String(jobs[k])]) || 1) : 0;
@@ -2753,7 +2692,6 @@ function chosenOf(group) {
 // one on the screen: `save` saves the picture being looked at, `delete` deletes
 // that one, `again` puts that one's ask back in the field.
 function galleryCard(item, earlier) {
-  if (item.pending) return pendingCard(item, earlier);
   const group = earlier && earlier.length ? [item].concat(earlier) : [item];
   const shot = document.createElement('div');
   shot.className = 'shot';
@@ -2783,14 +2721,6 @@ function galleryCard(item, earlier) {
     // top card, so the picture on screen is in the row too and is ringed: which
     // one is being looked at is then read off the card, not guessed.
     group.forEach(function (past, at) {
-      if (past.pending) {
-        // A run of this ask still standing: a ghost, not a picture yet.
-        const ghost = document.createElement('div');
-        ghost.className = 'shot-ghost';
-        ghost.title = 'a run of this ask standing on the machine';
-        row.appendChild(ghost);
-        return;
-      }
       const thumb = document.createElement('img');
       thumb.setAttribute('width', '52');
       thumb.setAttribute('height', '52');
@@ -3057,11 +2987,13 @@ function stackKeyFor(item) {
 
 // The runs are grouped in the order the screen already shows them, newest first,
 // so the head of a group is the newest render of that ask and the rest are what
-// sits behind it.
+// sits behind it. A run still standing is not in that company: its job is a job
+// of its own, and it keeps its own card - its own bar, its own stop hand -
+// until its record lands and joins the card of the ask.
 function groupStacks(ordered) {
   const groups = new Map();
   for (const item of ordered) {
-    const key = stackKeyFor(item);
+    const key = cardKeyFor(item);
     const group = groups.get(key);
     if (group) {
       group.push(item);
@@ -3072,16 +3004,22 @@ function groupStacks(ordered) {
   return groups;
 }
 
+// The key a card stands under: landed runs of one ask share it, while a
+// standing job's id rides on the end of its ask's key, so no two jobs share a
+// card and every card of the room still stands under its ask.
+function cardKeyFor(item) {
+  return item.pending ? stackKeyFor(item) + '\u0000' + String(item.id) : stackKeyFor(item);
+}
+
 // Redrawing the list is what a filter change does: the controls say what to show,
 // and the screen answers the moment they are moved rather than at the next poll.
-// What stands in the line stands here too, as a card at the head of the stack
-// its own ask names - the ask of a run being drawn is the ask of the picture it
-// will make, so the placeholder joins its own future record's group and steps
-// out of the way when that record lands.
+// What stands in the line stands here too: a landed run joins the one card its
+// ask names, and a job still standing holds a card of its own - its bar, its
+// place in the line, its stop hand - until its picture lands.
 //
-// The room is drawn again rather than thrown away: each ask's card stands from
+// The room is drawn again rather than thrown away: each card stands from
 // one drawing to the next until something its own row holds moves. A drawing
-// moves standing cards into the new order, builds the asks that are new here,
+// moves standing cards into the new order, builds the cards that are new here,
 // and takes away the ones that are gone; a moved card keeps the node it was
 // drawn in, so a picture already painted stays painted while it shifts. A room
 // rebuilt whole would take every picture down and read it again - and while a
@@ -3113,7 +3051,7 @@ function renderGallery(items) {
   const keys = [];
   const stamps = [];
   for (const entry of groups.values()) {
-    keys.push(stackKeyFor(entry[0]));
+    keys.push(cardKeyFor(entry[0]));
     stamps.push(cardStamp(entry));
   }
   const signature = keys.join('\u0002') + '\u0003' + stamps.join('\u0002');
@@ -3126,18 +3064,17 @@ function renderGallery(items) {
   const built = new Map();
   let at = 0;
   for (const entry of groups.values()) {
-    // One card stands for an ask: the head of its group and nothing else. The
-    // standing siblings of a batch - the four runs of a sixteen, the pictures
-    // of an ask the machine has not taken yet - join that card as ghosts in
-    // its row rather than each holding up a card of its own.
+    // One card per key: the head of its group and nothing else. The landed runs
+    // of one ask share the card their ask names, with their row of thumbnails;
+    // a job still standing is the only member of its own card, and joins that
+    // ask's card only when its record lands.
     const head = entry[0];
     const key = keys[at];
     const held = galleryCards.get(key);
     let node = held && held.stamp === stamps[at] && held.node.parentNode === pane ?
       held.node : null;
     if (!node) {
-      node = head.pending ? pendingCard(head, entry.slice(1)) :
-        galleryCard(head, entry.slice(1));
+      node = head.pending ? pendingCard(head) : galleryCard(head, entry.slice(1));
     }
     built.set(key, { node: node, stamp: stamps[at] });
     ++at;
@@ -3204,9 +3141,9 @@ function drawGalleryNote(kept, loaded, groups) {
     words = beyond
       ? 'Showing ' + kept.length + ' of ' + window + ' · the rest of the room is still on its way here'
       : 'Showing ' + kept.length + ' of ' + held + ' this machine holds';
-    // The counts name the pictures, while the screen shows one card per ask: the
-    // words say where the rest of a repeated ask sits, so a short list of cards
-    // is never read as a machine that made little.
+    // The counts name the pictures, while a repeated ask shares one landed card:
+    // the words say where the rest of a repeated ask sits, so a short list of
+    // cards is never read as a machine that made little.
     let hidden = 0;
     for (const entry of groups.values()) {
       hidden = hidden + entry.length - 1;

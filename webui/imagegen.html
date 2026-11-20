@@ -118,9 +118,9 @@
               <label for="seed" title="-1 gives a new image every run. A fixed number repeats one image.">seed</label>
               <input id="seed" type="number" min="-1" value="-1"
                 title="-1 means a new image every run. Fix a number to repeat one image exactly.">
-              <label for="count" title="How many images in one run; this machine makes at most four.">images</label>
-              <input id="count" type="number" min="1" max="4" value="1"
-                title="This machine makes at most four pictures in one run; each extra one costs the same time as the first.">
+              <label for="count" title="How many pictures this press draws; each one is a job of its own on the machine, drawn one after another.">images</label>
+              <input id="count" type="number" min="1" max="16" value="1"
+                title="Each picture is a job of its own: its own line in the queue, its own card, its own stop hand. Each extra one costs the same time as the first.">
             </div>
           </div>
           <div class="pill-row">
