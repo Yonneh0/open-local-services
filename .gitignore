@@ -20,7 +20,10 @@ api/.build-p/
 api/.build-c*/
 Release/.build/
 *.exe
-*.dll
+# the object library the visual studio builder lays under a bin folder is
+# generated state, not an artifact of the release path: the release ships
+# archives, which stand under Release/ unpatterned and committed.
+bin/**/*.obj
 api/open-local-services
 api/open-local-services.new
 weights/
@@ -30,12 +33,22 @@ vendor/
 
 # the release artifacts are built bytes, not source: build-rel.sh and
 # build-rel.bat lay them under Release/ on the box that built them - a server
-# binary and the engines beside it run to hundreds of megabytes each - and they
-# reach another box over the link, which is how a windows flavour gets to the
-# machine meant to run it. build-info.txt beside them names the commit they were
-# made from, which is what a later build is read against; the bytes themselves
-# have no place in a clone.
-Release/
+# binary and the engines beside it run to hundreds of megabytes each. the
+# finished ARCHIVES are the release and are committed - the repository is the
+# release - with these bounds, each one read off a measured fact:
+#   - the loose target folders stay out: an archive and its own unzipped
+#     folder are the same bytes twice, and the archive is the release.
+#   - cuda archives stay out wherever the tree clones: cuBLAS, cuBLASLt and
+#     cuFFT measure some 800 MB compressed per CUDA shape, and GitHub refuses
+#     any single file past 100 MB outright. they live beside the tree, carry
+#     their sha256 in the committed SHA256SUMS.txt, and reach a machine over
+#     the link - a clone can hold the source of every artifact, not the
+#     heaviest artifacts themselves.
+#   - the vulkan and cpu archives (~50 MB) fit both bounds and are committed.
+# build-info.txt beside them names the commit everything was made from.
+Release/*/
+Release/*cuda*.zip
+Release/*cuda*.tar.gz
 
 # the phonemizer package the statically linked voice engine reads: built with
 # the voice engine and placed beside the binary by run.bat, so it is generated
