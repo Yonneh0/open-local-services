@@ -127,6 +127,10 @@
     const asked = info.api_required === true;
     window.olsKeyState.apiAsked = asked;
     window.olsKeyState.forms = Number(info.page_keys);
+    // Whether this machine keeps a fleet table: the page only asks /api/peers
+    // where the door itself said one stands. Until the doors have answered, the
+    // word is no one's - an unanswered machine has a table neither way.
+    window.olsKeyState.peers = info.peers === true;
     if (asked)
       say('asked', 'this machine asks for a key it set for itself, at every door of it');
     else

@@ -158,6 +158,9 @@ GET  /api/service            how this server is installed and run; POST acts wit
                              startup_on, startup_off, remove, restart, or shutdown
 GET  /api/config             local settings; secrets read only as set or unset (POST to change)
 GET  /api/timings            the cost ledger: what finished runs cost, per model, device, and kind
+GET  /api/peers              the fleet table: other machines of this suite the machine knows,
+     /api/peers/hello        their cards, and how they were met; the hello is the handshake -
+                             it answers this machine's card and records the asker
 GET  /api/network            the whole network document; POST runs one action;
      /api/network/scan       answers the last kept wifi scan, ?fresh=1 wakes the radio
 ```
@@ -230,6 +233,21 @@ generate` before `netplan apply` ever sees it; a refused file is rolled back.
 Changing settings needs the machine's manager: elevation on Windows, root on
 Linux - read-only either way without it. The server's own notes on the network
 it made (bonds, vlans, sharing) live in `data/network-state.json`.
+
+## Fleet awareness
+
+At startup the server walks the networks it is attached to - each one at its real
+netmask, in batches of a few dozen at this server's own port - and every door that
+opens to this server's own key is an acquaintance: name, addresses, version, backend,
+uptime. The walk happens once, at startup; machines already known from `data/peers.json`
+are asked at their saved addresses first, and the sweep fills around them. A server
+that is asked the hello records the asker in its own table too, so one meeting joins
+both tables; a machine that answers a different key, or none, is not recorded at all -
+peerhood is having this machine's credential, and the key itself is never written into
+the table. Each page's header carries a pick of the fleet when the table has anyone
+standing: choosing a machine opens this same room at that address, carrying the
+credential once through the address, which the room then lets go of. A machine whose
+server is too young to keep a table shows no pick and asks no doors for one.
 
 ## Performance
 

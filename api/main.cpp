@@ -453,6 +453,10 @@ int main(int argc, char **argv)
               << std::endl;
   else
     std::cout << "Rate limit: none" << std::endl;
+  // Fleet awareness: the tables of acquaintances are read, and a walk of the
+  // machine's own networks starts in the background - once, at this start. Every
+  // server met at its door joins this table, and joins this machine to its own.
+  api.startPeers(apiKey, dataDir);
   while (api.isRunning())
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   api.stop();

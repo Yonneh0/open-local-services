@@ -3093,6 +3093,22 @@ main.monitor {
   margin-left: 6px;
 }
 
+/* The machine picker: one chip-shaped select among chips - the fleet reads
+   as part of the bar, not as a form dropped into it. */
+#topbar>.host-pick {
+  margin-left: 9px;
+  max-width: 20em;
+  padding: 4px 7px;
+  background: var(--bg3);
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
 .clock7 .c7num {
   position: relative;
   width: 15px;

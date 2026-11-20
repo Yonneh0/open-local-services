@@ -152,6 +152,7 @@ add_executable(open-local-services
   main.cpp
   OpenLocalServices.cpp
   MonitorService.cpp
+  PeerService.cpp
   ImageService.cpp
   VerifiedRoom.cpp
   Deployment.cpp

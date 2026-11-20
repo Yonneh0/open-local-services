@@ -12,6 +12,7 @@
 #include <thread>
 #include <unordered_map>
 
+#include "PeerService.h"
 #include "Platform.h"
 
 namespace ols
@@ -87,6 +88,11 @@ namespace ols
     std::string staticDir() const { return m_staticDir; }
     void setImage(imagegen::ImageService *image);
     void setVoice(voice::VoiceService *voices);
+
+    // Fleet awareness: stand the peer table up beside these doors. The sweep of
+    // the networks runs once, in the background, after the doors already
+    // answer; the hello door is worked from the route table.
+    void startPeers(const std::string &apiKey, const std::string &dataDir);
 
     HttpResponse jsonError(int status, const std::string &message) const;
     std::string systemJson() const;
@@ -175,6 +181,7 @@ namespace ols
     std::atomic<int> m_activeConnections{0};
     imagegen::ImageService *m_image = nullptr;
     voice::VoiceService *m_voice = nullptr;
+    peer::PeerService m_peers;
     std::string m_apiKey;
     std::atomic<int> m_rateLimit{600};
     std::mutex m_rateMutex;

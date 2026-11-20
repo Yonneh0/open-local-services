@@ -1357,6 +1357,84 @@
   UI.mountPageChrome();
 })();
 
+// ---------- the machine picker ----------
+// One machine's pages belong to the machine they were served by, and the fleet
+// is only a hop away: when this machine knows of other servers of its suite -
+// met at startup, by its own sweep or at its own door - the header carries a
+// pick of them. Choosing one leaves this machine entirely: the browser opens
+// the same room on that address, carrying this visit's credential once, in the
+// one place a credential is ever named in an address. If the other machine
+// keeps a different key it simply walks the visit to its own door, as honest
+// as any stranger's visit. With no other server standing there is nothing to
+// pick, and the header says nothing.
+(function mountHostPick() {
+  const top = document.getElementById('topbar');
+  if (!top) return;
+  // A jump that arrived by the picker still had the credential in its address;
+  // the door wrote it onto the connection on the way in, and the room lets go
+  // of it before anything else reads the address.
+  if (window.location.search.indexOf('key=') >= 0) {
+    try { window.history.replaceState(null, '', window.location.pathname); } catch (noHistory) {}
+  }
+  const read = function () {
+    fetch('/api/peers').then(function (res) {
+      // A machine too young to keep a table has none to read; the header stays
+      // as it was rather than drawing a box of nothing.
+      if (!res.ok) return null;
+      return res.json();
+    }).then(function (doc) {
+    if (!doc || !Array.isArray(doc.peers)) return;
+    const met = doc.peers.filter(function (row) {
+      return row && row.online && Array.isArray(row.addrs) && row.addrs.length;
+    });
+    if (!met.length) return;
+    const self = doc.self || {};
+    const pick = document.createElement('select');
+    pick.className = 'host-pick';
+    pick.title = 'the machines of this suite that stood when this one started - ' +
+      'choose one and this room opens there';
+    const here = document.createElement('option');
+    here.value = '';
+    here.textContent = (self.name || window.location.hostname) + ' · here';
+    pick.appendChild(here);
+    for (const row of met) {
+      const opt = document.createElement('option');
+      const addr = String(row.addrs[0]);
+      const port = Number(row.port) || 8765;
+      opt.value = window.location.protocol + '//' + addr + ':' + port + window.location.pathname;
+      const words = [];
+      if (row.version) words.push(String(row.version));
+      if (row.backend) words.push(String(row.backend));
+      opt.textContent = (row.name || addr) + ' · ' + addr +
+        (words.length ? ' · ' + words.join(' ') : '');
+      opt.title = 'open this room on ' + addr + ':' + port +
+        (row.name ? ' - ' + row.name : '');
+      pick.appendChild(opt);
+    }
+    pick.onchange = function () {
+      const to = pick.value;
+      if (!to) return;
+      let url = to;
+      const carried = window.olsKey ? window.olsKey.get() : '';
+      if (carried) url += '?key=' + encodeURIComponent(carried);
+      window.location.href = url;
+    };
+    top.appendChild(pick);
+    }).catch(function () { });
+  };
+  // That a machine keeps a table is a word its own door carries: the page
+  // waits its few seconds for that answer and says nothing past them - the
+  // doors not having answered yet is a table neither way.
+  const waitFlag = function (tries) {
+    const state = window.olsKeyState;
+    if (state && state.peers === true) { read(); return; }
+    if (state && state.peers === false) return;
+    if (tries > 60) return;
+    setTimeout(function () { waitFlag(tries + 1); }, 100);
+  };
+  waitFlag(0);
+})();
+
 // The corner clock: a seven-segment face in the header that blinks 12:00 like
 // the one on a microwave whose clock nobody ever set. Every segment stands on
 // the face while dark - the ghosts behind the lit ones are what make a real

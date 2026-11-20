@@ -913,6 +913,10 @@ namespace ols
     out["api_required"] = asked;
     out["page_required"] = asked;
     out["page_keys"] = asked ? 1 : 0;
+    // This server keeps a table of its fleet: pages of any age read this word
+    // and only ask /api/peers where such a table stands, so a room never
+    // rattles a door a younger machine does not have.
+    out["peers"] = true;
     out["rate_limit_per_minute"] = m_rateLimit.load();
     return out.dump();
   }
@@ -1115,6 +1119,9 @@ namespace ols
 
   void OpenLocalServices::stop()
   {
+    // The sweep belongs to this process: it stops, and the table it holds is
+    // written down before anything else gives up its hold.
+    m_peers.stop();
     // Asking to stop twice is the same as asking once: the listening is given up
     // if it stands, and the words below only tell the loop to leave. This is what
     // makes the soft hand safe - after this returns, the port stands free.
@@ -2127,6 +2134,34 @@ namespace ols
     }
   } // namespace
 
+  // Fleet awareness: stand the peer table up beside these doors - the card
+  // provider reads this machine as it stands, and the sweep of the networks
+  // walks in the background once, after the doors already answer.
+  void OpenLocalServices::startPeers(const std::string &apiKey, const std::string &dataDir)
+  {
+    m_peers.setSelf(apiKey, dataDir, m_port.load());
+    const long long begunAt = steadyMs();
+    m_peers.setCardProvider([this, begunAt] {
+      // The card is this machine as it stands at the moment of asking: its
+      // name, the code it runs, the shape it was built in, and how long this
+      // server has been standing. Nothing secret rides on it - the key is the
+      // credential on the ask itself, never a word inside it.
+      nlohmann::json card;
+      card["name"] = selfHostName();
+      card["port"] = m_port.load();
+      const std::string at = platform::buildVersion();
+      if (!at.empty())
+        card["version"] = at;
+      const std::string backend = selfBackend();
+      if (!backend.empty())
+        card["backend"] = backend;
+      card["uptime_s"] = static_cast<long long>((steadyMs() - begunAt) / 1000);
+      return card;
+    });
+    m_peers.load();
+    m_peers.start();
+  }
+
   std::string OpenLocalServices::systemJson() const
   {
     nlohmann::json devices = nlohmann::json::array();
@@ -2549,6 +2584,22 @@ namespace ols
     if (get && path == "/api/timings")
       return m_image ? jsonResponse(200, m_image->timingsJson())
                      : jsonError(502, "No image service");
+
+    // Fleet awareness: the table of other servers this machine has met, and the
+    // hello that makes the meeting both ways. The credential was weighed at the
+    // door before this point: whatever reaches the hello answered our key, and
+    // a server that answers a different one never records anything.
+    if (get && path == "/api/peers")
+      return jsonResponse(200, m_peers.tableJson().dump());
+    if (get && path == "/api/peers/hello")
+    {
+      nlohmann::json given;
+      given["name"] = queryValue(req.query, "name");
+      given["port"] = queryInt(req.query, "port", 0);
+      given["version"] = queryValue(req.query, "version");
+      given["backend"] = queryValue(req.query, "backend");
+      return jsonResponse(200, m_peers.helloAnswer(req.ip, given).dump());
+    }
 
     if (get && path == "/api/gallery")
     {
