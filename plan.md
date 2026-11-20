@@ -2,13 +2,7 @@
 this is a living task list.
 when work is complete, edit this document, add any additional user guidance received during the session, and move the work item to Awaiting User Verification, when completed.
 do not edit or remove empty headers, or document format examples.
-review `C:\Projects\local.md` for access specifics to X1, UM780, MSI, and other various lan systems.
-all code changes must be compiled on, and thoroughly tested on X1.
-coding standards: code should be readable, cleanly separated, properly documented. network, io, and resource efficiency should always be carefully considered: this application handles loading and moving around 100+ GB models - simple inefficiencies multiply quickly!
-before moving on, ensure you have completed ALL given tasks; and updated all documentation - plan.md, README.md, built release on X1, tested with browser mcp, validated ALL changes.
-NO SLEEPING. NO DELAYS OVER 5 SECONDS. NO TIMEOUTS. USE BACKGROUND TASKS.
-No subagents.
-commit frequently, and push changes to gitlab, with every commit.
+working rules, standards, and the commit and push discipline live in `dev.md`; machine access specifics live in `C:\Projects\local.md`.
 always read this file immediately before making updates: the user may change it at any time. never revert user changes: write around them.
 
 ## 1. TODO - not actionable yet.
