@@ -417,7 +417,10 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 14px;
+  /* The left pad stands the row 100px off the edge, so home sits under the
+     brand words; the 14px base is the old edge gap. This one number is the
+     whole row's place - the others follow it at their gaps. */
+  padding: 0 14px 0 114px;
   background: var(--bg2);
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
