@@ -1,5 +1,5 @@
 the release artifacts of open-local-services, built by build-rel.bat
-version: the code of every artifact here is the commit 9087fda834b4dbe6beced824cd43985f58197589
+version: the code of every artifact here is the commit c6fb4f4b638d6ca993cd9caac283ebd95057ce7c
 with cmake and the msvc cl.exe at C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64, and the vulkan sdk at C:\VulkanSDK\1.4.363.1
 
 each folder below is one machine shape, built here and started as it arrived:
@@ -32,8 +32,8 @@ build. the sources that built every artifact here:
     image ggml: api\vendor\stable-diffusion.cpp\ggml at dc998771e700d49bbdf9a39cede22bb5b3311767
 
 the release of each target is one zip beside this file, named for the
-commit its binary carries - open-local-services-9087fda-win-<folder>.zip -
-and the sha256 of every zip stands in Release\SHA256SUMS.txt. inside
+commit its binary carries - open-local-services-c6fb4f4-win-<folder>.zip -
+and the sha256 of every zip stands in Release\SHA256SUMS-win.txt. inside
 each folder: the cuda runtime the binaries really import and the
 microsoft c++ runtime, carried beside the server rather than left to
 the machine that receives it, and a webui folder served live the way
