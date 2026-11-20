@@ -31,6 +31,10 @@ carries the rules for working in this folder. Machines change faster than docs: 
 ## every change gets committed
 
 - commit frequently, and push every change to github.com/Yonneh0/open-local-services (branch master).
+- before a commit, review the documentation the change touches and update it in the same commit: the
+  README door map and prose when a door speaks, answers differently, or falls silent; plan.md when work
+  moves through its sections; local.md when a machine's facts move. a commit carries the code and the
+  truth about the code together - never commit a change that leaves a document lying.
 - commit messages are complete sentences in the house voice that say what changed and why.
 - version is the commit hash and nothing else; panels read rel <hash>.
 - plan.md is the living ledger: read it immediately before updating it - the owner edits it at any
