@@ -1504,6 +1504,77 @@ namespace ols
     return jsonResponse(200, doc.dump());
   }
 
+  // The moment a file was last written, as whole seconds since 1970. C++17's
+  // file clock keeps no promise about where its count starts: Windows counts
+  // hundred-nanosecond steps from 1601 and Linux counts from 1970, so the
+  // crossing goes platform by platform rather than being trusted to the clock.
+  static long long fileMomentSeconds(const std::filesystem::file_time_type when)
+  {
+#if defined(_MSC_VER)
+    constexpr long long kFrom1601To1970 = 11644473600LL; // 369 years of seconds
+    return std::chrono::duration_cast<std::chrono::seconds>(when.time_since_epoch()).count() -
+           kFrom1601To1970;
+#else
+    return std::chrono::duration_cast<std::chrono::seconds>(when.time_since_epoch()).count();
+#endif
+  }
+
+  // Which page file the pages this server answers with were last written at,
+  // and its name. Those files may be edited under a standing server - the
+  // folder outside answers every request as it stands - so the question is
+  // re-answered when asked, never more than once a minute: walking a folder of
+  // page files is nothing once a minute and not nothing on every request. The
+  // name comes back beside the moment so a page can say what it counts from.
+  struct NewestPage
+  {
+    long long at = 0;
+    std::string name;
+  };
+  static NewestPage newestPageFile(const std::string &dirName)
+  {
+    static std::mutex gate;
+    static NewestPage kept;
+    static long long keptAt = 0;
+    std::lock_guard<std::mutex> lock(gate);
+    const long long now = nowSeconds();
+    if (keptAt != 0 && now - keptAt < 60)
+      return kept;
+    NewestPage fresh;
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator walk(dirName,
+                                                       std::filesystem::directory_options::skip_permission_denied, ec);
+    if (ec)
+    {
+      kept = fresh;
+      keptAt = now;
+      return kept;
+    }
+    for (const auto &entry : walk)
+    {
+      std::error_code one;
+      if (!entry.is_regular_file(one) || one)
+        continue;
+      std::string leaf = entry.path().filename().generic_string();
+      std::transform(leaf.begin(), leaf.end(), leaf.begin(),
+                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      const std::string ext = std::filesystem::path(leaf).extension().generic_string();
+      if (ext != ".html" && ext != ".js" && ext != ".css")
+        continue;
+      const auto when = entry.last_write_time(one);
+      if (one)
+        continue;
+      const long long at = fileMomentSeconds(when);
+      if (at > fresh.at)
+      {
+        fresh.at = at;
+        fresh.name = leaf;
+      }
+    }
+    kept = fresh;
+    keptAt = now;
+    return kept;
+  }
+
   // One page taken from the folder outside, whole: the file has to be there,
   // inside the folder, readable, and hold bytes. Any short reading says so and
   // leaves the caller to the copy carried inside this binary. On a true return
@@ -2040,6 +2111,24 @@ namespace ols
     {
       out["version"] = buildAt;
       out["compiled"] = platform::buildStamp();
+      out["compiled_at"] = platform::buildMomentSeconds();
+    }
+    // And the moment the newest page file was written: a server answering from
+    // the folder outside hands over whatever was last written there - that one
+    // file stands for the whole of them, being the last of the pages any
+    // browser has been told. A server standing on the copy carried inside
+    // knows no fresher truth than its own making, and hands over that moment.
+    {
+      const NewestPage page = m_externalPages
+                                  ? newestPageFile(m_staticDir.empty() ? "webui" : m_staticDir)
+                                  : NewestPage{};
+      if (page.at > 0)
+      {
+        out["webui_at"] = page.at;
+        out["webui_file"] = page.name;
+      }
+      else
+        out["webui_at"] = platform::buildMomentSeconds();
     }
     if (memTotal > 0)
       out["memory"] = {{"total_bytes", memTotal}, {"free_bytes", memFree}};

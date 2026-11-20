@@ -1424,5 +1424,75 @@
   });
 })();
 
+// Two counts beside the clock, in minutes: the time since the last bug fix -
+// the moment this machine's binary was compiled - and the time since the last
+// new bug, which the machine confesses as the newest page file it answers
+// with, html, js or css alike. Both moments are the server's own facts, read
+// from its system snapshot (which re-walks its own page folder at most once a
+// minute), and the rows are re-asked once a minute: the counts show nothing
+// finer than minutes, so nothing finer need move.
+(function mountAgeRows() {
+  const top = document.getElementById('topbar');
+  const face = top ? top.querySelector('.clock7') : null;
+  if (!top || !face) return;
+  const rows = [
+    { kind: 'fix', label: 'time since last bug fix:', at: 0 },
+    { kind: 'bug', label: 'time since last new bug:', at: 0 },
+  ];
+  const box = document.createElement('div');
+  box.className = 'age-stack';
+  const cells = rows.map(function (row) {
+    const line = document.createElement('div');
+    line.className = 'age-row ' + row.kind;
+    const label = document.createElement('span');
+    label.className = 'age-label';
+    label.textContent = row.label;
+    const value = document.createElement('span');
+    value.className = 'age-count';
+    value.textContent = '…';
+    line.appendChild(label);
+    line.appendChild(value);
+    box.appendChild(line);
+    return { row: row, line: line, value: value };
+  });
+  top.insertBefore(box, face);
+  // Minutes, told plainly: under an hour counts itself, under a day counts
+  // hours and the quarter-hours, and past a day the hours have their say alone.
+  const since = function (at) {
+    if (!(at > 0)) return '-';
+    const minutes = Math.floor((Date.now() / 1000 - at) / 60);
+    if (minutes < 1) return '<1m';
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const mins = minutes % 60;
+    if (days > 0) return days + 'd ' + String(hours).padStart(2, '0') + 'h';
+    if (hours > 0) return hours + 'h ' + String(mins).padStart(2, '0') + 'm';
+    return minutes + 'm';
+  };
+  const paint = function () {
+    for (const cell of cells) cell.value.textContent = since(cell.row.at);
+  };
+  const ask = async function () {
+    let doc = null;
+    try {
+      const res = await fetch('/api/system');
+      if (res.ok) doc = await res.json();
+    } catch (e) { /* the rows keep the last truth they were given */ }
+    if (doc === null || typeof doc !== 'object') return;
+    cells[0].row.at = Number(doc.compiled_at) || 0;
+    cells[1].row.at = Number(doc.webui_at) || 0;
+    cells[0].line.title = 'counted from the moment this binary was compiled' +
+      (typeof doc.compiled === 'string' ? ': ' + doc.compiled : '') + '.';
+    cells[1].line.title = 'counted from the newest page file this server answers with' +
+      (typeof doc.webui_file === 'string' && doc.webui_file ? ': ' + doc.webui_file : '') + '.';
+    paint();
+  };
+  ask();
+  // One minute is the grain of everything shown here: the count is re-asked on
+  // that beat, so a fresh build or an edited page joins the rows within a
+  // minute of the server learning of it, and nothing stirs between minutes.
+  setInterval(ask, 60000);
+})();
+
 // the one alias every page script uses
 const ui = window.ols;

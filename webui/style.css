@@ -3059,9 +3059,9 @@ main.monitor {
    The lit ones burn; the blink of an unset clock only takes the burning away,
    never the segments. */
 #topbar>.clock7 {
-  /* the clock carries the right end of the header now; the config button
-     keeps its place beside it */
-  margin-left: auto;
+  /* the age counts push the clock to the right end now; the clock keeps its
+     place beside them, and the config button beside it */
+  margin-left: 9px;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -3171,6 +3171,49 @@ main.monitor {
 .clock7.blink .c7s.on {
   background: var(--c7-ghost);
   filter: none;
+}
+
+/* The two counts beside the clock, told in minutes: the machine's own ages as
+   the clock's footnotes, not as chips. Small mono type and dim labels, right
+   against the clock they stand beside; the number carries a whisper of its
+   meaning - green for the fix that holds, red for the fault that is fresh -
+   and every count keeps a fixed width of room so the rows never jiggle as the
+   minutes climb. */
+#topbar>.age-stack {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.age-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.age-label {
+  color: var(--fg-dim);
+}
+
+.age-count {
+  min-width: 5ch;
+  color: var(--fg);
+}
+
+.age-row.fix .age-count {
+  color: color-mix(in srgb, var(--ok) 72%, var(--fg));
+}
+
+.age-row.bug .age-count {
+  color: color-mix(in srgb, var(--err) 80%, var(--fg));
 }
 
 .config-panel {

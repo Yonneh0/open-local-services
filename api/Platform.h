@@ -338,6 +338,11 @@ namespace ols
       return buildMoment();
     }
 
+    // The same moment the line above spells, as whole seconds since 1970: a
+    // page that counts up from the build cannot read a date name, but it can
+    // subtract a number. The build writes both together, so they cannot disagree.
+    long long buildMomentSeconds();
+
     // The one line every surface states the version with. A development name is
     // the dev tag and the compile moment only - a development binary carries no
     // commit, its code is a working tree. Any other name is a release build's

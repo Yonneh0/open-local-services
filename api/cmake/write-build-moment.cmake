@@ -6,12 +6,16 @@
 # in the same second as its predecessor says the same truth and costs no
 # recompiling.
 string(TIMESTAMP moment "%b %d %Y %H:%M:%S" UTC)
+string(TIMESTAMP epoch "%s" UTC)
 file(WRITE "${out}.standing"
   "// written fresh by the build - do not edit\n"
   "#include <string>\n"
   "namespace ols { namespace platform {\n"
   "std::string buildMoment()\n{\n"
   "  return \"${moment} UTC\";\n"
+  "}\n"
+  "long long buildMomentSeconds()\n{\n"
+  "  return ${epoch}LL;\n"
   "}\n"
   "} }\n")
 file(SHA256 "${out}.standing" fresh)
