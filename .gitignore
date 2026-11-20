@@ -11,6 +11,8 @@ api/build-nd/
 # the same root for one shape, so a root like api\build-c75 is generated state
 # exactly like every other build root and is never a source.
 api/build-c*/
+# the release path's plain-vulkan cpu root on windows, same generated state.
+api/build-p/
 # the release path's own api build root: kept shallow on the same grounds as
 # the development one, and never a source.
 api/.build/
