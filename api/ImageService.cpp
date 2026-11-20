@@ -4227,7 +4227,7 @@ namespace ols
       const json msValue = beganRun > 0 ? json(steadyMs() - beganRun) : json(nullptr);
       const long long vramBytes = cudaDeviceTotalBytes();
       const json vramValue = vramBytes > 0 ? json(vramBytes) : json(nullptr);
-      const json quantValue = openedForm.empty() ? std::string("as shipped") : json(openedForm);
+      const json quantValue = openedForm.empty() ? json("as shipped") : json(openedForm);
       if (def->video)
       {
         // the clip and the parts of it. The clip is the run's output and what a

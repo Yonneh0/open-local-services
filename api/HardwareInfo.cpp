@@ -386,7 +386,7 @@ namespace ols
       const HMODULE library = LoadLibraryA("nvml.dll");
       auto bind = [](HMODULE module, const char *name) { return reinterpret_cast<void *>(GetProcAddress(module, name)); };
 #else
-      const void *library = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
+      void *library = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
       auto bind = [](void *module, const char *name) { return module ? dlsym(module, name) : nullptr; };
 #endif
       if (library)
