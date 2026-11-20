@@ -614,10 +614,19 @@ if defined CUDA_ON (
   for /f "usebackq tokens=*" %%L in ("!API_ROOT!\ols-deps.txt") do (
     for %%W in (%%L) do (
       if /I "%%~xW"==".dll" (
+        rem the toolkit lays its runtime dlls in bin and its import libraries in
+        rem bin\x64 - the reverse of what this loop used to ask - so both places
+        rem are offered, and the first that holds a name is the one that carries.
         if exist "!CUDA_HOME!\bin\x64\%%W" (
           (findstr /X /C:"%%W" "!RUNTIME_SEEN!" >nul 2>nul) || (
             echo %%W>> "!RUNTIME_SEEN!"
             copy /Y "!CUDA_HOME!\bin\x64\%%W" "!OUT!\" >nul
+            echo   carried: %%W
+          )
+        ) else if exist "!CUDA_HOME!\bin\%%W" (
+          (findstr /X /C:"%%W" "!RUNTIME_SEEN!" >nul 2>nul) || (
+            echo %%W>> "!RUNTIME_SEEN!"
+            copy /Y "!CUDA_HOME!\bin\%%W" "!OUT!\" >nul
             echo   carried: %%W
           )
         )
@@ -633,14 +642,47 @@ if defined CUDA_ON (
   )
 )
 rem a machine that never held visual studio has no microsoft c++ runtime of its
-rem own, and this release runs where nothing was installed - so the compiler's
-rem own redist copies of the three runtime dlls come along beside the binary.
-set REDIST_DIR=!MSVC_BIN!\..\..\..\redist\x64\Microsoft.VCRedist.143
-for %%R in ("vcruntime140.dll" "vcruntime140_1.dll" "msvcp140.dll") do (
-  if exist "!REDIST_DIR!\%%~R" (
-    copy /Y "!REDIST_DIR!\%%~R" "!OUT!\" >nul
+rem own, and this release runs where nothing was installed - so the runtime
+rem dlls come along beside the binary. the studio's own redist folder is asked
+rem first, newest layout wins; where a studio installed its redist into the
+rem system instead of carrying a folder - which is exactly what this box's
+rem v145 studio did - the system's own copy answers, and it is the same
+rem version these binaries were compiled against by that very compiler.
+set REDIST_CRT=
+for /d %%D in ("!VS_ROOT!\VC\Redist\MSVC\*") do (
+  if exist "%%~D\MSVC\x64\Microsoft.VC145.CRT\msvcp140.dll" set REDIST_CRT=%%~D\MSVC\x64\Microsoft.VC145.CRT
+  if exist "%%~D\MSVC\x64\Microsoft.VC143.CRT\msvcp140.dll" set REDIST_CRT=%%~D\MSVC\x64\Microsoft.VC143.CRT
+  if exist "%%~D\redist\x64\Microsoft.VCRedist.143\msvcp140.dll" set REDIST_CRT=%%~D\redist\x64\Microsoft.VCRedist.143
+)
+for %%R in ("vcruntime140.dll" "vcruntime140_1.dll" "msvcp140.dll" "msvcp140_codecvt_ids.dll" "vcomp140.dll") do (
+  if exist "!REDIST_CRT!\%%~R" (
+    copy /Y "!REDIST_CRT!\%%~R" "!OUT!\" >nul
     echo   carried: %%~R
+  ) else if exist "C:\Windows\System32\%%~R" (
+    copy /Y "C:\Windows\System32\%%~R" "!OUT!\" >nul
+    echo   carried: %%~R from the system runtime the compiler installed
   )
+)
+rem the carrying is not done until it is true: every import that a release
+rem machine cannot be assumed to hold must now stand in the folder, checked
+rem after the copies rather than hoped for - a zip that silently lacked its
+rem cublas once went out believing it had one, and only the first machine
+rem without a toolkit noticed.
+for %%R in ("msvcp140.dll" "vcruntime140.dll" "vcruntime140_1.dll" "vcomp140.dll") do (
+  if not exist "!OUT!\%%~R" (
+    echo the release folder holds no %%~R - the redist of !VS_ROOT! did not supply it.
+    exit /b 1
+  )
+)
+if defined CUDA_ON for %%R in ("cudart64_12.dll" "cublas64_12.dll" "cublasLt64_12.dll" "cufft64_11.dll") do (
+  if not exist "!OUT!\%%~R" (
+    echo the cuda release folder holds no %%~R and would not start away from this box.
+    exit /b 1
+  )
+)
+if not exist "!OUT!\espeak-ng-data\phontab" (
+  echo the release folder holds no phonemizer data - the voice doors would have no sounds to speak.
+  exit /b 1
 )
 rem what card architecture a cuda binary really holds is read back off it
 rem rather than trusted from what was asked: the tool that reads it sits beside
