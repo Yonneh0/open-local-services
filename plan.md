@@ -28,6 +28,11 @@ review format. do not edit or remove this format:
 ## 3. Awaiting User Verification
 when work is complete, edit this document, add any additional user guidance received during the session, and move the work item here, when completed.
 
+- The open-models panel answers to two engine marks instead of a pick and a search
+  Prompt: "index, open models panel: remove model-engine select; replace with 2 toggle style buttons, next to the panel header, like network wifi rescan button. toggle buttons should have the image studio and voice studio emoji in the background, with the text \"image\" and \"voice\", respectively / both toggles should default to selected (all models shown) / remove model-search, model-page-line, and supporting code for search/filter"
+  Follow-on guidance: none this session.
+  Changes: webui/index.html - the select, the search field, and the page-line leave the panel; two title hands join the panel's name. webui/monitor.js - the engine pick, the search words, and the whole page cursor (cardPage, drawModelPageCursor, cardFilterWords, cardNarrowWords, cardEmptyWords) are gone: two marks wear by default, each pressing its engine's cards on and off the page from the reading held, every shown card drawn at once, and an empty panel says which marks are pressed down. webui/style.css - .model-toggle wears each engine's studio mark behind its word the way the nav tabs wear theirs. Measured on the live 8765 serve: both marks on stand all cards (the one real model open, sdxl-turbo, drawn); image off leaves voice's card, both off read no model card shows while the picture and spoken marks are pressed down, and pressing back restores every card; aria-pressed and the marks' words follow each press; console clean.
+
 - The key is asked where it is used: every page gates with its own prompt, and the door page is gone
   Prompt: "rework/refactor api key landing: loading / should load index.html / if api key is required, and not present when loading any page; it should gate, with a pop up javascript prompt to input and properly handle the api key. / perform a thorough audit on all api key handling; clean up sloppy code, and dead code."
   Follow-on guidance: none beyond the prompt (sent three times, same words).

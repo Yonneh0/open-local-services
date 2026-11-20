@@ -27,22 +27,10 @@
     </section>
 
     <section class="panel">
-      <div class="panel-title">open models</div>
-      <div class="pill-row">
-        <div class="pill">engine:
-          <select id="model-engine" aria-label="Model engine filter"
-            title="Narrow which models get a card to one engine. The rows inside every card keep their own filter.">
-            <option value="all" title="Cards for models in every engine.">every engine</option>
-            <option value="image" title="Only picture models.">picture only</option>
-            <option value="voice" title="Only spoken renders.">voice only</option>
-          </select>
-        </div>
-        <div class="pill">models:
-          <input id="model-search" aria-label="Search models" placeholder="model name, engine, or port"
-            title="Matches the model name, its engine, or its port, in the cards this page draws.">
-        </div>
+      <div class="panel-title">open models
+        <button class="title-hand model-toggle" id="model-toggle-image" aria-pressed="true">image</button>
+        <button class="title-hand model-toggle" id="model-toggle-voice" aria-pressed="true">voice</button>
       </div>
-      <div class="meta" id="model-page-line"></div>
       <div id="model-cards"></div>
       <div class="meta" id="since"></div>
     </section>

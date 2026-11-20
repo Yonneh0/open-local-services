@@ -20,9 +20,15 @@ const keyStateLine = E('key-state');
 // Whether the press that hands the key has been wired: the door line is
 // redrawn with every reading, and the hand must be hung once.
 let pressWired = false;
-const modelEngineSelect = E('model-engine');
-const modelSearchInput = E('model-search');
-const modelPageLine = E('model-page-line');
+// The two engine marks worn beside the open-models panel's name: each names
+// one engine, and which wear says which engines get model cards here.
+const modelToggles = [
+  { engine: 'image', words: 'picture', node: E('model-toggle-image') },
+  { engine: 'voice', words: 'spoken', node: E('model-toggle-voice') },
+];
+// Both marks wear at the start: every model gets a card until a person takes
+// one engine off the page.
+const engineShown = { image: true, voice: true };
 const logPanel = E('log');
 const logLine = E('log-line');
 const logClear = E('log-clear');
@@ -46,13 +52,6 @@ let pageReads = [];
 // its rows are a window on the work, and the words under it say how wide that
 // window is against what is kept rather than making a reader count them.
 const cardRowsShown = 12;
-
-// The most model cards this page draws at a time. A machine with dozens of models
-// open is not a wall of cards: the set is counted, one part of it is drawn, and
-// the words under it name which part and what the rest is, the same way a card
-// names its rows against what passes the filter.
-const cardPageRows = 12;
-let cardPage = 0;
 
 // The last machine reading this page drew: a reader’s own hand on a bar -
 // opening its facts or its jobs - redraws the panel from this reading, so the
@@ -1756,41 +1755,30 @@ function drawModelCards(snapshot) {
   // says it is not open, so the page never draws one as if it held memory.
   open.sort((a, b) => Number(b.last_started_at || 0) - Number(a.last_started_at || 0));
   kept.sort((a, b) => Number(b.last_started_at || 0) - Number(a.last_started_at || 0));
-  // The panel's own words say which models get a card: an engine and a search
-  // over what a card states. A model that matches nothing typed here is not
-  // drawn as a card with nothing in it, and a set that is larger than one page
-  // is read a page at a time, with the words below naming which part is shown.
-  const named = cardFilterWords();
+  // The two marks beside the panel's name say which engines get a card: both
+  // wear by default, and the whole set a person is looking at stands at once -
+  // this page cuts nothing short.
   const matches = (entry) => {
-    if (named.engine !== '' && engineWords(entry.engine) !== named.engine) return false;
-    if (named.find === '') return true;
-    const words = (String(entry.model) + ' ' + engineWords(entry.engine) + ' ' +
-      String(entry.port || '')).toLowerCase();
-    return words.indexOf(named.find) >= 0;
+    const engine = engineWords(entry.engine);
+    return engine in engineShown ? engineShown[engine] : true;
   };
   const pool = open.concat(kept).filter(matches);
-  // A page a person was reading belongs to the set they were reading. When the
-  // words above change and that page sits past the end of what matches now, the
-  // last page of the new set is what is drawn - the words below name a part that
-  // holds nothing otherwise, and the hands that move back would be the only way
-  // out of a panel that looks empty.
-  if (cardPage >= pool.length)
-    cardPage = Math.max(0, Math.floor((pool.length - 1) / cardPageRows) * cardPageRows);
-  if (!pool.length && (named.engine !== '' || named.find !== '')) {
+  if (!pool.length && models.length) {
+    const hidden = [];
+    if (!engineShown.image) hidden.push('picture');
+    if (!engineShown.voice) hidden.push('spoken');
     const none = document.createElement('div');
     none.className = 'meta';
-    none.textContent = 'No model card matches ' + cardNarrowWords(named).join(' and ') + '.';
-    none.setAttribute('title',
-      'The cards this machine answers about come from the fields above - the engine picked and ' +
-      'the words typed - and none of them match those cards.');
+    none.textContent = hidden.length
+      ? 'No model card shows while the ' + hidden.join(' and ') + ' mark' +
+        (hidden.length > 1 ? 's are' : ' is') + ' pressed down.'
+      : 'No model card matches what this machine named.';
+    none.setAttribute('title', 'Press the mark above to draw that engine again.');
     cardsHost.appendChild(none);
-    drawModelPageCursor(0, 0);
   } else {
-    const drawn = pool.slice(cardPage, cardPage + cardPageRows);
-    for (const entry of drawn) {
+    for (const entry of pool) {
       drawCard(entry, system, history);
     }
-    drawModelPageCursor(pool.length, drawn.length);
   }
   let firstAt = 0;
   for (const job of records) {
@@ -1804,62 +1792,17 @@ function drawModelCards(snapshot) {
     'Each engine keeps its newest ' + engineKeptJobs + ' jobs; older ones are dropped. The oldest kept job started at ' + ui.clock(firstAt) + '.');
 }
 
-// The words the model panel was typed with: one engine, and a search over what a
-// card states. An empty answer means the whole set this machine named.
-function cardFilterWords() {
-  const engine = ui.chosenOption(modelEngineSelect);
-  const chosen = engine && engine !== 'all' ? String(engine) : '';
-  const find = String(modelSearchInput ? modelSearchInput.value : '').trim().toLowerCase();
-  return { engine: chosen, find: find };
-}
-
-// What was actually narrowed above: an empty set names the fields a person moved,
-// so the words point at what narrowed it rather than at words nobody typed.
-function cardNarrowWords(named) {
-  const causes = [];
-  if (named.engine !== '') causes.push('the engine picked above');
-  if (named.find !== '') causes.push('the words typed above');
-  return causes;
-}
-
-function cardEmptyWords() {
-  const causes = cardNarrowWords(cardFilterWords());
-  if (!causes.length) return 'this machine names no models';
-  return 'nothing matches ' + causes.join(' and ');
-}
-
-// Which part of the set is drawn now, and the hands that move through it. The
-// count is this machine's own answer, never a number the page keeps by heart.
-function drawModelPageCursor(total, drawn) {
-  if (!modelPageLine) return;
-  modelPageLine.textContent = '';
-  const words = document.createElement('span');
-  words.textContent = total === 0
-    ? cardEmptyWords()
-    : total + ' model card' + (total === 1 ? ' matches' : 's match') + ' · showing ' +
-    (cardPage + 1) + '-' + (cardPage + drawn);
-  words.title = 'The set is what this machine answers about, narrowed by the words above; this page draws one part of it.';
-  modelPageLine.appendChild(words);
-  const lastPage = Math.max(0, Math.floor((total - 1) / cardPageRows) * cardPageRows);
-  if (cardPage > 0) {
-    modelPageLine.appendChild(ui.fingerAct('back', function () {
-      cardPage = cardPage > cardPageRows ? cardPage - cardPageRows : 0;
-      void (async function () { await refresh(); })();
-    }, 'the page before this one'));
-    modelPageLine.appendChild(ui.fingerAct('first', function () {
-      cardPage = 0;
-      void (async function () { await refresh(); })();
-    }, 'the first page of this set'));
-  }
-  if (cardPage + drawn < total) {
-    modelPageLine.appendChild(ui.fingerAct('next', function () {
-      cardPage = cardPage + cardPageRows;
-      void (async function () { await refresh(); })();
-    }, 'the page after this one'));
-    modelPageLine.appendChild(ui.fingerAct('last', function () {
-      cardPage = lastPage;
-      void (async function () { await refresh(); })();
-    }, 'the last page of this set'));
+// Which way each engine mark wears now: a mark wears while its engine's cards
+// are drawn, and its words say what pressing it will do next.
+function drawEngineMarks() {
+  for (const toggle of modelToggles) {
+    if (!toggle.node) continue;
+    const on = engineShown[toggle.engine];
+    toggle.node.classList.toggle('on', on);
+    toggle.node.setAttribute('aria-pressed', on ? 'true' : 'false');
+    toggle.node.title = on
+      ? toggle.words + ' models wear a card on this page - press to take them off'
+      : toggle.words + ' models are off this page - press to draw them again';
   }
 }
 
@@ -2139,13 +2082,11 @@ async function refresh() {
   drawLog();
 }
 
-// The door page is where a credential is handed over and where a refused visit
-// is walked to; a room never carries its own ask for one.
+// ---------- the whole machine, in one reading ----------
 async function main() {
-  // The doors answer before anything else is read: where the doors stand is
-  // drawn first, so a room that was let through says so beside its rows even
-  // while the machine is still answering, and one that was walked here never
-  // runs this script at all.
+  // The doors' own line and the log are drawn before any reading arrives, so
+  // the page speaks of where it stands even while the machine is still
+  // answering.
   drawKeyState();
   // The record of what the pages said is kept in this browser, so it is drawn
   // whether or not there is a machine to read right now: the lines a page wrote
@@ -2158,6 +2099,18 @@ async function main() {
       drawLog();
     });
   }
+  // The two engine marks beside the panel's name: pressing one takes its
+  // engine's cards off the page or draws them again, from the reading the page
+  // already holds - the answer to the touch is at once.
+  for (const toggle of modelToggles) {
+    if (!toggle.node) continue;
+    ui.onPress(toggle.node, function () {
+      engineShown[toggle.engine] = !engineShown[toggle.engine];
+      drawEngineMarks();
+      if (lastSnapshot) drawModelCards(lastSnapshot);
+    });
+  }
+  drawEngineMarks();
   const kept = ui.lastReading('/api/monitor');
   if (kept && kept.data) {
     paintMachineHeader(kept.data);
