@@ -1,16 +1,22 @@
 // What the silicon itself states about the machine. On Windows this is the
 // operating system's own inventory (WMI), reached through COM exactly as any
 // management tool reaches it - the machine naming its own memory sticks in
-// words, so no byte offset of the firmware table is trusted from a hand that
-// could miscount it. The picture card's speed is asked of the vendor management
-// library, which is loaded only if it stands with the driver; a card that names
-// nothing names nothing here too.
+// words. On Linux the same inventory stands as the firmware's structure table
+// under /sys, and it is walked the way the machine's own dmidecode walks it -
+// a string area ended by the run of zeros the firmware pads, and type-17
+// fields read only at the offsets a real machine has been checked against,
+// with any field a record is too short to hold left unstated. The picture
+// card's speed is asked of the vendor management library, which is loaded only
+// if it stands with the driver; a card that names nothing names nothing here
+// too.
 #include "HardwareInfo.h"
 
 #include <string>
 
 #if defined(__linux__)
 #include <dlfcn.h>
+#include <cstdio>
+#include <vector>
 #endif
 
 #if defined(_WIN32)
@@ -29,6 +35,23 @@ namespace ols
 {
   namespace platform
   {
+    // The firmware names the memory technology with a number. Only the ones
+    // this fleet runs are named in words; an unnamed number says nothing
+    // rather than guessing at the machine.
+    namespace
+    {
+      std::string memoryKind(long long smbiosCode)
+      {
+        switch (smbiosCode)
+        {
+          case 34: return "DDR5";
+          case 26: return "DDR4";
+          case 24: return "DDR3";
+          default: return {};
+        }
+      }
+    } // namespace
+
 #if defined(_WIN32)
     namespace
     {
@@ -87,20 +110,6 @@ namespace ols
           return {};
         const size_t last = out.find_last_not_of(" \t\r\n");
         return out.substr(first, last - first + 1);
-      }
-
-      // The firmware names the memory technology with a number. Only the ones
-      // this fleet runs are named in words; an unnamed number says nothing
-      // rather than guessing at the machine.
-      std::string memoryKind(long long smbiosCode)
-      {
-        switch (smbiosCode)
-        {
-          case 34: return "DDR5";
-          case 26: return "DDR4";
-          case 24: return "DDR3";
-          default: return {};
-        }
       }
 
       MemorySticks queryMemorySticks()
@@ -209,17 +218,148 @@ namespace ols
     } // namespace
 #endif // _WIN32
 
+#if defined(__linux__)
+    namespace
+    {
+      // One file, whole, as bytes; a file the kernel does not offer is no answer.
+      bool readWhole(const char *path, std::string &out)
+      {
+        std::FILE *f = std::fopen(path, "rb");
+        if (!f)
+          return false;
+        char buf[4096];
+        size_t got;
+        out.clear();
+        while ((got = std::fread(buf, 1, sizeof(buf), f)) > 0)
+          out.append(buf, got);
+        const bool good = !ferror(f);
+        std::fclose(f);
+        return good && !out.empty();
+      }
+
+      // The firmware's structure table, walked as its own readers walk it: a
+      // record is its header, a formatted area, and a string area ended by a
+      // run of zeros - two where a record carries no strings, which is how
+      // this fleet's machines pad them. The next record starts at the first
+      // byte after the last zero, so a table is read whole without trusting
+      // any record's shape but its own.
+      MemorySticks readMemorySticks()
+      {
+        MemorySticks result;
+        std::string d;
+        if (!readWhole("/sys/firmware/dmi/tables/DMI", d))
+          return result;
+        const unsigned char *b = reinterpret_cast<const unsigned char *>(d.data());
+        const size_t n = d.size();
+        auto wordAt = [b](size_t at) { return static_cast<long long>(b[at]) | (static_cast<long long>(b[at + 1]) << 8); };
+        auto textAt = [&](size_t at, const std::vector<std::string> &strs) -> std::string {
+          const int index = b[at]; // string areas number their strings from one
+          if (index < 1 || static_cast<size_t>(index) > strs.size())
+            return {};
+          // Firmware carries part numbers in padded fields; the padding is not
+          // part of the number.
+          const std::string &raw = strs[static_cast<size_t>(index) - 1];
+          const size_t first = raw.find_first_not_of(" \t\r\n");
+          if (first == std::string::npos)
+            return {};
+          return raw.substr(first, raw.find_last_not_of(" \t\r\n") - first + 1);
+        };
+
+        size_t i = 0;
+        long long widest = 0; // fastest configured speed any stick states
+        long long top = 0;    // fastest rated speed any stick states
+        bool kindNamed = false;
+        while (i + 4 <= n)
+        {
+          const int type = b[i];
+          const int length = b[i + 1];
+          if (length < 4 || i + static_cast<size_t>(length) > n)
+            break;
+          std::vector<std::string> strs;
+          size_t j = i + static_cast<size_t>(length);
+          while (j < n && b[j] != 0)
+          {
+            const size_t end = d.find('\0', j);
+            strs.push_back(d.substr(j, end - j));
+            j = end + 1;
+          }
+          while (j < n && b[j] == 0)
+            ++j;
+
+          if (type == 17 && length >= 0x17) // a memory device, old enough to hold a speed
+          {
+            // The size word carries its own unit in its top bits, the way this
+            // fleet's firmwares fill it; a word left at zero, unknown, or
+            // "no module" marks an empty place, which adds nothing to the bus.
+            long long sizeMb = 0;
+            const long long w = wordAt(i + 0x0C);
+            if (w != 0 && w != 0x8000 && w != 0xFFFF)
+            {
+              if (w & 0x8000)
+                sizeMb = (w & 0x7FFF) * 1024; // gigabytes
+              else if (w & 0x4000)
+                sizeMb = w & 0x7FFF; // megabytes
+              else
+                sizeMb = (w & 0x7FFF) / 1024; // kilobytes
+            }
+            if (sizeMb > 0 && sizeMb <= 64LL * 1024 * 1024)
+            {
+              ++result.modules;
+              result.bytes += sizeMb * 1048576;
+              const long long width = wordAt(i + 0x0A);
+              if (width > 0 && width != 0xFFFF)
+                result.dataBits += width;
+              const long long rated = wordAt(i + 0x15);
+              if (rated > top)
+                top = rated;
+              // The speed the stick runs at now, where the record is long
+              // enough to state it; where it does not, the rated speed is the
+              // only speed the machine has named for it.
+              const long long running = length >= 0x22 ? wordAt(i + 0x20) : 0;
+              if (running > widest)
+                widest = running;
+              else if (rated > widest && length < 0x22)
+                widest = rated;
+              const std::string kind = memoryKind(b[i + 0x12]);
+              if (!kindNamed && !kind.empty())
+              {
+                result.kind = kind;
+                kindNamed = true;
+              }
+              if (length >= 0x18)
+              {
+                if (result.maker.empty())
+                  result.maker = textAt(i + 0x17, strs);
+                if (length >= 0x1B && result.part.empty())
+                  result.part = textAt(i + 0x1A, strs);
+              }
+            }
+          }
+          i = j;
+        }
+        // What an "Unknown" names is not known; it is kept as no word at all.
+        if (result.maker == "Unknown" || result.maker == "unknown")
+          result.maker.clear();
+        result.configuredMts = widest;
+        result.ratedMts = top;
+        result.ok = result.modules > 0 && result.dataBits > 0 && widest > 0;
+        return result;
+      }
+    } // namespace
+#endif // __linux__
+
     const MemorySticks &memorySticks()
     {
 #if defined(_WIN32)
       static const MemorySticks sticks = queryMemorySticks();
       return sticks;
+#elif defined(__linux__)
+      // The kernel has offered the structure table to root since long enough
+      // for every machine in this fleet; a machine that offers nothing keeps
+      // no rating, and the page says so rather than guessing.
+      static const MemorySticks sticks = readMemorySticks();
+      return sticks;
 #else
-      // Linux keeps the same inventory in the firmware table under /sys, but a
-      // machine has been seen to lay that table out by a different plan than the
-      // one written - so it is not read here by a hand-picked byte until it has
-      // been read whole against a machine that proves the layout. Until then the
-      // Linux memory keeps no rating, and the page says so rather than guessing.
       static const MemorySticks none = {};
       return none;
 #endif
@@ -235,11 +375,13 @@ namespace ols
       // so a machine without an NVIDIA driver simply has no library to load and
       // the card says nothing - the honest reading for an AMD core, whose clocks
       // this server will not guess.
-      using InitFn = int(__cdecl *)();
-      using CountFn = int(__cdecl *)(unsigned *);
-      using HandleFn = int(__cdecl *)(unsigned, void **);
-      using ClockFn = int(__cdecl *)(void *, int, unsigned *);
-      using ShutdownFn = int(__cdecl *)();
+      // The calling convention is the one every x64 platform fixes, so the
+      // pointers are declared plain.
+      using InitFn = int (*)();
+      using CountFn = int (*)(unsigned *);
+      using HandleFn = int (*)(unsigned, void **);
+      using ClockFn = int (*)(void *, int, unsigned *);
+      using ShutdownFn = int (*)();
 #if defined(_WIN32)
       const HMODULE library = LoadLibraryA("nvml.dll");
       auto bind = [](HMODULE module, const char *name) { return reinterpret_cast<void *>(GetProcAddress(module, name)); };
