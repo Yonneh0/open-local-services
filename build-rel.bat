@@ -414,7 +414,12 @@ if /I "!TARGET!"=="cpu-avx512" (
   set SD_ROOT=api\vendor\stable-diffusion.cpp\build
   set API_ROOT=api\build
   set OUT=%REL%\x64-windows
-  set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON
+  rem the instruction-set ceiling for this shape: everything the newest machines
+  rem carry except avx512-bf16, which is not a CPU question at all - the bf16
+  rem kernels of the vendored engines cast through MSVC's strict __m512bh type
+  rem and only compile under gcc. the runtime dispatch still asks the CPU every
+  remaining question; this only says what the compiler here is able to answer.
+  set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
   set AVX512_WANT=ON
   set BACKEND=Vulkan
   exit /b 0
@@ -489,6 +494,7 @@ set CACHE_VERSION=
 set CACHE_SD=
 set CACHE_NATIVE=
 set CACHE_AVX512=
+set CACHE_BF16=
 rem the names are matched on their prefix, not on a type suffix: these
 rem defines are read-not-declared on the CMake side, so the cache types
 rem them as it likes, and only the name before the colon is stable.
@@ -498,6 +504,7 @@ for /f "usebackq tokens=1,* delims==" %%A in ("!API_ROOT!\CMakeCache.txt") do (
   if /I "!CACHE_KEY:~0,12!"=="OLS_SD_BUILD" set CACHE_SD=%%B
   if /I "!CACHE_KEY:~0,12!"=="GGML_NATIVE:" set CACHE_NATIVE=%%B
   if /I "!CACHE_KEY:~0,12!"=="GGML_AVX512:" set CACHE_AVX512=%%B
+  if /I "!CACHE_KEY:~0,17!"=="GGML_AVX512_BF16:" set CACHE_BF16=%%B
 )
 set NEEDS_RENAME=
 if not "!CACHE_VERSION!"=="!CODE_VERSION!" set NEEDS_RENAME=1
@@ -506,9 +513,13 @@ rem the instruction sets this target names are part of what the binary is: the
 rem release asks the cache them too, so a tree the development path left native
 rem is restated for the release rather than released under a name it does not
 rem hold. a tree that carries no answer for a name is a tree that was never
-rem configured, and the configure below is what it needs anyway.
+rem configured, and the configure below is what it needs anyway. the bf16
+rem ceiling is asked by name as well: it moved to off for windows with the
+rem compiler that cannot type it, and a cache holding yesterday's answer is a
+rem cache that would rebuild nothing and release yesterday's ceiling.
 if defined AVX512_WANT if not "!CACHE_NATIVE!"=="OFF" set NEEDS_RENAME=1
 if defined AVX512_WANT if not "!CACHE_AVX512!"=="!AVX512_WANT!" set NEEDS_RENAME=1
+if defined AVX512_WANT if not "!CACHE_BF16!"=="OFF" set NEEDS_RENAME=1
 if defined NEEDS_RENAME (
   rem the version and the image library are names the link answers with; the card
   rem generation is the shape every object was compiled for, and that is asked

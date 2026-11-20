@@ -339,7 +339,11 @@ rem in at every site eventually asks cmd to carry a PATH line longer than the
 rem eight thousand characters cmd can read. a ninja builder needs no PATH
 rem entry either: -DCMAKE_MAKE_PROGRAM hands it over whole, and the build
 rem reads that absolute name from the cache.
-set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON
+rem avx512-bf16 stays off the windows builds like the release script leaves it:
+rem the bf16 kernels of the vendored engines cast through MSVC's strict
+rem __m512bh type and only compile under gcc - a development tree that asked
+rem for them would not build for reasons of compiler, not of chip.
+set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
 set NOVEC_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
 rem the one word the api build takes for a box with no device backend, the way
 rem build-rel.sh names it: the voice engine then carries the cpu backend alone,
