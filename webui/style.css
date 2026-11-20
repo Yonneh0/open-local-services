@@ -476,30 +476,35 @@ body {
   color: var(--fg);
 }
 
-/* The studios' load bubbles: how many models an engine stands in memory, worn
-   on the top-right corner of the studio's tab like an unread mark. The queue
-   clock's amber turned inside out - an amber wash for the face, black for the
-   count - and nothing else, so the mark reads at a glance. Nothing standing,
-   nothing worn; and the bubble is not there to be pressed, so a click on it is
-   a click on the tab it stands on. */
-#nav a .tab-bubble {
+/* The studios' badges: what an engine runs and holds, worn across the
+   top-right corner of the studio's tab like unread marks. Each kind keeps the
+   colour the page already gives that fact: running work wears the clock's
+   amber, waiting work green, models standing in memory red - an amber wash
+   for the face, black for the number, and the panel titles' faint white
+   stroke under the fill so the mark stays legible on any page the tab stands
+   over. Nothing to count, nothing worn; and no badge is there to be pressed,
+   so a click on one is a click on the tab it stands on. */
+#nav a .tab-badges {
   position: absolute;
   top: -9px;
   right: -9px;
   z-index: 1;
   display: flex;
-  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+
+#nav a .tab-bubble {
+  display: flex;
   align-items: center;
+  justify-content: center;
   line-height: 1;
   min-width: 22px;
   padding: 3px 6px;
   border-radius: 999px;
-  background: rgba(255, 158, 46, 0.55);
   color: #000;
+  font-size: 12px;
   text-align: center;
-  /* The panel titles' own trick, thinned for small type: a faint white stroke
-     laid under the black fill, so the words stay legible on any page the tab
-     stands over. */
   -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.5);
   paint-order: stroke fill;
   pointer-events: none;
@@ -509,8 +514,16 @@ body {
   display: none;
 }
 
-#nav a .tab-bubble b {
-  font-size: 12px;
+#nav a .tab-bubble.run {
+  background: rgba(255, 158, 46, 0.55);
+}
+
+#nav a .tab-bubble.queue {
+  background: rgba(79, 192, 141, 0.55);
+}
+
+#nav a .tab-bubble.loaded {
+  background: rgba(226, 86, 79, 0.55);
 }
 
 /* The machine's health is shown rather than written anywhere: the home tab

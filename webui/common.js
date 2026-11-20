@@ -87,11 +87,11 @@
     const unknown = 'Server unreachable: value is unknown, not absent';
     UI.chip(E('chip-cpu'), 'cpu: unknown\nmemory: unknown', 'err', unknown);
     UI.chip(E('chip-gpu'), 'gpu: unknown\nvram: unknown', 'err', unknown);
-    UI.chip(E('chip-jobs'), 'jobs: unknown', 'err', unknown);
-    // An unreachable machine is not a machine holding nothing: the bubbles
-    // simply stop wearing a claim they can no longer read.
-    if (bubbles.image) bubbles.image.hidden = true;
-    if (bubbles.voice) bubbles.voice.hidden = true;
+    // An unreachable machine is not a machine running and holding nothing: the
+    // badges simply stop wearing a claim they can no longer read.
+    for (const key of Object.keys(badges)) {
+      if (badges[key]) badges[key].hidden = true;
+    }
     UI.chip(E('chip-version'), 'code: not read', 'err',
       'The code version (a development build says dev, a released one names its commit) was not ' +
       'read.');
@@ -205,42 +205,84 @@
     if (onlyLoads) UI.serverGlow('loading');
   };
 
-  // ---------- the studios' load bubbles ----------
-  // Each studio wears, on the top-right corner of its tab, how many models its
-  // engine stands in memory - the machine's own count and nothing else, so a
-  // corner mark stays readable at a glance. (What those models weigh is stated
-  // where models are read: the studios and the machine panel.) A studio whose
-  // engine has nothing standing wears nothing at all: the absence is the
-  // message, an unread marker being only worn when there is something to read.
-  // The bubble catches no click: a press on it lands on the tab it stands on,
-  // exactly as it did before the bubble was there. It is painted from the same
-  // merged reading the header chips come from, so a bubble and a chip can never
-  // tell different stories, and an unread machine leaves them silent rather
-  // than inventing a zero.
-  const bubbles = {};
-  const mountBubble = function (kind, href) {
-    const tab = document.querySelector('#nav a[href="' + href + '"]');
-    if (!tab) return null;
-    const bubble = document.createElement('span');
-    bubble.className = 'tab-bubble';
-    bubble.setAttribute('aria-hidden', 'true');
-    bubble.hidden = true;
-    tab.appendChild(bubble);
-    return bubble;
-  };
-  const paintBubble = function (kind, href, count, names, words) {
-    let bubble = bubbles[kind];
-    if (bubble === undefined) bubble = bubbles[kind] = mountBubble(kind, href);
-    if (!bubble) return;
-    if (!(count > 0)) {
-      bubble.hidden = true;
-      return;
+  // ---------- the studios' badges ----------
+  // Each studio wears, across the top-right corner of its tab, what its engine
+  // is doing and holding: the jobs running now (the same orange the header
+  // already draws running work in, so one colour means one thing down the
+  // page), the jobs waiting their turn (green), and the models standing in
+  // memory (red). The numbers are the machine's own - the same job records the
+  // state line reads and the same resident list the machine panel shows - and
+  // the badges copy that stating, claiming nothing of their own. A badge with
+  // nothing to count wears nothing at all: the absence is the message, an
+  // unread mark being only worn when there is something to read. The badges
+  // catch no click: a press on one lands on the tab it stands on, exactly as
+  // it did before they were there. They are painted from the same merged
+  // reading the header is drawn from, so a badge and a line can never tell
+  // different stories, and an unread machine leaves them silent rather than
+  // inventing a zero.
+  const badges = {};
+  const badgeHosts = {};
+  const mountBadge = function (key, href, kind) {
+    let host = badgeHosts[href];
+    if (host === undefined) {
+      const tab = document.querySelector('#nav a[href="' + href + '"]');
+      host = badgeHosts[href] = tab ? tab.appendChild(document.createElement('span')) : null;
+      if (host) {
+        host.className = 'tab-badges';
+        host.setAttribute('aria-hidden', 'true');
+      }
     }
-    bubble.innerHTML = '<b>' + count + '</b>';
-    bubble.hidden = false;
-    bubble.title = words + ': ' + names.join(', ') + '.';
+    if (!host) return null;
+    const badge = document.createElement('span');
+    badge.className = 'tab-bubble ' + kind;
+    badge.hidden = true;
+    host.appendChild(badge);
+    return badge;
   };
-  const engineBubbles = function (system) {
+  const paintBadge = function (key, href, kind, count, tip) {
+    let badge = badges[key];
+    if (badge === undefined) badge = badges[key] = mountBadge(key, href, kind);
+    if (!badge) return;
+    badge.hidden = !(count > 0);
+    badge.textContent = count > 0 ? String(count) : '';
+    if (tip) badge.title = tip;
+  };
+  const jobTip = function (words, jobs) {
+    // Named as the line names them, save the engine word: the badge already
+    // stands on that engine's tab, and identical jobs fold into one count.
+    const counts = {};
+    const seen = [];
+    for (const job of jobs) {
+      const key = UI.jobLabel(job);
+      if (counts[key] === undefined) { counts[key] = 0; seen.push(key); }
+      counts[key] += 1;
+    }
+    let tip = words + ': ' + seen.map(function (key) {
+      return counts[key] > 1 ? key + ' ×' + counts[key] : key;
+    }).join(', ') + '.';
+    if (jobs.length === 1 && Number(jobs[0].max || 0) > 0) {
+      tip += '\nstep ' + Number(jobs[0].done || 0) + ' of ' + Number(jobs[0].max) + '.';
+    }
+    return tip;
+  };
+  const engineBadges = function (system, jobs) {
+    const runs = Array.isArray(jobs) ? jobs : [];
+    const of = function (engine, state) {
+      return runs.filter((j) => UI.jobEngine(j) === engine && j.state === state);
+    };
+    // Across the corner, left to right: what runs now, what waits, what
+    // stands in memory.
+    for (const studio of [
+      ['image', 'imagegen.html', 'Picture'],
+      ['voice', 'voice.html', 'Voice'],
+    ]) {
+      const running = of(studio[0], 'running');
+      paintBadge(studio[0] + ':run', studio[1], 'run', running.length,
+        running.length ? jobTip(studio[2] + ' jobs running now', running) : '');
+      const waiting = of(studio[0], 'queued');
+      paintBadge(studio[0] + ':queue', studio[1], 'queue', waiting.length,
+        waiting.length ? jobTip(studio[2] + ' jobs waiting their turn', waiting) : '');
+    }
     const weights = (system.loaded && system.loaded.loaded) ? system.loaded : {};
     const resident = Array.isArray(weights.resident) ? weights.resident : [];
     const imageNames = [];
@@ -250,24 +292,23 @@
     if (!resident.length && Array.isArray(weights.loaded)) {
       for (const model of weights.loaded) imageNames.push(String(model));
     }
-    paintBubble('image', 'imagegen.html', imageNames.length, imageNames,
-      'Picture models standing in memory');
-    const voice = system.voice || {};
-    const standing = Array.isArray(voice.open_models) ? voice.open_models.map(String) : [];
-    paintBubble('voice', 'voice.html', standing.length, standing,
-      'Voice models standing in memory');
+    paintBadge('image:loaded', 'imagegen.html', 'loaded', imageNames.length,
+      imageNames.length ? 'Picture models standing in memory: ' + imageNames.join(', ') + '.' : '');
+    const standing = Array.isArray((system.voice || {}).open_models)
+      ? system.voice.open_models.map(String) : [];
+    paintBadge('voice:loaded', 'voice.html', 'loaded', standing.length,
+      standing.length ? 'Voice models standing in memory: ' + standing.join(', ') + '.' : '');
   };
 
-  // The standard header chips from a merged /api/monitor reading, identical on
+  // The standard header badges from a merged /api/monitor reading, identical on
   // every page: CPU and machine memory (two rows in the cpu chip), GPU and its
-  // memory (two rows in the gpu chip), and jobs running. What the engines hold
-  // open in memory is no longer a header word - each studio tab wears that
-  // count as its own bubble, mounted below. Only ever drawn from a valid
+  // memory (two rows in the gpu chip). What the engines run and hold is worn
+  // on the studio tabs as badges, mounted below. Only ever drawn from a valid
   // reading - live, or a copy this browser kept while it still described the
   // machine.
   UI.monitorChrome = function (snapshot) {
     const system = (snapshot && snapshot.system) || {};
-    engineBubbles(system);
+    engineBadges(system, snapshot && snapshot.jobs);
 
     const poolPercent = function (used, total) {
       return total > 0 ? Math.round((used / total) * 100) : 0;
@@ -306,14 +347,6 @@
       gpu ? 'The GPU this server sees and its driver report, with memory usage for that device — read from the machine, not the browser.'
         : 'No GPU driver was found on this machine.',
       (gpu && vramTotal) ? poolPercent(vramTotal - Number(gpu.free_bytes || 0), vramTotal) : 0);
-
-    const jobs = (snapshot && Array.isArray(snapshot.jobs)) ? snapshot.jobs : [];
-
-    const active = jobs.filter((j) => j.state === 'running');
-    UI.chip(E('chip-jobs'),
-      active.length + ' running',
-      active.length ? 'warn' : 'ok',
-      'Jobs every engine currently has running — read from the machine now.');
 
     // The code version, exactly as the build named it: a development build is
     // the dev tag and carries its compile time only - its code is a working
@@ -1305,30 +1338,15 @@
     ['imagegen.html', 'image studio', 'Generate images: models, prompts, gallery.'],
     ['voice.html', 'voice studio', 'Speak text with the audio.cpp engines: voices, models, renders.'],
   ];
-  // The header carries only what every page needs about the work: what the
-  // engines are doing. What they hold open in memory is not a header word -
-  // each studio tab wears that count as its own bubble, and what an engine
-  // stands in memory is stated where it is used. The machine's own badges - its
-  // cpu, its gpu, the code it runs - are the home page's machine panel, and
-  // that page's own markup carries them; where no such element stands, the
-  // readings for them are simply not drawn.
-  const CHIPS = [
-    ['chip-jobs', 'jobs: not read'],
-  ];
-
+  // The header carries only the line naming the work going on. What each
+  // engine runs and holds is worn on its studio's tab as badges, and the
+  // machine's own badges - its cpu, its gpu, the code it runs - are the home
+  // page's machine panel, whose own markup carries them; where no such element
+  // stands, the readings for them are simply not drawn.
   UI.mountPageChrome = function () {
     if (E('topbar') || !document.body) return;
     const at = location.pathname.lastIndexOf('/');
     const served = at === location.pathname.length - 1 ? 'index.html' : location.pathname.slice(at + 1);
-    let chips = '';
-    for (const chip of CHIPS) {
-      const lines = chip[1].split('\n');
-      let rows = '';
-      for (const line of lines) {
-        rows += '<span class="cr">' + line + '</span>';
-      }
-      chips += '  <span class="chip" id="' + chip[0] + '">' + rows + '</span>\n';
-    }
     let links = '';
     for (const link of NAV) {
       const current = link[0] === served;
@@ -1338,7 +1356,6 @@
     document.body.insertAdjacentHTML('afterbegin',
       '<header id="topbar">\n' +
       '  <span class="brand">open-local-services</span>\n' +
-      chips +
       '  <span class="head-status" id="head-status">nothing running</span>\n' +
       '</header>\n' +
       '<nav id="nav">\n' + links + '</nav>');
