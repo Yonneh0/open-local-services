@@ -28,7 +28,15 @@ build-rel.sh            # Linux release artifacts
 
 The development scripts build missing parts, then start the server. Pass `build` to stop before starting. `run.bat` accepts `vulkan`, `cuda`, `nodevice`, `key=`, `rate=`, `arch=`, and `fresh-full-rebuild`. With no shape word it reads the machine: a CUDA toolkit and a named card build the CUDA shape, a Vulkan SDK alone builds the Vulkan shape, and neither at all builds with no device backend. `run.sh` accepts `build`, `key=`, `rate=`, and `fresh-full-rebuild`.
 
-Release builds require committed `api/` and `webui/` changes. They write finished binaries into `Release/<target>/` with `build-info.txt`.
+## How a release works
+
+There is no release server here, no pipeline, and no version numbers — that is the whole design. **The version is the commit hash**, and the code it names is what gets stamped into the binary; nothing else publishes or deploys anything.
+
+1. **Commit first.** A release build refuses an uncommitted `api/` or `webui/` — a binary stamped with an older commit than the code inside it would lie about what it is.
+2. **Build the shapes.** `build-rel.bat` builds the Windows targets, `build-rel.sh` the Linux ones. Each target is one machine's shape, stated at its configure rather than left to the machine that compiled it: the CPU shapes (up to AVX-512, or plain AVX2 — both carrying the Vulkan backend) and one CUDA binary per card generation (`sm_70`, `sm_75`, `sm_86`). Every finished binary carries the commit inside it, and a CUDA binary's card generation is read back off the artifact rather than trusted from what was asked.
+3. **Each finished folder ships as one archive** — `Release/open-local-services-<commit>-win-<target>.zip`, or `…-linux-<target>.tar.gz` — and its sha256 goes into `Release/SHA256SUMS.txt`. `build-info.txt` names the commit, the toolchain, and the pinned engine sources everything was built from. The archives are what carry between machines; the build scripts never commit anything themselves, but they name any archive git has not been shown yet, because here the repository is the release and what is committed is what runs.
+4. **A machine that compiles nothing opens one archive and runs it.** Inside: the server with the voice engine compiled in, the image engine beside it, the phonemizer data, and a `webui/` folder served live the way the development tree's is. CUDA artifacts carry the CUDA runtime their binaries really import, and Windows artifacts the Microsoft C++ runtime, read off their import tables rather than guessed at. A `weights/` folder, a `data/` folder, and a `.env` beside the binary are the same folders and file the development tree uses.
+5. **Built for one place, run anywhere of its kind.** The CPU part of every binary is baseline-plus-runtime-detection, so an artifact built on an AVX-512 machine runs untouched on one that has never seen it. Linux artifacts state the newest glibc symbol they ask for, and are built on the same Ubuntu release as the machines that will run them.
 
 ## Access
 
