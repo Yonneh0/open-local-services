@@ -54,6 +54,11 @@ review format. do not edit or remove this format:
 ## 3. Awaiting User Verification
 when work is complete, edit this document, add any additional user guidance received during the session, and move the work item here, when completed.
 
+- The blinking 12:00 keeps a random heartbeat
+  Prompt: "next up- update the clock blink rate slightly: when blinking 12:00, make it on for a random full interger duration between 1 and 5s, (1s, 2s, 3s, 4s, or 5s) off for 1s"
+  Follow-on guidance: none.
+  Changes: the corner clock's fixed 3s/900ms interval became a self-scheduling beat: awake a whole number of seconds drawn anew 1 to 5, dark a full second, drawn afresh each round. The queue's colon keeps its three-second rhythm and 900ms dark untouched (the user's beat belongs to the hour nobody set); a set clock idle still never blinks - and a blink already on its way has no right to fall on a clock tapped set in the meantime, so the mode is re-asked as it strikes. Observed through the browser on both machines: awake draws of 3, 2, and 4 seconds and darks measured 1008/1004/1010 ms; set-clock watch of 14 s stayed lit; console clean. common.js only - live from disk on both, no rebuild.
+
 - The browser's tab names the machine and its shape
   Prompt: "quick webui fix: update all pages to display hostname and platform in title, instead of \"open-local-services\"; retain separate icon depending on selected tab. tabs should read `X1 (win-vulkan)`, `MSI (win-cuda)`, `UM780 (linux-cuda)`"
   Follow-on guidance: "platform should contain basic version info: win11, ubuntu-server-26.10, backend too - cuda architecture (cuda70, cuda75, cuda86), likewise for vulkan, cpu, etc" / "hostname should be capitalized on both platforms".

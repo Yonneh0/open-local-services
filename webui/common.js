@@ -1475,18 +1475,32 @@
     paint(('   ' + hour + String(now.getMinutes()).padStart(2, '0')).slice(-4));
   };
   show();
-  // Every three seconds something gives way to its ghosts for a moment - the
-  // segments stay standing, only the light leaves them. What blinks is the
-  // mode that says so: an unset clock dims its whole face and holds its colon
-  // burning the way a stove does; a working queue keeps its count lit and lets
-  // the colon go dark instead, because the thing to notice there is that the
+  // Something gives way to its ghosts on the beat and the light comes back -
+  // the segments stay standing, only the light leaves them. An unset clock
+  // holds awake a random whole number of seconds - one to five, drawn afresh
+  // each time, the way a stove's coal gives - then stands dark a full second.
+  // A working queue keeps its count lit and lets the colon go dark every
+  // three seconds instead, because the thing to notice there is that the
   // time is counting, not that the hour is unknown. A set clock idle does not
   // blink at all.
-  setInterval(() => {
-    if (!drainHolds() && isSet()) { face.classList.remove('blink'); return; }
-    face.classList.add('blink');
-    setTimeout(() => face.classList.remove('blink'), 900);
-  }, 3000);
+  const beat = function () {
+    const queue = drainHolds();
+    if (!queue && isSet()) { setTimeout(beat, 1000); return; }
+    const awake = queue ? 3000 : (1 + Math.floor(Math.random() * 5)) * 1000;
+    setTimeout(() => {
+      // The hour may have been set while this beat was on its way: a blink
+      // asked for by a clock nobody set has no right to fall on one that is
+      // now set, so the mode is asked again as it strikes, not only as it
+      // was scheduled.
+      if (!queue && isSet()) { beat(); return; }
+      face.classList.add('blink');
+      setTimeout(() => {
+        face.classList.remove('blink');
+        beat();
+      }, queue ? 900 : 1000);
+    }, awake);
+  };
+  beat();
   setInterval(show, 1000);
   face.addEventListener('click', () => {
     try { localStorage.setItem(KEY, isSet() ? '0' : '1'); } catch (e) { }
