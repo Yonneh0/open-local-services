@@ -211,7 +211,14 @@ namespace ols
         long long seconds = -1;
         if (running && max > 0 && done >= 1 && done < max)
         {
-          seconds = (max - done) * held / done;
+          // A pace is a guess that scales the rest of a window by the time the
+          // job has stood, and it is trusted no further than the machine's own
+          // cost of a whole job: an engine that starts its count over inside
+          // one window, or a wall clock that steps between two readings, can
+          // otherwise make up hours this machine has never spent. A day is the
+          // most any one job may claim toward the queue's time.
+          const long long pace = (max - done) * held / done;
+          seconds = pace > 86400 ? 86400 : pace;
         }
         else
         {

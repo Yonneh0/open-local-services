@@ -115,10 +115,13 @@
   function spanWords(seconds) {
     const s = Math.round(Number(seconds) || 0);
     if (s < 60) return s + ' s';
-    if (s < 3600) return Math.round(s / 60) + ' min';
-    const h = Math.floor(s / 3600);
-    const m = Math.round((s - h * 3600) / 60);
-    return h + ' h' + (m > 0 ? ' ' + m + ' min' : '');
+    let h = Math.floor(s / 3600);
+    let m = h > 0 ? Math.round((s - h * 3600) / 60) : Math.round(s / 60);
+    // A rounded minute that lands on sixty is the next hour standing in its
+    // clothes: carry it, so no reading ever claims sixty minutes of an hour.
+    if (m >= 60) { h += 1; m = 0; }
+    if (h > 0) return h + ' h' + (m > 0 ? ' ' + m + ' min' : '');
+    return m + ' min';
   }
 
   // Header state from the merged snapshot: the bar tracks only counted work
@@ -1446,9 +1449,10 @@
     if (drain.left === null)
       return 'the queue is working, and this machine has stated no cost yet to set a clock against.';
     const total = Math.round(drain.left);
-    const h = Math.floor(total / 3600);
-    const m = Math.round((total - h * 3600) / 60);
-    const left = h > 0 ? h + ' h ' + m + ' min' : (m > 0 ? m + ' min' : 'under a minute');
+    let h = Math.floor(total / 3600);
+    let m = Math.round((total - h * 3600) / 60);
+    if (m >= 60) { h += 1; m = 0; }
+    const left = h > 0 ? h + ' h' + (m > 0 ? ' ' + m + ' min' : '') : (m > 0 ? m + ' min' : 'under a minute');
     let line = 'the queue is working: ' + drain.standing + ' job' + (drain.standing > 1 ? 's' : '') +
       ' · about ' + left + ' to go, at what this machine states its work costs';
     if (drain.unmeasured > 0) line += ' · ' + drain.unmeasured + ' it cannot yet weigh';

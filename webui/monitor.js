@@ -116,7 +116,9 @@ function longSeconds(seconds) {
   if (secs < 60) return secs + 's';
   const minutes = Math.round(secs / 60);
   if (minutes < 60) return minutes + 'm';
-  return Math.round(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+  // The hour is only ever what the minutes hold: rounding it from the total
+  // would say 2h of a stretch that ran for ninety minutes.
+  return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
 }
 
 // Speech is stated to the tenth of a second, the finest the engine names: a
