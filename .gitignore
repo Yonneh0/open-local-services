@@ -46,9 +46,9 @@ vendor/
 #   - cuda archives stay out wherever the tree clones: cuBLAS, cuBLASLt and
 #     cuFFT measure some 800 MB compressed per CUDA shape, and GitHub refuses
 #     any single file past 100 MB outright. they live beside the tree, carry
-#     their sha256 in the committed SHA256SUMS.txt, and reach a machine over
-#     the link - a clone can hold the source of every artifact, not the
-#     heaviest artifacts themselves.
+#     their sha256 in the committed SHA256SUMS-<os>.txt manifest, and reach a
+#     machine over the link - a clone can hold the source of every artifact,
+#     not the heaviest artifacts themselves.
 #   - the vulkan and cpu archives (~50 MB) fit both bounds and are committed.
 # build-info.txt beside them names the commit everything was made from.
 Release/*/

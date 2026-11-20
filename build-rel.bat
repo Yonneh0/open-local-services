@@ -63,7 +63,7 @@ rem      code would lie about what it is.
 rem   2. this script builds each shape and stamps the binary with that commit.
 rem      the commit hash is the version - the only version this project has.
 rem   3. each finished folder is written beside the source as one zip, together
-rem      with its sha256 in Release\SHA256SUMS.txt, and the archives are
+rem      with its sha256 in Release\SHA256SUMS-win.txt, and the archives are
 rem      committed. the repository is the release: what is on a machine is what
 rem      the tree says it is, and nothing else publishes anything.
 rem   4. a machine that compiles nothing takes one archive, opens it where it
@@ -113,7 +113,7 @@ if not exist "%REL%" mkdir "%REL%"
 rem each run writes the archives of the artifacts and the hashes of those
 rem archives: one file per target to push over the network, and one file that
 rem says what the bytes of every one of them are.
-if exist "%REL%\SHA256SUMS.txt" del "%REL%\SHA256SUMS.txt"
+if exist "%REL%\SHA256SUMS-win.txt" del "%REL%\SHA256SUMS-win.txt"
 
 rem the exact vendor commits this code is written against - the same names run.bat
 rem carries, so an artifact is the source the running server runs.
@@ -345,7 +345,7 @@ rem what the artifacts carry, in the note the README points at
   echo.
   echo the release of each target is one zip beside this file, named for the
   echo commit its binary carries - open-local-services-!CODE_VERSION:~0,7!-win-^<folder^>.zip -
-  echo and the sha256 of every zip stands in Release\SHA256SUMS.txt. inside
+  echo and the sha256 of every zip stands in Release\SHA256SUMS-win.txt. inside
   echo each folder: the cuda runtime the binaries really import and the
   echo microsoft c++ runtime, carried beside the server rather than left to
   echo the machine that receives it, and a webui folder served live the way
@@ -680,7 +680,7 @@ rem the release of this target is one archive: the folder just above, named for
 rem the commit its binary carries. that file is what gets committed beside the
 rem source, what gets put on a machine, and what that machine opens where it
 rem stands and runs - no builder, no installer, nothing fetched from anywhere.
-rem its sha256 goes into the release's own SHA256SUMS.txt, so a copy that
+rem its sha256 goes into the release's own SHA256SUMS-win.txt, so a copy that
 rem arrived changed reads as changed before anyone runs it.
 for %%P in ("!OUT!") do set OUT_NAME=%%~nP
 set ARCHIVE=%REL%\open-local-services-!CODE_VERSION:~0,7!-win-!OUT_NAME!.zip
@@ -697,7 +697,7 @@ if not defined ARCH_HASH (
   echo could not read the sha256 of !ARCHIVE! - certutil answered with nothing.
   exit /b 1
 )
-echo !ARCH_HASH!  open-local-services-!CODE_VERSION:~0,7!-win-!OUT_NAME!.zip>> "%REL%\SHA256SUMS.txt"
+echo !ARCH_HASH!  open-local-services-!CODE_VERSION:~0,7!-win-!OUT_NAME!.zip>> "%REL%\SHA256SUMS-win.txt"
 echo wrote !ARCHIVE!
 
 exit /b 0

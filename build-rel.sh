@@ -66,7 +66,7 @@
 #   2. this script builds each shape and stamps the binary with that commit.
 #      the commit hash is the version - the only version this project has.
 #   3. each finished folder is written beside the source as one tar.gz,
-#      together with its sha256 in Release/SHA256SUMS.txt, and the archives
+#      together with its sha256 in Release/SHA256SUMS-linux.txt, and the archives
 #      are committed. the repository is the release: what is on a machine is
 #      what the tree says it is, and nothing else publishes anything.
 #   4. a machine that compiles nothing takes one archive, opens it where it
@@ -117,7 +117,7 @@ VERSION7=$(echo "$CODE_VERSION" | cut -c1-7)
 # each run writes the archives of the artifacts and the hashes of those
 # archives: one file per target to push over the network, and one file that
 # says what the bytes of every one of them are.
-rm -f Release/SHA256SUMS.txt
+rm -f Release/SHA256SUMS-linux.txt
 
 # the exact vendor commits this code is written against - the same names run.sh
 # carries, so an artifact is the source the running server runs.
@@ -569,7 +569,7 @@ for SPEC in $PLAN; do
   # named for the commit its binary carries. that file is what gets committed
   # beside the source, what is put on a machine, and what that machine opens
   # where it stands and runs - no builder, no installer, nothing fetched from
-  # anywhere. its sha256 joins the release's own SHA256SUMS.txt, so a copy
+  # anywhere. its sha256 joins the release's own SHA256SUMS-linux.txt, so a copy
   # whose bytes changed on the way reads as changed before anyone runs it.
   if [ -f "$REL/$TARGET/open-local-services" ]; then
     # the target already names itself with its os word - linux-x86_64-cuda-70 -
@@ -578,7 +578,7 @@ for SPEC in $PLAN; do
     ARCHIVE_NAME=open-local-services-$VERSION7-$TARGET.tar.gz
     rm -f "$REL/$ARCHIVE_NAME"
     if tar -c -z -f "$REL/$ARCHIVE_NAME" -C "$REL" "$TARGET"; then
-      ( cd "$REL" && sha256sum "$ARCHIVE_NAME" >> SHA256SUMS.txt )
+      ( cd "$REL" && sha256sum "$ARCHIVE_NAME" >> SHA256SUMS-linux.txt )
       echo "wrote Release/$ARCHIVE_NAME"
     else
       echo "could not write the archive for $TARGET - the folder stands, unarchived."
@@ -602,7 +602,7 @@ done
   echo ""
   echo "the release of each target is one archive beside this file, named for"
   echo "the commit its binary carries - open-local-services-$VERSION7-linux-<target>.tar.gz -"
-  echo "and the sha256 of every archive stands in SHA256SUMS.txt. inside each:"
+  echo "and the sha256 of every archive stands in SHA256SUMS-linux.txt. inside each:"
   echo "the binary, the image engine beside it, the cuda runtime it really"
   echo "imports, the phonemizer data, and the webui folder it serves from disk."
   echo "open such a folder where it stands and run it; nothing is compiled and"
