@@ -1895,8 +1895,8 @@ function jobPanel(engine, model, table, run) {
       : (chosen.done !== undefined && chosen.done !== null ? whole(chosen.done) + ' answered · its window is not stated' : '')],
     ['bytes', String(chosen.kind) === 'download' && Number(chosen.bytes || 0) > 0
       ? ui.sizeText(chosen.bytes) + (Number(chosen.total_bytes || 0) > 0 ? ' of ' + ui.sizeText(chosen.total_bytes) : '') +
-        (Number(chosen.speed || 0) > 0 ? ' · ' + byteRate(chosen.speed) + ' last round · ' + byteRate(chosen.avg) + ' average' : '') +
-        (chosen.file ? ' · ' + String(chosen.file) : '')
+      (Number(chosen.speed || 0) > 0 ? ' · ' + byteRate(chosen.speed) + ' last round · ' + byteRate(chosen.avg) + ' average' : '') +
+      (chosen.file ? ' · ' + String(chosen.file) : '')
       : ''],
     ['asked', ui.clock(asked)],
     ['ended', ui.clock(chosen.ended_at)],

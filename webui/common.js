@@ -1367,8 +1367,10 @@
 (function mountClock() {
   const top = document.getElementById('topbar');
   if (!top) return;
-  const SEG = { '0': 'abcdef', '1': 'bc', '2': 'abged', '3': 'abgcd', '4': 'afgbc',
-    '5': 'afgcd', '6': 'afgedc', '7': 'abc', '8': 'abcdefg', '9': 'abcfgd', ' ': '' };
+  const SEG = {
+    '0': 'abcdef', '1': 'bc', '2': 'abged', '3': 'abgcd', '4': 'afgbc',
+    '5': 'afgcd', '6': 'afgedc', '7': 'abc', '8': 'abcdefg', '9': 'abcfgd', ' ': ''
+  };
   const KEY = 'ols-clock-set';
   const isSet = () => { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } };
   const four = [];

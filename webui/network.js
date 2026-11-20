@@ -123,7 +123,7 @@
     const words = String(answer.words || 'the machine said nothing');
     ui.log('net: ' + words, answer.did ? 'ok' : 'err');
     ui.toastPush(oneLiner(words, 180), answer.did ? 'ok' : 'err', 12);
-    refresh().catch(function () {});
+    refresh().catch(function () { });
     return answer;
   }
 
@@ -145,7 +145,7 @@
     return {
       yes: false,
       why: 'this server runs as a plain person: changing a setting belongs to the ' +
-           "machine's manager",
+        "machine's manager",
     };
   }
 
@@ -196,14 +196,16 @@
   function adapterShape(adapters) {
     return adapters.map(function (adapter) {
       return String(adapter.name) + '' + (adapter.admin ? 'a' : 'A') +
-             String(adapter.oper) + '' + (snapshot && snapshot.elevated ? 'e' : 'x');
+        String(adapter.oper) + '' + (snapshot && snapshot.elevated ? 'e' : 'x');
     }).join('');
   }
 
   function kindChip(kind) {
-    const words = { ethernet: 'ethernet', wifi: 'wifi', bond: 'bond', vlan: 'vlan',
-                    bridge: 'bridge', tunnel: 'tunnel', virtual: 'virtual',
-                    loopback: 'loopback' };
+    const words = {
+      ethernet: 'ethernet', wifi: 'wifi', bond: 'bond', vlan: 'vlan',
+      bridge: 'bridge', tunnel: 'tunnel', virtual: 'virtual',
+      loopback: 'loopback'
+    };
     return el('span', 'net-kind net-kind-' + kind, words[kind] || kind || 'link');
   }
 
@@ -277,14 +279,14 @@
     const linkDown = adapter.admin === false || adapter.oper !== 'up';
     powerRow.appendChild(linkDown
       ? hand('bring up', 'ok', 'the machine puts the link back in service',
-             function () { ask({ action: 'adapter_up', name: name }, 'asking the machine to bring ' + name + ' up'); },
-             !gate.yes, gate.why)
+        function () { ask({ action: 'adapter_up', name: name }, 'asking the machine to bring ' + name + ' up'); },
+        !gate.yes, gate.why)
       : hand('take down', 'err', 'the machine takes the link out of service - nothing flows until it is brought back',
-             function () {
-               if (!window.confirm('Take ' + name + ' down? Everything running through it stops.')) return;
-               ask({ action: 'adapter_down', name: name }, 'asking the machine to take ' + name + ' down');
-             },
-             !gate.yes, gate.why));
+        function () {
+          if (!window.confirm('Take ' + name + ' down? Everything running through it stops.')) return;
+          ask({ action: 'adapter_down', name: name }, 'asking the machine to take ' + name + ' down');
+        },
+        !gate.yes, gate.why));
     formBody.appendChild(powerRow);
 
     const mtuForm = el('div', 'net-row');
@@ -320,7 +322,7 @@
       if (/^[0-9a-fA-F:]+$/.test(String(addr.value)) && addr.value.indexOf(':') >= 0 && formMemory['prefix:' + name] === '24')
         formMemory['prefix:' + name] = '64';
     });
-    mode.addEventListener('change', function () {});
+    mode.addEventListener('change', function () { });
     ipForm.appendChild(hand('apply addresses', null, 'one by one, the machine applies these; anything it refuses comes back in its own words', function () {
       const body = {
         action: 'ip_set',
@@ -409,12 +411,12 @@
     fact(refs.rows.dns, 'dns', dnsWords || (adapter.dns_suffix ? 'suffix ' + adapter.dns_suffix : 'not stated'));
     const stats = adapter.stats || {};
     fact(refs.rows.stats, 'since boot',
-         ui.sizeText(Number(stats.rx_bytes) || 0) + ' in · ' + ui.sizeText(Number(stats.tx_bytes) || 0) + ' out · ' +
-         (Number(stats.rx_packets) || 0).toLocaleString() + '/' + (Number(stats.tx_packets) || 0).toLocaleString() + ' packets' +
-         ((Number(stats.rx_errors) || 0) + (Number(stats.tx_errors) || 0)
-           ? ' · ' + (Number(stats.rx_errors) || 0) + '/' + (Number(stats.tx_errors) || 0) + ' errors' : '') +
-         ((Number(stats.rx_dropped) || 0) + (Number(stats.tx_dropped) || 0)
-           ? ' · ' + (Number(stats.rx_dropped) || 0) + '/' + (Number(stats.tx_dropped) || 0) + ' dropped' : ''));
+      ui.sizeText(Number(stats.rx_bytes) || 0) + ' in · ' + ui.sizeText(Number(stats.tx_bytes) || 0) + ' out · ' +
+      (Number(stats.rx_packets) || 0).toLocaleString() + '/' + (Number(stats.tx_packets) || 0).toLocaleString() + ' packets' +
+      ((Number(stats.rx_errors) || 0) + (Number(stats.tx_errors) || 0)
+        ? ' · ' + (Number(stats.rx_errors) || 0) + '/' + (Number(stats.tx_errors) || 0) + ' errors' : '') +
+      ((Number(stats.rx_dropped) || 0) + (Number(stats.tx_dropped) || 0)
+        ? ' · ' + (Number(stats.rx_dropped) || 0) + '/' + (Number(stats.tx_dropped) || 0) + ' dropped' : ''));
   }
 
   // ---------- wifi ----------
@@ -595,7 +597,7 @@
         (Number(network.max_rate) > 0 ? network.max_rate + ' M' : ''));
       if (Number(network.max_rate) > 0)
         rateCell.title = 'the machine names this network’s frame ladder at ' + network.max_rate +
-                         ' Mbps; the radio type says what it really speaks';
+          ' Mbps; the radio type says what it really speaks';
       row.appendChild(rateCell);
       const actions = el('span', 'net-row-actions');
       actions.appendChild(hand('join', null, 'fills the join form with this network; the machine still asks for the right key', function () {
@@ -719,7 +721,7 @@
     title.appendChild(el('span', 'net-section-name', 'what this machine will let this server change'));
     title.appendChild(el('span', 'chip ' + (doc.elevated ? 'ok' : 'warn'),
       doc.elevated ? (doc.platform === 'windows' ? 'the manager: yes' : 'root: yes')
-                   : (doc.platform === 'windows' ? 'the manager: no - settings are read-only from here' : 'root: no - settings are read-only from here')));
+        : (doc.platform === 'windows' ? 'the manager: no - settings are read-only from here' : 'root: no - settings are read-only from here')));
     featuresBox.appendChild(title);
     const chips = el('div', 'machine-chips');
     featureChip(chips, 'wifi', features.wifi, features.wifi_reason);
@@ -746,7 +748,7 @@
     } else {
       const state = sharing.active === true ? 'is sharing now'
         : sharing.active === false ? 'is not sharing'
-        : 'has not said whether it is sharing';
+          : 'has not said whether it is sharing';
       sharingBox.appendChild(el('div', 'meta', state + (sharing.mode ? ' · ' + sharing.mode : '') +
         (sharing.service ? ' · service ' + sharing.service : '')));
       const candidates = (doc.adapters || []).filter(function (a) { return a.kind !== 'loopback' && !a.master; });
@@ -903,8 +905,8 @@
     const blockedWifi = ((doc.wifi && doc.wifi.blocked) || []).length > 0;
     ui.chip(wifiChip,
       blockedWifi ? 'wifi: radio blocked'
-      : connected.length ? 'wifi: ' + oneLiner(connected[0].ssid || 'a network', 28) + (Number(connected[0].signal) >= 0 ? ' · ' + connected[0].signal + '%' : '')
-      : ifaces.length ? 'wifi: not connected' : 'wifi: none',
+        : connected.length ? 'wifi: ' + oneLiner(connected[0].ssid || 'a network', 28) + (Number(connected[0].signal) >= 0 ? ' · ' + connected[0].signal + '%' : '')
+          : ifaces.length ? 'wifi: not connected' : 'wifi: none',
       blockedWifi ? 'err' : connected.length ? 'ok' : ifaces.length ? 'warn' : '',
       connected.length
         ? (connected[0].auth || 'a network') + (connected[0].bssid ? ' at ' + connected[0].bssid : '')
@@ -961,7 +963,7 @@
       if (snapshot) drawWifi(snapshot);
       if (forced)
         ui.log('net: the radio answered with ' + (Array.isArray(doc.networks) ? doc.networks.length : 0) +
-               ' network' + (Array.isArray(doc.networks) && doc.networks.length === 1 ? '' : 's'), 'ok');
+          ' network' + (Array.isArray(doc.networks) && doc.networks.length === 1 ? '' : 's'), 'ok');
     } else if (forced) {
       ui.log('net: the scan did not answer' + (doc && doc.note ? ': ' + String(doc.note) : ''), 'err');
     }

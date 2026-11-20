@@ -604,14 +604,14 @@ main {
    colour before it is read. A second name standing further inside the same
    panel is not the panel's edge's to hold, and keeps the small inline voice it
    always had. */
-.panel > .panel-title {
+.panel>.panel-title {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.18em;
   color: var(--fg-dim);
 }
 
-.panel > .panel-title:first-child {
+.panel>.panel-title:first-child {
   position: absolute;
   top: -2px;
   left: 32px;
@@ -634,7 +634,7 @@ main {
 /* The mark is the panel's, not the name's: set at the panel's own corner the
    title stands on, the whole width of the plate's inset back and one dot's
    half, so the drop sits centred where the panel's two edges meet. */
-.panel > .panel-title:first-child::before {
+.panel>.panel-title:first-child::before {
   content: "";
   position: absolute;
   left: -34px;
@@ -1677,6 +1677,7 @@ input[type="range"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .pending-shot:not(.measured) .pending-box,
   .pending-shot.queued .pending-box {
     animation: none;
@@ -1860,7 +1861,7 @@ input[type="range"] {
   border-radius: 4px;
   opacity: 0.6;
   background: repeating-linear-gradient(45deg, transparent 0 6px,
-    color-mix(in srgb, var(--line) 30%, transparent) 6px 12px);
+      color-mix(in srgb, var(--line) 30%, transparent) 6px 12px);
 }
 
 /* The picture a press swapped in settles once, from the press that asked for it.

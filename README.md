@@ -1,6 +1,68 @@
 # DISCLAIMER
 This project has been gingerly touched by the gentle hand of AI. If that tickles your raspberries in the wrong way, feel free to leave.
-All jokes aside- this has not been validated by and first parties- let alone second parties. It very well could turn your H200 into a P100. No warranties, or promises.
+All jokes aside- this has not been validated by and first parties- let alone second parties. It very well could turn your H200 into a P100. No warranties, or promises. Brought to you by `Carls' Jr`.
+
+- Here be dragons!
+- This project is under development. It is not intended for public use, yet.
+- Please wash your hands before returning to work.
+- This product is not yet fit for human consumption. It has errors-a-many, and is a **wrok in porgress**. Feel free to pick it apart, and see what makes it tick, tho! <3
+
+## License
+
+MIT. (google it yourself <3)
+
+## Aboot
+
+`Half-Assed Solutions`™ is a project, ran by Yonneh, to release some "actually kinda useful" things that are developed during random hobby development. Yonneh wears most of the hats in this organization- in fact, he wears all of them; but that's only because he is the sole member. If literally ANYONE more competent was around- he'd be fired.
+This project, and any others tagged with `Half-Assed Solutions` are completely open-source, and MIT Licensed.
+If you found this project under a rock somewhere, and want to see if it was ever finished- it probably came from https://github.com/Yonneh0/open-local-services at some point.
+
+---
+
+if you have made it to this point, and are still reading- I would like to thank you, and question your sanity. have a nice day.
+
+```
+MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMCARL
+MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM `MM' VMMMMM
+MMMMMV  MV  MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM  VM  MMMMMM
+MMMMMM  M  mMMMMMMMMMMMMMMMMMMMV'"     "`VMMMMMMMMMMMMMM  MMMA `M  MM  MM
+MM  VM  M  MMMMMMMMMMMMMMMV"                 "VMMMMMMMMM.  'MM  M  M' .MM
+MM.  M  M  MV  VMMMMMMMV'                      "VMMMMMMMMM.  "  V  V .MMM
+MMA  V  M  M' ,MMMMMMV'                          "VMMMMMMMM.  ..     mMMM
+MMMA `     V  MMMMMM'                              `VMMMMMMm  "S"   mMMMM
+MMMM  .,.,   AMMMMV                                 `VMMM"""   :   .MMMMM
+MMMM  "B"   MMMMMV                                    M"      .'  .MMMMMM
+MMMM   :   AV"  V                                     `   .mm.    MMMMMMM
+MMMM.  `.                                              ..MMMMMm   MMMMMMM
+MMMMM.. .  .mMMV  .                                   . VMMMMMMA   VMMMMM
+MMMMMM  AMMMMMM'  *         <^@^>        <==>        .* 'MMMMMMm    MMMMM
+MMMMM'  MMMMMMV  .I                                 .a@. V'"MMMMA    MMMM
+MMMMM   MMMMMM(  a@:.                             .' @@! .   "MMMm    MMM
+MMMM'   MMMV""'  !@a :.                         .';.a@@R ,             MM
+MMMV    MV"   :  :@@@: :.                     .:  a@@@@! ..............mM
+MMM'          .  `@@@@ : `...             ..:' : a@@@@@' MMMMMMMMMMMMMMMM
+MMM  ..........   @@@@@a  :  :'`:`------':  :  a@@@@@@@  MMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMA   `@@@@@@@a  :  :   ::   :  a@@@@@@@@@' :MMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMM.   `@@@@@@@@@@aaA. .;|. .Aaa@@@@@@@@@' .AMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMM.   `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   mMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMM.    @@@@@@@@@@@"oOo.oOOo"@@@@@@@'   mMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMm    `@@@@@@@"OOOOOOxOOOOO"@@@V    mMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMA.     `@@@"OOOOOOOOxOOOOO"@'   .AMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMA.     ""V@@AOOOOOOxOOOOO.  .AMMMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMMMMm.       `OOOOOOOxXOOOo.mMMMMMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMMMMMMMAm..   `OOOOOOoxOOOO:MMMMMMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMA`OOOOOOOxOOOO:MMMMMMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMA`OOOOOOxOOOO;MMMMMMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMA`OOOOOOOOO;AMMMMMMMMMMMMMMMMMMMMMMMMM
+MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMA`OOOOOO;AMMMMMMMMMMMMMMMMMMMMMMMMMMM
+WIZMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMmmmmmmMMMMMMMMMMMMMMMMMMMMMMMMM*MJJ
+
+88888b   d888b  88b  88 8 888888    88888b   888    88b  88 88  d888b  88
+88   88 88   88 888b 88 P   88      88   88 88 88   888b 88 88 88   `  88
+88   88 88   88 88`8b88     88      88888P 88   88  88`8b88 88 88      88
+88   88 88   88 88 `888     88      88    d8888888b 88 `888 88 88   ,  `"
+88888P   T888P  88  `88     88      88    88     8b 88  `88 88  T888P  88
+```
 
 # open-local-services
 

@@ -514,7 +514,8 @@ namespace ols
             continue;
           const std::string base = "/sys/class/net/" + name;
           Counters counters;
-          const auto readStat = [&base](const char *file) -> unsigned long long {
+          const auto readStat = [&base](const char *file) -> unsigned long long
+          {
             const std::string value = readTinyFile(base + "/statistics/" + file);
             return static_cast<unsigned long long>(
                 std::strtoull(value.c_str(), nullptr, 10));
@@ -877,7 +878,7 @@ namespace ols
         DWORD type = 0;
         const json out = RegQueryValueExA(key, "DhcpEnabled", nullptr, &type,
                                           reinterpret_cast<LPBYTE>(&value), &size) ==
-                                 ERROR_SUCCESS &&
+                                     ERROR_SUCCESS &&
                                  type == REG_DWORD
                              ? json(value == 1)
                              : json(nullptr);
@@ -1889,11 +1890,11 @@ $out | ConvertTo-Json -Compress
         HMODULE wlanapi = LoadLibraryA("wlanapi.dll");
         if (wlanapi)
         {
-          typedef DWORD(WINAPI *OpenHandleFn)(DWORD, PVOID, PDWORD, PHANDLE);
-          typedef DWORD(WINAPI *CloseHandleFn)(HANDLE, PVOID);
-          typedef DWORD(WINAPI *EnumInterfacesFn)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST *);
-          typedef DWORD(WINAPI *ScanFn)(HANDLE, const GUID *, const PDOT11_SSID, ULONG, PVOID);
-          typedef void(WINAPI *FreeMemoryFn)(PVOID);
+          typedef DWORD(WINAPI * OpenHandleFn)(DWORD, PVOID, PDWORD, PHANDLE);
+          typedef DWORD(WINAPI * CloseHandleFn)(HANDLE, PVOID);
+          typedef DWORD(WINAPI * EnumInterfacesFn)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST *);
+          typedef DWORD(WINAPI * ScanFn)(HANDLE, const GUID *, const PDOT11_SSID, ULONG, PVOID);
+          typedef void(WINAPI * FreeMemoryFn)(PVOID);
           const OpenHandleFn openHandle =
               reinterpret_cast<OpenHandleFn>(GetProcAddress(wlanapi, "WlanOpenHandle"));
           const CloseHandleFn closeHandle =
@@ -2129,8 +2130,8 @@ $out | ConvertTo-Json -Compress
                 const size_t bracket = line.find('(', space);
                 entry["bssid"] =
                     trim(line.substr(space + 1, bracket == std::string::npos
-                                                   ? std::string::npos
-                                                   : bracket - space - 1));
+                                                    ? std::string::npos
+                                                    : bracket - space - 1));
                 entry["signal"] = -1;
                 entry["freq"] = -1;
                 entry["ssid"] = "";
@@ -2346,7 +2347,8 @@ $out | ConvertTo-Json -Compress
         // A member of a bond stands plain: no address of its own.
         if (spec.contains("member_of"))
         {
-          out << pad << "dhcp4: false\n" << pad << "dhcp6: false\n";
+          out << pad << "dhcp4: false\n"
+              << pad << "dhcp6: false\n";
           return;
         }
         const bool dhcp = spec.value("mode", std::string("dhcp")) == "dhcp";
@@ -2363,10 +2365,13 @@ $out | ConvertTo-Json -Compress
           const long long metric = spec.value("metric", -1ll);
           if (!gateway.empty())
           {
-            out << pad << "routes:\n" << pad << "  - to: default\n" << pad << "    via: "
+            out << pad << "routes:\n"
+                << pad << "  - to: default\n"
+                << pad << "    via: "
                 << yamlQuote(gateway);
             if (metric >= 0)
-              out << "\n" << pad << "    metric: " << metric;
+              out << "\n"
+                  << pad << "    metric: " << metric;
             out << "\n";
           }
         }
@@ -2374,7 +2379,8 @@ $out | ConvertTo-Json -Compress
             spec.contains("dns") && spec["dns"].is_array() ? spec["dns"] : json::array();
         if (!dns.empty())
         {
-          out << pad << "nameservers:\n" << pad << "  addresses: [";
+          out << pad << "nameservers:\n"
+              << pad << "  addresses: [";
           for (size_t i = 0; i < dns.size(); ++i)
             out << (i ? ", " : "") << yamlQuote(dns[i].get<std::string>());
           out << "]\n";
@@ -2840,8 +2846,7 @@ $out | ConvertTo-Json -Compress
 
       std::string v4Mask(long long prefix)
       {
-        unsigned long mask = prefix <= 0 ? 0UL : (prefix >= 32 ? 0xffffffffUL
-                                                               : (0xffffffffUL << (32 - prefix)));
+        unsigned long mask = prefix <= 0 ? 0UL : (prefix >= 32 ? 0xffffffffUL : (0xffffffffUL << (32 - prefix)));
         return std::to_string((mask >> 24) & 0xff) + "." + std::to_string((mask >> 16) & 0xff) +
                "." + std::to_string((mask >> 8) & 0xff) + "." + std::to_string(mask & 0xff);
       }
@@ -3287,7 +3292,7 @@ $out | ConvertTo-Json -Compress
         const json features = featuresJson();
         return refused("refused: " +
                        features.value("vlan_reason", std::string("this machine does not manage "
-                                                                  "vlans from here")));
+                                                                 "vlans from here")));
 #else
         json answer;
         if (!wantElevation(answer))
@@ -3385,16 +3390,17 @@ $out | ConvertTo-Json -Compress
             "powershell -NoProfile -Command \"$ErrorActionPreference='Stop';$ns=New-Object "
             "-ComObject HNetCfg.HNetShare;if(-not $ns.SharingInstalled){Write-Output "
             "'this machine cannot share its connection';exit 2};$pub=$null;$priv=$null;foreach($c "
-            "in $ns.EnumEveryConnection){$n=$c.NetConnectionProps.Name;if($n -eq '" + external +
+            "in $ns.EnumEveryConnection){$n=$c.NetConnectionProps.Name;if($n -eq '" +
+            external +
             "'){$pub=$c};if($n -eq '" + internal + "'){$priv=$c}};if(-not $pub -or -not "
-            "$priv){Write-Output 'no such adapter name on this machine';exit 2};try{"
-            "$pub.EnableInternetSharing()}catch{Write-Output ('the public side refused: '+"
-            "$_.Exception.Message);exit 3};$done='';try{$ns.SharingCollection.Add("
-            "$priv.NetConnectionID);$done='the private connection was named'}catch{};if(-not "
-            "$done){try{$ns.InternetConnectionSharingCollection.Add($priv.NetConnectionID);"
-            "$done='the private connection was named'}catch{}};if(-not $done){$done='shared "
-            "from the public side - name the private connection in the sharing page of the "
-            "machine\\'s own settings to be sure'};Write-Output $done\"");
+                                                   "$priv){Write-Output 'no such adapter name on this machine';exit 2};try{"
+                                                   "$pub.EnableInternetSharing()}catch{Write-Output ('the public side refused: '+"
+                                                   "$_.Exception.Message);exit 3};$done='';try{$ns.SharingCollection.Add("
+                                                   "$priv.NetConnectionID);$done='the private connection was named'}catch{};if(-not "
+                                                   "$done){try{$ns.InternetConnectionSharingCollection.Add($priv.NetConnectionID);"
+                                                   "$done='the private connection was named'}catch{}};if(-not $done){$done='shared "
+                                                   "from the public side - name the private connection in the sharing page of the "
+                                                   "machine\\'s own settings to be sure'};Write-Output $done\"");
         if (run.ran && run.code == 0)
         {
           json state;
@@ -3488,8 +3494,7 @@ $out | ConvertTo-Json -Compress
           file["sharing"] = state;
           saveStateFile(file);
         }
-        return answerOf(run, "packets from " + internal + " leave through " + external +
-                                 " by the rules this server wrote",
+        return answerOf(run, "packets from " + internal + " leave through " + external + " by the rules this server wrote",
                         "the machine refused");
 #endif
       }
@@ -3574,7 +3579,7 @@ $out | ConvertTo-Json -Compress
           out["machine_words"] = answered.value("error", std::string(""));
           out["words"] =
               did ? "the mobile hotspot " + usedSsid + " is up, sharing what this machine "
-                            "reaches" +
+                                                       "reaches" +
                         (bandEnum.empty()
                              ? ""
                              : ", on the " +

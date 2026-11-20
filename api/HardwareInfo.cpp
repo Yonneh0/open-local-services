@@ -44,10 +44,14 @@ namespace ols
       {
         switch (smbiosCode)
         {
-          case 34: return "DDR5";
-          case 26: return "DDR4";
-          case 24: return "DDR3";
-          default: return {};
+        case 34:
+          return "DDR5";
+        case 26:
+          return "DDR4";
+        case 24:
+          return "DDR3";
+        default:
+          return {};
         }
       }
     } // namespace
@@ -251,8 +255,10 @@ namespace ols
           return result;
         const unsigned char *b = reinterpret_cast<const unsigned char *>(d.data());
         const size_t n = d.size();
-        auto wordAt = [b](size_t at) { return static_cast<long long>(b[at]) | (static_cast<long long>(b[at + 1]) << 8); };
-        auto textAt = [&](size_t at, const std::vector<std::string> &strs) -> std::string {
+        auto wordAt = [b](size_t at)
+        { return static_cast<long long>(b[at]) | (static_cast<long long>(b[at + 1]) << 8); };
+        auto textAt = [&](size_t at, const std::vector<std::string> &strs) -> std::string
+        {
           const int index = b[at]; // string areas number their strings from one
           if (index < 1 || static_cast<size_t>(index) > strs.size())
             return {};
@@ -384,10 +390,12 @@ namespace ols
       using ShutdownFn = int (*)();
 #if defined(_WIN32)
       const HMODULE library = LoadLibraryA("nvml.dll");
-      auto bind = [](HMODULE module, const char *name) { return reinterpret_cast<void *>(GetProcAddress(module, name)); };
+      auto bind = [](HMODULE module, const char *name)
+      { return reinterpret_cast<void *>(GetProcAddress(module, name)); };
 #else
       void *library = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
-      auto bind = [](void *module, const char *name) { return module ? dlsym(module, name) : nullptr; };
+      auto bind = [](void *module, const char *name)
+      { return module ? dlsym(module, name) : nullptr; };
 #endif
       if (library)
       {

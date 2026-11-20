@@ -1779,7 +1779,7 @@ namespace ols
                                         "Sakura-MiniMax-H3-TextEncoder-Uncensored-Q4_K_M-14.05GiB.gguf"}}});
         h3.push_back(ModelForm{"Sakura-Q8_0",
                                {{"llm", "hf:webmp3/Sakura-MiniMax-H3-Uncensored-GGUF/"
-                                         "Sakura-MiniMax-H3-TextEncoder-Uncensored-Q8_0-25.60GiB.gguf"}}});
+                                        "Sakura-MiniMax-H3-TextEncoder-Uncensored-Q8_0-25.60GiB.gguf"}}});
         out.push_back({"minimax-h3", h3});
         return out;
       }();
@@ -2265,10 +2265,10 @@ namespace ols
       if (card.empty())
       {
         static std::once_flag loggedOnce;
-        std::call_once(loggedOnce, [] {
+        std::call_once(loggedOnce, []
+                       {
           std::fprintf(stderr, "[image] no card answers on this machine: image models open on the cpu\n");
-          std::fflush(stderr);
-        });
+          std::fflush(stderr); });
       }
       const std::string device = onCpu ? std::string("cpu") : card;
       params.backend = device.c_str();
@@ -2350,25 +2350,26 @@ namespace ols
       }
       static std::once_flag sdLogOnce;
       std::call_once(sdLogOnce, []()
-      {
-        sd_set_log_callback(
-            [](sd_log_level_t level, const char *text, void *)
-            {
-              const bool bad = level == SD_LOG_ERROR || level == SD_LOG_WARN;
-              if (bad && text)
-              {
-                std::lock_guard<std::mutex> lock(gSdWordsMutex);
-                gSdWords = text;
-                const auto cut = gSdWords.find(" --- ");
-                if (cut != std::string::npos)
-                  gSdWords.erase(cut);
-                while (!gSdWords.empty() && (gSdWords.back() == '\n' || gSdWords.back() == '\r'))
-                  gSdWords.pop_back();
-              }
-              std::cerr << "[sd " << (level == SD_LOG_DEBUG ? "debug" : level == SD_LOG_INFO ? "info" : level == SD_LOG_WARN ? "warn" : "error") << "] " << text;
-            },
-            nullptr);
-      });
+                     { sd_set_log_callback(
+                           [](sd_log_level_t level, const char *text, void *)
+                           {
+                             const bool bad = level == SD_LOG_ERROR || level == SD_LOG_WARN;
+                             if (bad && text)
+                             {
+                               std::lock_guard<std::mutex> lock(gSdWordsMutex);
+                               gSdWords = text;
+                               const auto cut = gSdWords.find(" --- ");
+                               if (cut != std::string::npos)
+                                 gSdWords.erase(cut);
+                               while (!gSdWords.empty() && (gSdWords.back() == '\n' || gSdWords.back() == '\r'))
+                                 gSdWords.pop_back();
+                             }
+                             std::cerr << "[sd " << (level == SD_LOG_DEBUG ? "debug" : level == SD_LOG_INFO ? "info"
+                                                                                   : level == SD_LOG_WARN   ? "warn"
+                                                                                                            : "error")
+                                       << "] " << text;
+                           },
+                           nullptr); });
       static const std::string kVramBudget = []()
       {
         // The engine cuts its graphs and settles weights against this budget;
@@ -2569,7 +2570,8 @@ namespace ols
             pushEvent(job, json{{"type", "fetch"},
                                 {"bytes", bytes},
                                 {"total", totalBytes},
-                                {"speed", speed}}.dump());
+                                {"speed", speed}}
+                               .dump());
           };
           int fetchAnswer = 0;
           const bool cameWhole = fetchWhole(url, dest, totalBytes, stopAskedNow, fetchAnswer, told);
@@ -2600,10 +2602,10 @@ namespace ols
           if (!integrityOk(dest, spec, fetched))
           {
             noteError(job, transferred == -1
-                             ? "this machine would not ask for that file: its name or its address "
-                               "holds characters a command line cannot carry"
-                             : transferred != 0 ? "the fetch did not finish for " + url
-                                                : "the file that came down is not whole");
+                               ? "this machine would not ask for that file: its name or its address "
+                                 "holds characters a command line cannot carry"
+                           : transferred != 0 ? "the fetch did not finish for " + url
+                                              : "the file that came down is not whole");
             markState(job, ols::kStateError);
             return false;
           }
@@ -3103,12 +3105,12 @@ namespace ols
         putBE32(control2, tall);
         putBE32(control2, 0u);
         putBE32(control2, 0u);
-        control2.push_back('\x00'); // the frame stands for one part of a second:
-        control2.push_back('\x01'); // a numerator of one over the rate below
+        control2.push_back('\x00');                                // the frame stands for one part of a second:
+        control2.push_back('\x01');                                // a numerator of one over the rate below
         putBE16(control2, static_cast<std::uint16_t>(previewFps)); // the denominator
-        putBE16(control2, 0u); // dispose: leave what was drawn; blend: source -
-                               // every frame is the whole picture, so what a
-                               // reader draws over what it says stands
+        putBE16(control2, 0u);                                     // dispose: leave what was drawn; blend: source -
+                                                                   // every frame is the whole picture, so what a
+                                                                   // reader draws over what it says stands
         pngChunk(out, "fcTL", control2);
         ++sequence;
 
@@ -3361,18 +3363,18 @@ namespace ols
         // reader that asks the header for a length is told one.
         std::string audioHead;
         audioHead += "auds";
-        putLE32(audioHead, 0u); // no codec: the words say uncompressed PCM
-        putLE32(audioHead, 0u); // flags
-        putLE16(audioHead, 0u); // priority
-        putLE16(audioHead, 0u); // language
-        putLE32(audioHead, 0u); // nothing stands before the first sample
-        putLE32(audioHead, align); // one block of sound
-        putLE32(audioHead, align * rate); // passes every second
-        putLE32(audioHead, 0u); // starts at the beginning
+        putLE32(audioHead, 0u);                                             // no codec: the words say uncompressed PCM
+        putLE32(audioHead, 0u);                                             // flags
+        putLE16(audioHead, 0u);                                             // priority
+        putLE16(audioHead, 0u);                                             // language
+        putLE32(audioHead, 0u);                                             // nothing stands before the first sample
+        putLE32(audioHead, align);                                          // one block of sound
+        putLE32(audioHead, align * rate);                                   // passes every second
+        putLE32(audioHead, 0u);                                             // starts at the beginning
         putLE32(audioHead, static_cast<std::uint32_t>(pcm.size() / align)); // runs this long
-        putLE32(audioHead, static_cast<std::uint32_t>(pcm.size())); // one chunk holds it all
-        putLE32(audioHead, static_cast<std::uint32_t>(-1)); // quality: the default
-        putLE32(audioHead, align); // a block is this wide
+        putLE32(audioHead, static_cast<std::uint32_t>(pcm.size()));         // one chunk holds it all
+        putLE32(audioHead, static_cast<std::uint32_t>(-1));                 // quality: the default
+        putLE32(audioHead, align);                                          // a block is this wide
         // a sound stream has no picture rectangle, but the sixteen bytes where it
         // stands are still part of every stream header: a reader that walks the
         // header stops at the wrong letter without them.
@@ -3809,7 +3811,7 @@ namespace ols
         }
         else
           noteStep(job, "the card names a sampler the engine does not know (" + def->sampler +
-                           "); the engine's own choice stands");
+                            "); the engine's own choice stands");
       }
       // The grid a solver walks belongs to the solver, so its default is asked
       // after the solver above is settled - not before, which keyed every row's
@@ -3825,7 +3827,7 @@ namespace ols
         }
         else
           noteStep(job, "the card names a scheduler the engine does not know (" + def->scheduler +
-                           "); the solver's own grid stands");
+                            "); the solver's own grid stands");
       }
       std::vector<float> sigmas;
       if (!def->sigmas.empty())
@@ -4040,9 +4042,9 @@ namespace ols
         int sampleSteps;
         int pictures;
         int picturesDone;
-        int anchor;    // the engine's own tick total for the trusted window
-        bool full;     // the current picture's window was drawn whole
-        int last;      // the last progress a page was told
+        int anchor; // the engine's own tick total for the trusted window
+        bool full;  // the current picture's window was drawn whole
+        int last;   // the last progress a page was told
       };
       CancelProbe probe{job, ctx, sample.sample_steps, img.batch_count, 0, 0, false, 0};
       auto thunk = [](int step, int stepsTotal, float, void *userData)
@@ -4071,7 +4073,7 @@ namespace ols
         if (step <= 0)
         {
           if (probe->anchor <= 0)
-            noteProgress(jobId, 0, window * pictures);  // the wait has a size
+            noteProgress(jobId, 0, window * pictures); // the wait has a size
           else if (probe->full && stepsTotal == nominal &&
                    probe->picturesDone + 1 < pictures)
           {
@@ -4088,7 +4090,7 @@ namespace ols
           // being nothing yet to keep.
           if (cancelledRequested(jobId))
             sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
-                                                                      : SD_CANCEL_ALL);
+                                                                     : SD_CANCEL_ALL);
           return;
         }
         if (probe->anchor <= 0)
@@ -4106,8 +4108,8 @@ namespace ols
           {
             if (cancelledRequested(jobId))
               sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
-                                                                        : SD_CANCEL_ALL);
-            return;  // some other phase's ladder, or one that skipped its start
+                                                                       : SD_CANCEL_ALL);
+            return; // some other phase's ladder, or one that skipped its start
           }
         }
         if (stepsTotal != probe->anchor || probe->full)
@@ -4116,7 +4118,7 @@ namespace ols
           // of another count are other phases - tiles and bytes are not steps.
           if (cancelledRequested(jobId))
             sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
-                                                                      : SD_CANCEL_ALL);
+                                                                     : SD_CANCEL_ALL);
           return;
         }
         int within = static_cast<int>((static_cast<long long>(step) * window) /
@@ -4135,7 +4137,7 @@ namespace ols
           probe->full = true;
         if (cancelledRequested(jobId))
           sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
-                                                                    : SD_CANCEL_ALL);
+                                                                   : SD_CANCEL_ALL);
       };
       // Before the engine speaks at all, a page may have been waiting on this
       // job through the whole of its open: the line below names the window so
@@ -4321,8 +4323,8 @@ namespace ols
         if (clipFrames < produced)
         {
           noteStep(job, "the clip was stood with " + std::to_string(clipFrames) + " of the " +
-                           std::to_string(produced) +
-                           " frames the run made: a frame that did not stand at the size of the others is left out");
+                            std::to_string(produced) +
+                            " frames the run made: a frame that did not stand at the size of the others is left out");
         }
         // the record of a clip says what it is made of, in the words this
         // machine's own file door answers with, so a page that holds the record
@@ -4975,8 +4977,8 @@ namespace ols
         // "as shipped". An open model always states what it holds open.
         const auto stands = gCtxForm.find(entry.first);
         const std::string openQuant = stands == gCtxForm.end() || stands->second.empty()
-                                        ? std::string("as shipped")
-                                        : stands->second;
+                                          ? std::string("as shipped")
+                                          : stands->second;
         resident.push_back({{"model", entry.first},
                             {"bytes", charge},
                             {"device", (gCtxCpu.count(entry.first) && gCtxCpu[entry.first]) ? "cpu" : "card"},

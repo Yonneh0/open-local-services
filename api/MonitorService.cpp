@@ -529,7 +529,7 @@ namespace ols
       std::string model;
       bool open = false;
       long long residentBytes = -1; // unknown until an engine states it
-      std::string quant;           // the quant an open picture model stands as, when stated
+      std::string quant;            // the quant an open picture model stands as, when stated
       std::vector<json> runs;
       long long started = 0;
     };

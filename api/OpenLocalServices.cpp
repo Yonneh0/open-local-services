@@ -1562,7 +1562,8 @@ namespace ols
         continue;
       std::string leaf = entry.path().filename().generic_string();
       std::transform(leaf.begin(), leaf.end(), leaf.begin(),
-                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                     [](unsigned char c)
+                     { return static_cast<char>(std::tolower(c)); });
       const std::string ext = std::filesystem::path(leaf).extension().generic_string();
       if (ext != ".html" && ext != ".js" && ext != ".css")
         continue;
@@ -2043,7 +2044,7 @@ namespace ols
       using RtlGetVersion_t = LONG(WINAPI *)(PRTL_OSVERSIONINFOW);
       const HMODULE ntdll = GetModuleHandleA("ntdll.dll");
       auto rtl = ntdll ? reinterpret_cast<RtlGetVersion_t>(
-                           GetProcAddress(ntdll, "RtlGetVersion"))
+                             GetProcAddress(ntdll, "RtlGetVersion"))
                        : nullptr;
       OSVERSIONINFOW info = {};
       info.dwOSVersionInfoSize = sizeof(info);
@@ -2105,13 +2106,13 @@ namespace ols
         const HMODULE loader = LoadLibraryA("vulkan-1.dll");
         using Entry_t = uint32_t(__cdecl *)(uint32_t *);
         const Entry_t entry = loader ? reinterpret_cast<Entry_t>(
-                                         GetProcAddress(loader, "vkEnumerateInstanceVersion"))
+                                           GetProcAddress(loader, "vkEnumerateInstanceVersion"))
                                      : nullptr;
 #else
         void *loader = dlopen("libvulkan.so.1", RTLD_LAZY);
-        using Entry_t = uint32_t(*)(uint32_t *);
+        using Entry_t = uint32_t (*)(uint32_t *);
         const Entry_t entry = loader ? reinterpret_cast<Entry_t>(
-                                         dlsym(loader, "vkEnumerateInstanceVersion"))
+                                           dlsym(loader, "vkEnumerateInstanceVersion"))
                                      : nullptr;
 #endif
         if (entry && entry(&version) == 0 && version > 0)
@@ -2423,9 +2424,9 @@ namespace ols
               "</a> is the room this visit came from. It opens now that the key is on the "
               "connection.</p>\n";
     page += "<p>Reading this as a program? The same words as json are at this same "
-        "<p>Reading this as a program? The same words as json are at this same "
-        "address, and a credential a program hands goes in a header: <code>X-Api-Key</code> "
-        "or <code>Authorization: Bearer</code>.</p>\n";
+            "<p>Reading this as a program? The same words as json are at this same "
+            "address, and a credential a program hands goes in a header: <code>X-Api-Key</code> "
+            "or <code>Authorization: Bearer</code>.</p>\n";
     page += "</body>\n</html>\n";
     HttpResponse r;
     r.setPlain(page, "text/html; charset=utf-8");

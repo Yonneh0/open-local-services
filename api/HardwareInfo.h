@@ -18,9 +18,9 @@ namespace ols
     struct MemorySticks
     {
       bool ok = false;
-      std::string kind;   // what the firmware names the technology, when it names it ("DDR5")
-      std::string maker;  // of the newest-numbered populated stick, if stated
-      std::string part;   // its part number, if stated
+      std::string kind;            // what the firmware names the technology, when it names it ("DDR5")
+      std::string maker;           // of the newest-numbered populated stick, if stated
+      std::string part;            // its part number, if stated
       long long ratedMts = 0;      // the fastest rated speed any populated stick states (MT/s)
       long long configuredMts = 0; // the fastest configured speed any populated stick states (MT/s)
       int modules = 0;             // populated sticks the firmware describes
@@ -50,10 +50,10 @@ namespace ols
     struct GpuClocks
     {
       bool ok = false;
-      long long coreMhz = 0;     // graphics/SM clock this instant
-      long long coreMaxMhz = 0;  // the ceiling the card states for it
-      long long memMhz = 0;      // memory clock this instant
-      long long memMaxMhz = 0;   // the ceiling the card states for it
+      long long coreMhz = 0;    // graphics/SM clock this instant
+      long long coreMaxMhz = 0; // the ceiling the card states for it
+      long long memMhz = 0;     // memory clock this instant
+      long long memMaxMhz = 0;  // the ceiling the card states for it
     };
 
     // Queried fresh on each ask: a clock is a moment, not a constant. Where no

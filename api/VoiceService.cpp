@@ -946,7 +946,8 @@ namespace ols
     // move while the server runs.
     static const std::string &audioTreeDir()
     {
-      static const std::string tree = []() -> std::string {
+      static const std::string tree = []() -> std::string
+      {
         std::error_code ec;
         for (const char *place : {"api/vendor/audio.cpp", "vendor/audio.cpp"})
         {
@@ -2946,11 +2947,11 @@ namespace ols
             std::error_code ignored{};
             std::filesystem::remove(full, ignored);
             noteError(id, answer == -1
-                               ? "this machine would not fetch " + named +
-                                     ": its name or its address holds characters a command line "
-                                       "cannot carry"
-                               : "the fetch failed for " + named + " (curl answered " +
-                                     std::to_string(answer) + ")");
+                              ? "this machine would not fetch " + named +
+                                    ": its name or its address holds characters a command line "
+                                    "cannot carry"
+                              : "the fetch failed for " + named + " (curl answered " +
+                                    std::to_string(answer) + ")");
             markState(id, ols::kStateError);
             return;
           }
@@ -3163,7 +3164,7 @@ namespace ols
           continue;
         const size_t space = entry.first.rfind(' ');
         const std::string tail =
-          space == std::string::npos ? std::string() : entry.first.substr(space);
+            space == std::string::npos ? std::string() : entry.first.substr(space);
         if (tail == " (cpu)")
           return entry.second;
         if (tail == " (device)")
