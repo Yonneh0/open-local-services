@@ -593,13 +593,14 @@ main {
 
 /* The name of a panel is no longer whispered inside its top: the first name of
    a panel is set as a plate on the panel's edge itself. The text is centred on
-   the rule, so the edge is struck straight through the word, and the plate -
-   nearly the panel's own colour - lets that edge show faintly through it. The
-   letters themselves are darkened toward the panel and kept readable by a sharp
-   bright outline, fuller and twice the size they were; and one drop of the
-   page's colour stands before every name, so a panel is found by colour before
-   it is read. A second name standing further inside the same panel is not the
-   panel's edge's to hold, and keeps the small inline voice it always had. */
+   the rule, so the edge is struck straight through the word - nothing masks
+   that rule, it is the strike of the strike-through. The letters themselves are
+   darkened toward the panel and kept readable by a sharp bright outline,
+   fuller and twice the size they were; and one small drop of the page's colour
+   stands centred on the panel's own top-left corner, so a panel is found by
+   colour before it is read. A second name standing further inside the same
+   panel is not the panel's edge's to hold, and keeps the small inline voice it
+   always had. */
 .panel > .panel-title {
   font-family: var(--mono);
   font-size: 10px;
@@ -616,7 +617,6 @@ main {
   align-items: center;
   gap: 10px;
   padding: 0 16px 0 10px;
-  background: color-mix(in srgb, var(--bg2) 78%, transparent);
   font-family: var(--mono);
   font-weight: 700;
   font-size: 20px;
@@ -628,16 +628,22 @@ main {
   paint-order: stroke fill;
 }
 
+/* The mark is the panel's, not the name's: set at the panel's own corner the
+   title stands on, the whole width of the plate's inset back and one dot's
+   half, so the drop sits centred where the panel's two edges meet. */
 .panel > .panel-title:first-child::before {
   content: "";
-  flex: none;
-  width: 9px;
-  height: 9px;
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 2px;
   border-radius: 50%;
   background: var(--accent);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
-    0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
+    0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent),
+    0 0 6px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 /* A hand set in a panel's own title line: the title's voice and size, so it
