@@ -12,6 +12,12 @@ let models = [];
 // What the model cards last said; see modelsCardSignature.
 let modelsCardState = '';
 let galleryCardState = '';
+// The cards that stood the last time the room was drawn, kept under the ask each
+// is the card of: the node itself and a stamp of what it held. A drawing moves
+// these cards into the new order, builds the ones that are new, and takes away
+// only the asks that are gone - a card that still holds the same thing keeps its
+// node, and the picture it had drawn stays painted while it stands.
+let galleryCards = new Map();
 let galleryItems = [];
 // how many records this machine holds, so the gallery note can say when the list
 // on screen is only the newest part of them.
@@ -1539,6 +1545,11 @@ function repaintPictures() {
     const asked = jobTimes['job-' + id] || null;
     merged.push({
       id: id, kind: 'generate', state: 'running', model: live.model,
+      // A run its stream is naming steps for stands on the card, which is the
+      // place the machine's own number 0 names: without one it would sort
+      // behind every row that holds a number, and this card would drop once
+      // per stream tick and climb again at the next reading.
+      queue_pos: 0,
       started_at: asked && asked.start ? Math.floor(asked.start / 1000) : Math.floor(Date.now() / 1000),
       done: live.done, max: live.max
     });
@@ -1668,6 +1679,12 @@ function paintPictureNotices(jobs) {
     if (String(record.kind) !== 'generate') continue;
     const state = String(record.state);
     if (state === 'running' || state === 'queued') {
+      // A run of this page's own whose every planned picture has drawn and
+      // landed while this reading still calls it standing keeps no card: its
+      // records stand as pictures here, and its row comes down with them
+      // rather than waiting for a later reading to agree.
+      if (String(jobOutcomes['job-' + String(record.id)] || '') === 'done' &&
+        boundPictures(String(record.id)).length === 0) continue;
       standing.push(record);
       continue;
     }
@@ -1678,7 +1695,10 @@ function paintPictureNotices(jobs) {
   // word either - the record of the render itself comes up in the gallery.
   for (const entry of plannedPictures.slice()) {
     const state = settled[String(entry.job)];
-    if (!state) continue;
+    // A picture whose record is being read in this moment: its card is one
+    // drawing away from becoming that record, and does not come down in the
+    // meantime - a hole where a landing card stood is a blink.
+    if (!state || entry.landing) continue;
     retirePicture(entry, state === 'done' ? '' :
       (state === 'cancelled' ? 'a picture stopped on the machine' : 'a picture failed: its run stopped'),
       state === 'done' ? 'ok' : (state === 'cancelled' ? 'warn' : 'err'));
@@ -1710,6 +1730,14 @@ function paintPictureNotices(jobs) {
     if (entry.asked) {
       row.job = String(entry.job);
       row.stage = 'the machine has taken this one';
+    }
+    if (entry.landing) {
+      // The frame is drawn and its record is on its way here: the picture is
+      // being written, which is what the machine itself states at this point
+      // of a run, and no reading of the room has caught up yet.
+      row.held = true;
+      row.remaining = 0;
+      row.stage = 'its steps are drawn · writing the file';
     }
     const found = costRow(askFields(entry.model));
     const stepMs = found ? stepMsOf(found) : 0;
@@ -1978,15 +2006,16 @@ function handleEvent(event, model, key) {
       // A picture's event names no steps at all, so the run's own count is the
       // only honest source of what its steps cost.
       rememberMeasuredRun(model, jobTimes[key]);
-      // One frame retires one card: a run draws its pictures in order and this
-      // frame is the next of them, so the card that comes down is the first of
-      // the ones still standing. The cards behind it describe pictures that
-      // have not been made yet, and they stay.
       jobLanded[key] = (Number(jobLanded[key]) || 0) + 1;
-      if (mine.length) retirePicture(mine[0], '', 'ok');
       jobOutcomes[key] = 'done';
+      // The card of this frame stands while its record is read in: it comes
+      // down only at the drawing that puts the picture in its place, so a
+      // landing picture never leaves a hole for a beat. The cards of the run's
+      // later pictures are not this frame's to retire, and stay.
+      if (mine.length) mine[0].landing = true;
     }
-    void landRender(String(event.url || event.clip || ''));
+    void landRender(String(event.url || event.clip || ''),
+      mine.length ? mine[0] : null);
     return;
   }
   if (event.type === 'error') {
@@ -2031,8 +2060,10 @@ function handleEvent(event, model, key) {
 // the file it names is the record's whole address, and waiting a poll cycle to
 // see a picture that has already landed is a wait nobody asked for. A record
 // that cannot be read falls back to walking the gallery's front page, which
-// states the truth a moment later.
-async function landRender(url) {
+// states the truth a moment later. The planned card of the frame - when this
+// page asked for it - stands until the record is in the list, and comes down in
+// the same drawing the picture goes up.
+async function landRender(url, entry) {
   const name = String(url || '').split('/').pop().replace(/\.[A-Za-z]+$/, '');
   let record = null;
   if (name) record = await ui.api('/api/gallery/' + encodeURIComponent(name));
@@ -2040,20 +2071,28 @@ async function landRender(url) {
     const id = String(record.id);
     if (!galleryItems.some(function (item) { return String(item.id) === id; })) {
       // Put where its own moment puts it, not blindly on top: two pictures of
-      // one batch can finish their slow reads in either order, and a list that
-      // is only ever prepended turns that race into a stack whose second
-      // picture sits above its third until the next poll sorts the lie out.
+      // one batch can finish their slow reads in either order. A moment holds
+      // whole seconds, and two pictures of one of those seconds stand at the
+      // machine by the moment it wrote them - the order their frames landed -
+      // so this one goes above the ones it shares its second with, not below.
       const created = Number(record.created) || 0;
       let at = 0;
       while (at < galleryItems.length &&
-        (Number(galleryItems[at].created) || 0) >= created) ++at;
+        (Number(galleryItems[at].created) || 0) > created) ++at;
       galleryItems = galleryItems.slice(0, at).concat([record], galleryItems.slice(at));
       galleryHeld += 1;
       log('Landed: ' + id, 'ok');
     }
-    renderGallery(galleryItems);
+    if (entry) retirePicture(entry, '', 'ok');
+    // The rows are rebuilt from the state that now stands: the run this frame
+    // drew is told off with it, so the card turns into its picture in one
+    // drawing. Drawing the list straight from the last rows would stand the
+    // frame twice - once as the card, once as the record - until a later
+    // reading of the machine noticed.
+    repaintPictures();
     return;
   }
+  if (entry) retirePicture(entry, '', 'ok');
   await refreshGallery();
 }
 
@@ -2347,7 +2386,16 @@ function drawStatus(snapshot) {
 // them, so the asks for the pages past the first are started together and awaited
 // as a batch; nothing about one page depends on the next. The list grows as each
 // batch lands, and repeats of one ask stack across the whole room.
-async function refreshGallery() {
+let roomWalk = Promise.resolve();
+function refreshGallery() {
+  // One room walk at a time: two walks in flight commit two readings over each
+  // other, and a record only the other walk had seen stands gone from this
+  // list for a beat between the commits - and a card that goes out and comes
+  // back is a blink.
+  roomWalk = roomWalk.then(walkRoom, walkRoom);
+  return roomWalk;
+}
+async function walkRoom() {
   // The newest page is asked for past the cache - and past the copy a poll made
   // a moment ago: this is exactly the reading that must not be answered with a
   // memory from before a render landed. (The held copy is what made a page that
@@ -2367,23 +2415,36 @@ async function refreshGallery() {
   };
   take(first.items);
   let held = Number(first.total || merged.length);
-  // What this client carries that the machine's pages do not, split where the
-  // pages end: records older than the machine's newest page belong behind it,
-  // and records newer than that page's last line - pictures that landed while
-  // this walk was in flight, which no fetched page can hold yet - keep their
-  // place in front. A record this page deleted stays gone: carried back, it
-  // stood as a ghost whose picture was no longer there.
+  let failed = false;
+  // What this client carries that the machine's pages do not takes its place
+  // inside the pages: it stands above the first record strictly older than
+  // itself - and above the records of its own second, because the machine lays
+  // the pictures of one second down by the moment it wrote them, and what no
+  // fetched page holds yet was written after the ones it does. One place, not
+  // a jump over a whole page: what landed in flight is stated where its
+  // moment puts it, and the page that later carries it says the same. Walking
+  // from the oldest keeps the records that landed together in their own order
+  // too. A walk that has named the room's whole count without a page refusing
+  // has spoken of every record the machine holds - what this client still
+  // carries beside it is gone from the room, a delete said in another window,
+  // and it rides no further; until a walk proves that, an unseen record is
+  // only unvisited, and its place is kept. A record this page deleted stays
+  // gone either way: carried back, it stood as a ghost whose picture was no
+  // longer there.
   const carried = function () {
-    const floor = merged.length ? Number(merged[merged.length - 1].created) || 0 : 0;
-    const behind = [];
-    const front = [];
-    for (const item of galleryItems) {
+    const whole = merged.slice();
+    const proven = !failed && merged.length >= held;
+    for (let back = galleryItems.length - 1; back >= 0; --back) {
+      const item = galleryItems[back];
       const id = String(item.id);
-      if (seen.has(id) || deletedShots.has(id)) continue;
-      if (Number(item.created) >= floor) front.push(item);
-      else behind.push(item);
+      if (seen.has(id) || deletedShots.has(id) || proven) continue;
+      const created = Number(item.created) || 0;
+      let into = 0;
+      while (into < whole.length &&
+        (Number(whole[into].created) || 0) > created) ++into;
+      whole.splice(into, 0, item);
     }
-    return front.concat(merged, behind);
+    return whole;
   };
   const commit = function () {
     const whole = carried();
@@ -2393,7 +2454,6 @@ async function refreshGallery() {
     renderGallery(galleryItems);
   };
   commit();
-  let failed = false;
   // The room is walked by the machine's own windows: the offsets asked with are
   // the machine's positions, so records this client carries beside them cannot
   // make a window skip its turn - and no window is asked twice. A page that
@@ -3018,6 +3078,14 @@ function groupStacks(ordered) {
 // its own ask names - the ask of a run being drawn is the ask of the picture it
 // will make, so the placeholder joins its own future record's group and steps
 // out of the way when that record lands.
+//
+// The room is drawn again rather than thrown away: each ask's card stands from
+// one drawing to the next until something its own row holds moves. A drawing
+// moves standing cards into the new order, builds the asks that are new here,
+// and takes away the ones that are gone; a moved card keeps the node it was
+// drawn in, so a picture already painted stays painted while it shifts. A room
+// rebuilt whole would take every picture down and read it again - and while a
+// run is drawing, its every step would blink the room.
 function renderGallery(items) {
   const pane = E('gallery');
   // The counts beside the names in the model filter are the pictures this page
@@ -3042,29 +3110,72 @@ function renderGallery(items) {
   // opened with the other runs of its own ask in the row under it, drawn out of
   // this same grouping rather than out of a second read of the machine.
   galleryGroups = groups;
-  // The cards are thrown away and drawn again when what they hold changes: a new
-  // render, a standing picture, a keep, a mark, a filter, the picture open in
-  // the viewer, or how many the machine holds. Progress moves a bar in place -
-  // it never redraws a card.
-  const signature = JSON.stringify([openShot, galleryHeld, Array.from(groups.keys()),
-    kept.map(function (item) { return [item.id, item.kept === true, item.marked === true]; })]);
+  const keys = [];
+  const stamps = [];
+  for (const entry of groups.values()) {
+    keys.push(stackKeyFor(entry[0]));
+    stamps.push(cardStamp(entry));
+  }
+  const signature = keys.join('\u0002') + '\u0003' + stamps.join('\u0002');
+  // The note counts what landed and what is marked, and those move with the
+  // machine's readings while no card changes: its words are drawn every time.
+  drawGalleryNote(kept.filter(function (item) { return !item.pending; }),
+    real, groups);
   if (signature === galleryCardState && pane.childElementCount) return;
   galleryCardState = signature;
-  pane.textContent = '';
-  const drawn = new Set();
-  for (const entry of groups.values()) drawn.add(String(entry[0].id));
-  for (const item of kept) {
+  const built = new Map();
+  let at = 0;
+  for (const entry of groups.values()) {
     // One card stands for an ask: the head of its group and nothing else. The
     // standing siblings of a batch - the four runs of a sixteen, the pictures
     // of an ask the machine has not taken yet - join that card as ghosts in
     // its row rather than each holding up a card of its own.
-    if (!drawn.has(String(item.id))) continue;
-    pane.appendChild(galleryCard(item, groups.get(stackKeyFor(item)).slice(1)));
+    const head = entry[0];
+    const key = keys[at];
+    const held = galleryCards.get(key);
+    let node = held && held.stamp === stamps[at] && held.node.parentNode === pane ?
+      held.node : null;
+    if (!node) {
+      node = head.pending ? pendingCard(head, entry.slice(1)) :
+        galleryCard(head, entry.slice(1));
+    }
+    built.set(key, { node: node, stamp: stamps[at] });
+    ++at;
   }
-  // The note counts pictures the machine keeps, and a standing card is not one
-  // of those until its file is written.
-  drawGalleryNote(kept.filter(function (item) { return !item.pending; }),
-    real, groups);
+  const keeps = new Set();
+  for (const held of built.values()) keeps.add(held.node);
+  for (const child of Array.from(pane.children)) {
+    if (!keeps.has(child)) pane.removeChild(child);
+  }
+  // Moving a standing node into its place keeps everything it holds; only a
+  // place that was empty takes a new card.
+  let cursor = 0;
+  for (const held of built.values()) {
+    if (pane.children[cursor] === held.node) {
+      ++cursor;
+      continue;
+    }
+    pane.insertBefore(held.node, pane.children[cursor] || null);
+    ++cursor;
+  }
+  galleryCards = built;
+}
+
+// What one card's node holds: the runs stacked on it and the marks they wear.
+// A standing row is told by the shape its card is drawn at - its bar, its
+// words, and its state move in place, and stand outside this stamp.
+function cardStamp(group) {
+  const parts = [];
+  for (const item of group) {
+    if (item.pending) {
+      parts.push('p' + String(item.width) + 'x' + String(item.height) +
+        '·' + String(item.kind || '') +
+        '·' + ((item.pending.refThumbs || []).join(',')));
+    } else {
+      parts.push(String(item.id) + (markedShots.has(String(item.id)) ? '*' : ''));
+    }
+  }
+  return parts.join('\u0001');
 }
 
 // The whole room is drawn, so the note normally says the machine's own count. It
