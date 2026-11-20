@@ -152,7 +152,8 @@ namespace ols
         // Whether the server asks this machine to stand at the level its manager
         // works at before it starts - the level a boot entry, a unit, a task are
         // the manager's to take. Left alone means it asks; off is the one word
-        // that declines, and the door's own words then name the level it stands at.
+        // that declines the ask - and a server that does not stand raised does
+        // not serve at all, it says so and exits.
         {"OLS_ELEVATE", false, false},
     };
 
@@ -2745,6 +2746,24 @@ namespace ols
       if (job.empty())
         return jsonError(400, m_image->engineError());
       return jsonResponse(202, idJson(job));
+    }
+
+    if (post && path == "/api/jobs/reorder")
+    {
+      if (!m_image)
+        return jsonError(502, "No image service");
+      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
+      const std::string id = !body.is_discarded() && body.contains("id") && body["id"].is_string()
+                                 ? body["id"].get<std::string>()
+                                 : std::string();
+      const int shift = !body.is_discarded() && body.contains("shift") && body["shift"].is_number_integer()
+                            ? body["shift"].get<int>()
+                            : 0;
+      if (id.empty() || shift == 0)
+        return jsonError(400, "which job to move and by how many places are both needed");
+      if (!m_image->reorderJob(id, shift))
+        return jsonError(404, "that job does not stand in the line, or cannot move that far");
+      return jsonResponse(200, "{}");
     }
 
     if (path.rfind("/api/jobs/", 0) == 0)

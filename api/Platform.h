@@ -268,12 +268,20 @@ namespace ols
     //
     // The answer is curl's own code, or -1 when this machine would not ask at
     // all because one of the parts cannot be quoted (see quotableInShell).
+    //
+    // A sliced fetch (maxSeconds above zero) asks for no retries of its own:
+    // --retry re-reads --max-time as the patience of each try rather than of
+    // the command - measured 2026-11-19, a --max-time 20 ask with --retry 3
+    // ran 87 seconds - and the round would report nothing for all of them.
+    // The slicing loop outside this call is the retry there, resuming from the
+    // bytes the round left behind.
     inline int curlFetch(const std::string &dest, const std::string &url, const std::string &token,
-                         int maxSeconds = 0)
+                         int maxSeconds = 0, int retries = 3)
     {
       if (!quotableInShell(dest) || !quotableInShell(url) || !quotableInShell(token))
         return -1;
-      const std::string base = std::string(curlBinary()) + " -sSL --fail --retry 3 --create-dirs";
+      const std::string base = std::string(curlBinary()) + " -sSL --fail --retry " +
+                               std::to_string(retries) + " --create-dirs";
       const std::string bound = maxSeconds > 0 ? " --max-time " + std::to_string(maxSeconds) : "";
       const std::string auth =
           token.empty() ? std::string() : " -H \"Authorization: Bearer " + token + "\"";
@@ -282,6 +290,26 @@ namespace ols
       if (resumed == 33 || resumed == 36)
         return std::system((base + bound + auth + tail).c_str());
       return resumed;
+    }
+
+    // The name this machine answers to on the network, in its own words. The
+    // record a render leaves beside its file names it, because two machines of
+    // one suite draw the same settings at different speeds and the file should
+    // say which one drew it.
+    inline std::string hostName()
+    {
+#ifdef _WIN32
+      char text[128] = {0};
+      unsigned long size = sizeof(text);
+      if (GetComputerNameExA(ComputerNameDnsHostname, text, &size) && size > 0)
+        return std::string(text, size);
+      return "this machine";
+#else
+      char text[128] = {0};
+      if (gethostname(text, sizeof(text) - 1) == 0)
+        return std::string(text);
+      return "this machine";
+#endif
     }
 
     // The version of this code is what the build names it, in two kinds: a

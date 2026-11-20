@@ -98,6 +98,27 @@ function secondsText(ms) {
   return (seconds < 100 ? seconds.toFixed(1) : whole(Math.round(seconds))) + 's';
 }
 
+// A rate of bytes in the machine's own size words, which is the only way this
+// page has for saying megabytes a second; a rate the machine never stated is
+// said so, not guessed at from the clock.
+function byteRate(bytesPerSecond) {
+  const value = Number(bytesPerSecond);
+  if (!(value > 0)) return 'not stated';
+  return ui.sizeText(value) + '/s';
+}
+
+// Seconds of waiting in the words a waiting person reads: tens of seconds up
+// to a minute, whole minutes up to an hour, hours past that.
+function longSeconds(seconds) {
+  const value = Number(seconds);
+  if (!(value >= 0)) return 'not stated';
+  const secs = Math.round(value);
+  if (secs < 60) return secs + 's';
+  const minutes = Math.round(secs / 60);
+  if (minutes < 60) return minutes + 'm';
+  return Math.round(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+}
+
 // Speech is stated to the tenth of a second, the finest the engine names: a
 // rounding to whole seconds would read a render of 1.7s aloud as though it had
 // made two.
@@ -1100,6 +1121,118 @@ const barOpen = new Map();
 // who wants them. A panel watching twenty models stays a page a person can
 // read, and nothing the old card stated is lost - only what was asked for is
 // drawn.
+// One standing picture as a line: what it starts from, what it will draw, what
+// it costs, where it stands, and the hands over it. Pressing up or down moves
+// it within the line the machine holds; the header tells how the drawing goes.
+function queueLine(host, engine, model, run, total) {
+  const line = document.createElement('div');
+  line.className = 'queue-line ' + String(run.state || '');
+  const place = Number(run.queue_pos);
+  const where = document.createElement('span');
+  where.className = 'queue-place';
+  where.textContent = place === 0 ? 'on the card' : (place > 0 ? 'line ' + place : 'not lined yet');
+  where.title = total > 1 ? whole(total) + ' standing for this model' : 'the only one standing for this model';
+  line.appendChild(where);
+  if (Array.isArray(run.ref_urls)) {
+    for (const url of run.ref_urls) {
+      const back = document.createElement('img');
+      back.className = 'queue-ref';
+      back.setAttribute('width', '26');
+      back.setAttribute('height', '26');
+      back.setAttribute('alt', 'a picture this ask starts from');
+      back.title = 'this ask starts from this picture';
+      back.src = ui.fileSrc(String(url));
+      line.appendChild(back);
+    }
+  }
+  const words = document.createElement('span');
+  words.className = 'queue-words';
+  const prompt = String(run.prompt || '');
+  words.textContent = prompt !== '' ? ui.clip(prompt, 90) : '(no words kept with this job)';
+  words.title = prompt !== '' ? prompt : 'The ask came without words this line can read.';
+  line.appendChild(words);
+  const sets = [];
+  if (Number(run.steps) > 0) sets.push('steps ' + whole(Number(run.steps)));
+  if (Number(run.width) > 0 && Number(run.height) > 0) sets.push(Number(run.width) + 'x' + Number(run.height));
+  if (sets.length) {
+    const set = document.createElement('span');
+    set.className = 'queue-set';
+    set.textContent = sets.join(' · ');
+    line.appendChild(set);
+  }
+  const idn = document.createElement('span');
+  idn.className = 'queue-id';
+  idn.textContent = String(run.id || '');
+  idn.title = 'job ' + String(run.id || '');
+  line.appendChild(idn);
+  const hands = document.createElement('span');
+  hands.className = 'queue-hands';
+  if (String(run.state) === 'queued') {
+    hands.appendChild(ui.fingerAct('up', function () { void moveJobLine(engine, model, run, -1); },
+      'Move this picture one place nearer the front of the line. The one on the card keeps its place.', 'up'));
+    hands.appendChild(ui.fingerAct('down', function () { void moveJobLine(engine, model, run, 1); },
+      'Move this picture one place further back in the line.', 'down'));
+  }
+  hands.appendChild(ui.fingerAct('stop', function () { void stopJobLine(String(run.id || '')); },
+    'Stop this job: on the machine if it draws, or off the line if its turn has not come.', 'cancel'));
+  line.appendChild(hands);
+  host.appendChild(line);
+}
+
+// Where a standing job sits in the line: the one on the card first, the queued
+// ones in the machine's own order.
+function queueSort(a, b) {
+  const pa = Number(a.queue_pos) >= 0 ? Number(a.queue_pos) : Number.MAX_SAFE_INTEGER;
+  const pb = Number(b.queue_pos) >= 0 ? Number(b.queue_pos) : Number.MAX_SAFE_INTEGER;
+  if (pa !== pb) return pa - pb;
+  return (Number(a.t) || 0) - (Number(b.t) || 0);
+}
+
+// Move a line by trading its place with a neighbour in the page's own reading,
+// so the card answers the press at once. The machine is told after; when it
+// agrees, the next reading says the same. When it does not, its reading is the
+// one that redraws the card, and this page keeps no order of its own.
+function shiftLine(engine, model, id, shift) {
+  const models = (lastSnapshot && Array.isArray(lastSnapshot.models)) ? lastSnapshot.models : [];
+  for (const entry of models) {
+    if (engineWords(entry.engine) !== engine || String(entry.model) !== model) continue;
+    const runs = Array.isArray(entry.runs) ? entry.runs : [];
+    const lined = runs.filter((run) => run.kind === 'generate' &&
+      (run.state === 'running' || run.state === 'queued')).sort(queueSort);
+    const at = lined.findIndex((run) => String(run.id) === String(id));
+    if (at < 0) return false;
+    const to = at + shift;
+    if (to < 0 || to >= lined.length) return false;
+    const pa = Number(lined[at].queue_pos);
+    const pb = Number(lined[to].queue_pos);
+    if (!(pa >= 1) || !(pb >= 1)) return false;
+    const keep = lined[at].queue_pos;
+    lined[at].queue_pos = lined[to].queue_pos;
+    lined[to].queue_pos = keep;
+    return true;
+  }
+  return false;
+}
+
+async function moveJobLine(engine, model, run, shift) {
+  const id = String(run.id || '');
+  if (id === '') return;
+  if (shiftLine(engine, model, id, shift) && lastSnapshot) drawModelCards(lastSnapshot);
+  const answer = await ui.actDoor('/api/jobs/reorder', { id: id, shift: shift });
+  if (!answer || answer.ok === false) {
+    ui.log('the machine would not move that job: ' +
+      ((answer && answer.error) || 'it gave no words'), 'warn');
+    await refresh();
+  }
+}
+
+async function stopJobLine(id) {
+  if (id === '') return;
+  const answer = await ui.api('/api/jobs/' + encodeURIComponent(id) + '/cancel', 'POST');
+  if (answer) ui.log('stop sent for job ' + id + '; the drawn ones stay drawn.', 'warn');
+  else ui.log('that job is not standing any more: ' + (ui.apiError || 'the machine gave no words'), 'err');
+}
+
 function drawCard(entry, system, history) {
   const engine = engineWords(entry.engine);
   const model = String(entry.model);
@@ -1190,6 +1323,17 @@ function drawCard(entry, system, history) {
     head.appendChild(heldWords);
   }
 
+  // The quant a model stands open as, named on its own card in the same words
+  // the finished files keep beside them: an open model says what weights it
+  // works with, not just that it is open.
+  if (entry.open && entry.quant) {
+    const quant = document.createElement('span');
+    quant.className = 'card-extra';
+    quant.textContent = String(entry.quant);
+    quant.setAttribute('title', 'The quant this model stands open as - the weights the next asked job will run.');
+    head.appendChild(quant);
+  }
+
   const weights = table ? Number(table.bytes || 0) : 0;
   const shapeBytes = (table && table.memory) ? Number(table.memory.weights_bytes || 0) : 0;
   if (weights > 0 || shapeBytes > 0) {
@@ -1232,23 +1376,66 @@ function drawCard(entry, system, history) {
   actions.appendChild(toggle('info', 'facts',
     'What this model is: the memory it holds and its line, its weight files, their quant and layers, and the rate of its kept jobs.'));
   actions.appendChild(toggle('jobs', 'jobs',
-    'The jobs this engine keeps about this model, newest first, with the hands that narrow them.'));
+    'The jobs this engine keeps about this model: standing ones first with their hands, finished ones resting beneath. The hands above narrow them.'));
   head.appendChild(actions);
   main.appendChild(head);
 
   // ---------- the line that moves ----------
+  // Every standing picture of this model is a line here: what it stands for,
+  // where it stands in the line the machine holds, the hands that move it, and
+  // the hand that stops it. The progress of what is drawing now is not repeated
+  // here - the header of this page owns that, and every window reads the same
+  // line. Work of the other kinds (a model being opened, bytes coming down)
+  // keeps its moving bar, for the reader watching this card.
   const live = document.createElement('div');
   live.className = 'bar-live';
-  if (running.length) {
+  const standing = runs.filter((run) => run.kind === 'generate' &&
+    (run.state === 'running' || run.state === 'queued'));
+  const otherRunning = running.filter((run) => run.kind !== 'generate');
+  // A standing job is drawn once. While the jobs table is open the standing
+  // ones take their places at the top of that table with their hands beside
+  // them, and the card does not repeat them above it; with the table closed
+  // this line is where they live.
+  if (standing.length) {
     card.classList.add('is-running');
-    for (const run of running) {
-      const max = Number(run.max || 0);
-      const elapsed = Math.max(0, Math.round(Date.now() / 1000 - Number(run.t || 0)));
-      ui.progressSet(live, String(run.id), Number(run.done || 0), max,
-        run.kind + (max > 0 ? ' · ' + whole(run.done) + ' of ' + whole(max) + ' steps' : ' · ' + elapsed + 's so far'),
-        run.kind === 'load' ? 'load' : '');
+    standing.sort(queueSort);
+    if (!opened.jobs) {
+      live.classList.add('job-line');
+      for (const run of standing) queueLine(live, engine, model, run, standing.length);
     }
-  } else {
+  }
+  for (const run of otherRunning) {
+    card.classList.add('is-running');
+    const max = Number(run.max || 0);
+    const elapsed = Math.max(0, Math.round(Date.now() / 1000 - Number(run.t || 0)));
+    const bytes = Number(run.bytes || 0);
+    const total = Number(run.total_bytes || 0);
+    if (String(run.kind) === 'download' && bytes > 0) {
+      // a fetch states its bytes each round it ends, with the rate of the last
+      // one and the average over the fetch: the bar moves on the bytes of the
+      // file coming down, and the line says how much of it stands here, how
+      // fast it is coming, and how long the rest stands at that rate.
+      const speed = Number(run.speed || 0);
+      const avg = Number(run.avg || 0);
+      const words = ['download'];
+      if (max > 1) words.push(whole(run.done) + ' of ' + whole(max) + ' files');
+      if (max > 1 && run.file) words.push(String(run.file));
+      words.push(total > 0 ? ui.sizeText(bytes) + ' of ' + ui.sizeText(total) : ui.sizeText(bytes) + ' down');
+      words.push(byteRate(speed) + ' now');
+      words.push(byteRate(avg) + ' average');
+      if (total > 0)
+        words.push(speed > 0 ? 'about ' + longSeconds((total - bytes) / speed) + ' left' : 'time left not stated');
+      else
+        words.push(secondsText(elapsed * 1000) + ' so far');
+      ui.progressSet(live, String(run.id), bytes, total, words.join(' · '), '');
+      continue;
+    }
+    ui.progressSet(live, String(run.id), Number(run.done || 0), max,
+      run.kind + (max > 0 ? ' · ' + whole(run.done) + ' of ' + whole(max) + ' ' +
+        (String(run.kind) === 'download' ? 'files' : 'steps') : ' · ' + elapsed + 's so far'),
+      run.kind === 'load' ? 'load' : '');
+  }
+  if (!standing.length && !otherRunning.length) {
     const last = shown.find((run) => runMs(run) > 0) || shown[0];
     if (last) {
       const rate = runRate(last);
@@ -1379,10 +1566,21 @@ function drawCard(entry, system, history) {
   // looking at and the tables beside it stay as they were.
   main.appendChild(controls.wrap);
 
-  // The jobs themselves, newest first, in the engine's own words. The rows are a
-  // window on that work: the words under the table say what it shows against what
-  // passes the filter and what the engine keeps.
-  const listed = shown.slice(0, cardRowsShown);
+  // The jobs themselves in the engine's own words: the ones standing come
+  // first in the machine's queue order, and the finished ones rest beneath
+  // them newest first - a job that is done stops climbing the list. The rows
+  // are a window on that work: the words under the table say what it shows
+  // against what passes the filter and what the engine keeps.
+  const standingRun = (run) => run.kind === 'generate' &&
+    (run.state === 'running' || run.state === 'queued');
+  const ordered = shown.slice().sort((a, b) => {
+    const sa = standingRun(a) ? 0 : 1;
+    const sb = standingRun(b) ? 0 : 1;
+    if (sa !== sb) return sa - sb;
+    if (sa === 0) return queueSort(a, b);
+    return 0;
+  });
+  const listed = ordered.slice(0, cardRowsShown);
   const listing = document.createElement('div');
   listing.className = 'card-table';
   main.appendChild(listing);
@@ -1435,6 +1633,22 @@ function drawCard(entry, system, history) {
       made.textContent = 'made: ' + (slash >= 0 ? madeWords.slice(slash + 1) : madeWords);
       made.setAttribute('title', madeWords);
       row.appendChild(made);
+    }
+    if (standingRun(run)) {
+      // The hands that move a line ride beside the standing row itself: the
+      // table is where a standing job is drawn while it is open, so this is
+      // where its turn gets pushed or stopped.
+      const hands = document.createElement('span');
+      hands.className = 'queue-hands';
+      if (String(run.state) === 'queued') {
+        hands.appendChild(ui.fingerAct('up', function () { void moveJobLine(engine, model, run, -1); },
+          'Move this picture one place nearer the front of the line. The one on the card keeps its place.', 'up'));
+        hands.appendChild(ui.fingerAct('down', function () { void moveJobLine(engine, model, run, 1); },
+          'Move this picture one place further back in the line.', 'down'));
+      }
+      hands.appendChild(ui.fingerAct('stop', function () { void stopJobLine(String(run.id || '')); },
+        'Stop this job: on the machine if it draws, or off the line if its turn has not come.', 'cancel'));
+      row.appendChild(hands);
     }
     listing.appendChild(row);
     const id = String(run.id || '');
@@ -1644,6 +1858,11 @@ function jobPanel(engine, model, table, run) {
     ['state', chosen.state],
     ['progress', Number(chosen.max || 0) > 0 ? whole(chosen.done) + ' of ' + whole(chosen.max) + ' steps'
       : (chosen.done !== undefined && chosen.done !== null ? whole(chosen.done) + ' answered · its window is not stated' : '')],
+    ['bytes', String(chosen.kind) === 'download' && Number(chosen.bytes || 0) > 0
+      ? ui.sizeText(chosen.bytes) + (Number(chosen.total_bytes || 0) > 0 ? ' of ' + ui.sizeText(chosen.total_bytes) : '') +
+        (Number(chosen.speed || 0) > 0 ? ' · ' + byteRate(chosen.speed) + ' last round · ' + byteRate(chosen.avg) + ' average' : '') +
+        (chosen.file ? ' · ' + String(chosen.file) : '')
+      : ''],
     ['asked', ui.clock(asked)],
     ['ended', ui.clock(chosen.ended_at)],
     ['taken', secondsText(chosen.elapsed_ms)],

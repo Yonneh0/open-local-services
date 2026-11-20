@@ -501,21 +501,89 @@ namespace ols
     static std::map<std::string, std::string> gCtxForm;
     static uint64_t gUseTick = 0;
 
+    // The card answers two questions about itself - the whole bytes of device
+    // memory it is, and the major of its compute capability - through the CUDA
+    // runtime where this build linked one, and where it linked none (the Windows
+    // builds) through nvml.dll, which stands with the driver on every Windows
+    // machine that runs a CUDA card. Asking nvml costs no CUDA context and no
+    // toolkit; it answers for the card whether or not the engine has opened it.
+    // A machine where neither answers - a card of another maker, no NVIDIA
+    // driver - reads as no card (0, -1) and the engine is left alone. The probe
+    // answering nothing while the engine burns the card anyway is not innocent:
+    // measured on MSI 2026-11-19, the Windows binary asked its 8 GiB card for a
+    // 6.4 GB graph segment against an unlimited budget and died on it, because
+    // both the weight budget and the clip window read this one answer.
+    struct CardAnswer
+    {
+      long long totalBytes = 0;
+      int computeMajor = -1;
+      int computeMinor = 0;
+    };
+    static const CardAnswer &cardAnswer()
+    {
+      static const CardAnswer answer = []()
+      {
+        CardAnswer out;
+#ifdef OLS_CUDART_LINKED
+        std::size_t freeBytes = 0;
+        std::size_t totalBytes = 0;
+        if (cudaMemGetInfo(&freeBytes, &totalBytes) == 0)
+          out.totalBytes = static_cast<long long>(totalBytes);
+        // 75 and 76 are the runtime's compute-capability major/minor attributes, fixed numbers
+        if (cudaDeviceGetAttribute(&out.computeMajor, 75, 0) != 0)
+          out.computeMajor = -1;
+        if (cudaDeviceGetAttribute(&out.computeMinor, 76, 0) != 0)
+          out.computeMinor = 0;
+        if (out.totalBytes > 0 || out.computeMajor >= 0)
+          return out;
+#endif
+#if defined(_WIN32)
+        struct NvmlMemory
+        {
+          unsigned long long total, free, used;
+        };
+        using InitFn = int(__cdecl *)();
+        using CountFn = int(__cdecl *)(unsigned *);
+        using HandleFn = int(__cdecl *)(unsigned, void **);
+        using MemoryFn = int(__cdecl *)(void *, NvmlMemory *);
+        using CapFn = int(__cdecl *)(void *, int *, int *);
+        if (HMODULE nvml = LoadLibraryA("nvml.dll"))
+        {
+          const InitFn init = reinterpret_cast<InitFn>(GetProcAddress(nvml, "nvmlInit_v2"));
+          const CountFn count = reinterpret_cast<CountFn>(GetProcAddress(nvml, "nvmlDeviceGetCount_v2"));
+          const HandleFn handle = reinterpret_cast<HandleFn>(GetProcAddress(nvml, "nvmlDeviceGetHandleByIndex_v2"));
+          const MemoryFn memory = reinterpret_cast<MemoryFn>(GetProcAddress(nvml, "nvmlDeviceGetMemoryInfo"));
+          const CapFn cap = reinterpret_cast<CapFn>(GetProcAddress(nvml, "nvmlDeviceGetCudaComputeCapability"));
+          unsigned devices = 0;
+          void *card = nullptr;
+          if (init && count && handle && memory && init() == 0 && count(&devices) == 0 && devices > 0 &&
+              handle(0, &card) == 0 && card)
+          {
+            NvmlMemory mem{};
+            if (memory(card, &mem) == 0 && mem.total > 0)
+              out.totalBytes = static_cast<long long>(mem.total);
+            int major = -1;
+            int minor = 0;
+            if (cap && cap(card, &major, &minor) == 0)
+            {
+              out.computeMajor = major;
+              out.computeMinor = minor;
+            }
+          }
+        }
+#endif
+        return out;
+      }();
+      return answer;
+    }
+
     // The working-set ceiling for image models: a standing three quarters of the
     // largest GPU heap, so the compute buffers and activations still fit beside
     // the resident weights. what can actually be held is answered when a context
     // is opened, where the engine asks its own allocator for room.
     static long long gpuTotalBytes()
     {
-#ifdef OLS_CUDART_LINKED
-      std::size_t freeBytes = 0;
-      std::size_t totalBytes = 0;
-      if (cudaMemGetInfo(&freeBytes, &totalBytes) != 0)
-        return 0;
-      return static_cast<long long>(totalBytes);
-#else
-      return 0;
-#endif
+      return cardAnswer().totalBytes;
     }
 
     static long long memoryBudgetBytes()
@@ -539,6 +607,11 @@ namespace ols
     static std::map<std::string, bool> gPendingErase;
     static std::mutex gGenerationMutex;
     static std::deque<std::string> gJobOrder;
+    // One render works on the card at a time, whatever model it stands for.
+    // The order a generate job keeps in gJobOrder is the line it stands in:
+    // whoever reaches the head of the standing generate jobs while the card
+    // is free is the one that goes.
+    static bool gCardBusy = false;
     // Why the last call this thread made was refused. It is read on the thread
     // that made the call - the door asks for the reason in the breath after the
     // work was refused - so it stands one per thread: held in one place for the
@@ -832,12 +905,23 @@ namespace ols
     {
       json timingRecord;
       bool willFile = false;
+      bool wake = false;
       {
         std::lock_guard<std::mutex> lock(gMutex);
         json &record = gJobs[job];
+        wake = ols::jobStanding(record);
         record["state"] = state;
         if (ols::stateEnded(state))
         {
+          // the card lets go with the run that held it, and the line wakes to
+          // whoever stands next; a job that ended before its turn never held
+          // the card and lets nothing go.
+          if (gCardBusy && record.contains("on_card") && record["on_card"].is_boolean() &&
+              record["on_card"].get<bool>())
+          {
+            gCardBusy = false;
+            record.erase("on_card");
+          }
           record["ended_at"] = nowSeconds();
           const auto started = gStartedMs.find(job);
           if (started != gStartedMs.end())
@@ -864,6 +948,8 @@ namespace ols
       }
       if (willFile)
         noteTiming(timingRecord);
+      if (wake)
+        gCondition.notify_all();
       if (state == ols::kStateCancelled)
         pushEvent(job, json{{"type", "cancelled"}}.dump());
     }
@@ -924,6 +1010,48 @@ namespace ols
       return found != gCancel.end() && found->second;
     }
 
+    // Stand in the line until the card is free and no standing generate job was
+    // asked for before this one: gJobOrder is the order the machine took its
+    // asks in, and a reordering moves a job inside that line. The job holds the
+    // card the moment it sees its turn - before it lets the lock go - so two
+    // waiters never cross the head together. A stop asked while standing is
+    // believed here: the engine is never started for a picture nobody wants.
+    static bool waitForTurn(const std::string &job)
+    {
+      std::unique_lock<std::mutex> lock(gMutex);
+      while (true)
+      {
+        const auto stop = gCancel.find(job);
+        if (stop != gCancel.end() && stop->second)
+          return false;
+        bool clear = !gCardBusy;
+        if (clear)
+          for (const auto &name : gJobOrder)
+          {
+            if (name == job)
+              break;
+            const auto row = gJobs.find(name);
+            if (row == gJobs.end() || row->second.value("kind", std::string()) != "generate")
+              continue;
+            if (ols::jobStanding(row->second))
+            {
+              clear = false;
+              break;
+            }
+          }
+        if (clear)
+        {
+          gCardBusy = true;
+          gJobs[job]["on_card"] = true;
+          break;
+        }
+        gCondition.wait_for(lock, std::chrono::seconds(1));
+      }
+      lock.unlock();
+      markState(job, ols::kStateRunning);
+      return true;
+    }
+
     // A job runs on a thread of its own: an exception that reached the top of
     // that thread would end the process, so the failure becomes the job's own
     // error state, which is what the pages read.
@@ -956,13 +1084,14 @@ namespace ols
         std::lock_guard<std::mutex> lock(gKeysMutex);
         token = url.rfind("https://civitai.com/", 0) == 0 ? gCivitaiKey : gHfToken;
       }
-      return ols::platform::curlFetch(dest, url, token, maxSeconds);
+      return ols::platform::curlFetch(dest, url, token, maxSeconds, maxSeconds > 0 ? 0 : 3);
     }
 
     // How long one round of an internet fetch is allowed to run: one curl for the
     // whole of a file answers when the file is done or the link died, and nothing
-    // in between - so cancel waits for all of it and the bar states nothing while
-    // thirty gigabytes arrive. Each round resumes from the bytes already down.
+    // in between - so cancel would wait for all of it, and the bar would state
+    // nothing while thirty gigabytes arrive. Each round resumes from the bytes
+    // already down and ends by telling the watching job what it has.
     constexpr int kFetchSliceSeconds = 20;
 
     // A file from the internet, brought down in rounds. True when the address
@@ -970,16 +1099,28 @@ namespace ols
     // states now stands on the disk. False when the caller stopped asking, or when
     // the link stopped carrying the file; which of those it was is the caller's to
     // ask, because it is the one that knows whether cancel was pressed.
+    // Where a caller leaves word (stated), each round tells it the bytes that
+    // stand on the disk and the rate the round just carried them at - once before
+    // the first round too, so a bar watching the file starts from where the bytes
+    // already stand rather than from nothing.
     static bool fetchWhole(const std::string &url, const std::string &dest, long long want,
-                           const std::function<bool()> &cancelled, int &answerOut)
+                           const std::function<bool()> &cancelled, int &answerOut,
+                           const std::function<void(long long, double)> &stated = std::function<void(long long, double)>())
     {
       const long long goal = want > 0 ? want : 0;
       int stalls = 0;
+      bool told = false;
       for (;;)
       {
         if (cancelled && cancelled())
           return false;
         const long long before = ols::fileSize(dest);
+        if (stated && !told)
+        {
+          told = true;
+          stated(before, 0.0);
+        }
+        const long long beganAt = ols::steadyMs();
         const int answer = runCurl(url, dest, kFetchSliceSeconds);
         answerOut = answer;
         // This machine would not ask for the file at all, because one of its
@@ -988,6 +1129,11 @@ namespace ols
         if (answer == -1)
           return false;
         const long long after = ols::fileSize(dest);
+        if (stated)
+        {
+          const long long took = ols::steadyMs() - beganAt;
+          stated(after, took > 0 ? double(after > before ? after - before : 0) * 1000.0 / double(took) : 0.0);
+        }
         if (answer == 0 || (goal > 0 && after >= goal))
           return true;
         stalls = after > before ? 0 : stalls + 1;
@@ -1610,7 +1756,11 @@ namespace ols
         // Uncensored-Q4_K_M-14.05GiB.gguf", which its page says to pass with --llm
         // beside a fl2va denoiser - so it is offered as a form that replaces the
         // encoder while the denoiser stays the row's. It is not-for-all-audiences,
-        // which is said on the card rather than hidden here.
+        // which is said on the card rather than hidden here. That page names two
+        // rungs of the encoder: the Q4_K_M it exemplifies and the Q8_0 -
+        // "Sakura-MiniMax-H3-TextEncoder-Uncensored-Q8_0-25.60GiB.gguf" - the rung
+        // nearest the encoder's original weights, offered beside it for a machine
+        // with the room to hold it.
         std::vector<ModelForm> h3;
         for (const char *rung : {"Q2_K", "Q3_K", "Q4_K", "Q5_0", "Q6_K", "Q8_0"})
         {
@@ -1627,6 +1777,9 @@ namespace ols
         h3.push_back(ModelForm{"Sakura-Q4_K_M",
                                {{"llm", "hf:webmp3/Sakura-MiniMax-H3-Uncensored-GGUF/"
                                         "Sakura-MiniMax-H3-TextEncoder-Uncensored-Q4_K_M-14.05GiB.gguf"}}});
+        h3.push_back(ModelForm{"Sakura-Q8_0",
+                               {{"llm", "hf:webmp3/Sakura-MiniMax-H3-Uncensored-GGUF/"
+                                         "Sakura-MiniMax-H3-TextEncoder-Uncensored-Q8_0-25.60GiB.gguf"}}});
         out.push_back({"minimax-h3", h3});
         return out;
       }();
@@ -1943,19 +2096,15 @@ namespace ols
     // On some GPUs the engine's flash-attention kernel has no device code for
     // that card (it aborts the whole process, which took the server down
     // mid-suite on the compute-7.0 box). The engine's own probe cannot see
-    // this, so ask the CUDA runtime for the device's compute capability and
-    // turn flash-attention off before the model is opened. Log it once.
+    // this, so ask the card before the model is opened and turn flash-attention
+    // off. The rule is held to the cards the abort was ever seen on: the
+    // weight maker's own run of MiniMax H3 carries --diffusion-fa on ordinary
+    // cards, and 2026-11-19 a compute-7.5 card (RTX 2080) held by a blanket
+    // under-8.0 rule ran a grainy clip without it while the same settings on a
+    // card the rule did not touch ran clean. Log it once.
     static int cudaDeviceComputeMajor()
     {
-#ifdef OLS_CUDART_LINKED
-      int major = -1;
-      // 75 is the runtime's compute-capability-major attribute, a fixed number
-      if (cudaDeviceGetAttribute(&major, 75, 0) != 0)
-        return -1;
-      return major;
-#else
-      return -1;
-#endif
+      return cardAnswer().computeMajor;
     }
 
     // The engine's own last complaint, kept where a failed run can speak it.
@@ -1967,15 +2116,7 @@ namespace ols
     // Whole bytes of device memory the card states, or 0 when no card answers.
     static long long cudaDeviceTotalBytes()
     {
-#ifdef OLS_CUDART_LINKED
-      size_t total = 0;
-      size_t freeBytes = 0;
-      if (cudaMemGetInfo(&freeBytes, &total) != 0)
-        return 0;
-      return static_cast<long long>(total);
-#else
-      return 0;
-#endif
+      return cardAnswer().totalBytes;
     }
 
     static std::string currentChosenQuant(const std::string &modelId)
@@ -2095,15 +2236,21 @@ namespace ols
       params.n_threads = gThreads;
       params.enable_mmap = true;
       params.sage_attn = sage;
+      // both pages that name how these weights are run take the noise from the
+      // cpu ("--rng cpu" - docs/minimax_h3.md and the weight maker's own usage
+      // page), where the engine's standing answer is the card's generator.
+      if (modelId == "minimax-h3")
+        params.rng_type = CPU_RNG;
       if (!def->wtype.empty())
         params.wtype = str_to_sd_type(def->wtype.c_str());
-      static const int kCudaMajor = cudaDeviceComputeMajor();
-      if (kCudaMajor >= 0 && kCudaMajor < 8)
+      static const CardAnswer &kCard = cardAnswer();
+      if (kCard.computeMajor >= 0 &&
+          (kCard.computeMajor < 7 || (kCard.computeMajor == 7 && kCard.computeMinor < 5)))
       {
         static const std::string kFlashOff = "off";
         params.flash_attn_mode = kFlashOff.c_str();
-        std::fprintf(stderr, "[image] cuda device is compute %d: flash attention was not built for it, so it is off\n",
-                     kCudaMajor);
+        std::fprintf(stderr, "[image] cuda device is compute %d.%d: flash attention was not built for it, so it is off\n",
+                     kCard.computeMajor, kCard.computeMinor);
         std::fflush(stderr);
       }
       // The card of this machine, named in the engine's words, is what a model
@@ -2234,6 +2381,15 @@ namespace ols
         long long gib = (total - 4LL * 1024 * 1024 * 1024) / (1024LL * 1024 * 1024);
         if (gib < 4)
           gib = 4;
+        // Measured on MSI 2026-11-19: an 8 GiB card under this rule was handed
+        // four GiB, and the manager counts the runtime buffers it prepares in
+        // its every ask - one segment of a twelve-frame clip wanted 4341 MB and
+        // was refused against a 3904 MB budget while the card itself stood
+        // 6689 MB free. Such a card carries six whole GiB of the clip with the
+        // driver's own share left standing outside the budget; where the
+        // subtraction would leave the floor at four, six is what the card has.
+        if (gib <= 4 && total >= 7500LL * 1024 * 1024)
+          gib = 6;
         return std::to_string(gib);
       }();
       params.max_vram = kVramBudget.empty() ? nullptr : kVramBudget.c_str();
@@ -2386,9 +2542,37 @@ namespace ols
           // resumes from those bytes.
           const std::function<bool()> stopAskedNow = [job]()
           { return cancelledRequested(job); };
+          // each round of the fetch stands its numbers on the job's record -
+          // the bytes on the disk, the size the card states, the rate of the
+          // round just ended and the average over this fetch - because a page
+          // watching the bar has nothing else to read them from, and "download"
+          // alone is no answer while twenty-five gigabytes arrive.
+          const long long totalBytes = spec.value("size", 0LL);
+          const long long fromBytes = ols::fileSize(dest);
+          const long long beganFetch = ols::steadyMs();
+          const std::function<void(long long, double)> told =
+              [job, totalBytes, fromBytes, beganFetch, local](long long bytes, double speed)
+          {
+            {
+              std::lock_guard<std::mutex> lock(gMutex);
+              json &record = gJobs[job];
+              record["bytes"] = bytes;
+              if (totalBytes > 0)
+                record["total_bytes"] = totalBytes;
+              record["speed"] = speed;
+              const long long took = ols::steadyMs() - beganFetch;
+              record["avg"] = took > 0
+                                  ? double(bytes > fromBytes ? bytes - fromBytes : 0) * 1000.0 / double(took)
+                                  : 0.0;
+              record["file"] = local;
+            }
+            pushEvent(job, json{{"type", "fetch"},
+                                {"bytes", bytes},
+                                {"total", totalBytes},
+                                {"speed", speed}}.dump());
+          };
           int fetchAnswer = 0;
-          const bool cameWhole =
-              fetchWhole(url, dest, spec.value("size", 0LL), stopAskedNow, fetchAnswer);
+          const bool cameWhole = fetchWhole(url, dest, totalBytes, stopAskedNow, fetchAnswer, told);
           transferred = fetchAnswer;
           if (!cameWhole && cancelledRequested(job))
           {
@@ -3313,10 +3497,21 @@ namespace ols
       static const int kMaxSide = 4096;
       static const int kMinSteps = 1;
       static const int kMaxSteps = 150;
-      static const int kMaxBatchPerRun = 4;
+      // One run draws its pictures back to back inside one model open, and a
+      // stop between pictures keeps the ones already written - so the ceiling
+      // bounds a run's silence between landings rather than the ask. The page
+      // hands its batches in runs of its own fill; a number above that only
+      // stands where another client asks deeper.
+      static const int kMaxBatchPerRun = 16;
       static const int kMaxReferenceImages = 10;
-      const int width = request.value("width", def->width > 0 ? def->width : kDefaultSide);
-      const int height = request.value("height", def->height > 0 ? def->height : kDefaultSide);
+      const int askedWidth = request.value("width", def->width > 0 ? def->width : kDefaultSide);
+      const int askedHeight = request.value("height", def->height > 0 ? def->height : kDefaultSide);
+      // the sides a clip is finally drawn at: the ones asked, less when the
+      // card's window bends a moved-from clip smaller below. what was asked
+      // stays in the run's ask; what is left is what the engine and the file
+      // speak of.
+      int width = askedWidth;
+      int height = askedHeight;
       const int steps = request.value("steps", def->steps);
       const double guidanceAsked = request.value("guidance", static_cast<double>(def->guidance));
       const float guidance = static_cast<float>(guidanceAsked);
@@ -3362,36 +3557,10 @@ namespace ols
         markState(job, ols::kStateError);
         return;
       }
-      // A card only holds so many picture-frames at once. The engine keeps no
-      // window over them: the whole clip is one working set, and an ask past
-      // the card dies inside it after every weight has moved. The maker's own
-      // recipe runs 56 frames of 864x480 on a 24 GiB card with the weights
-      // streaming, so that many picture-frames are taken as what such a card
-      // holds, and the window a card of this size holds follows from it.
-      // An ask past the window is bent down to the last whole grid point of
-      // four frames and says so; an ask the card can hold is never touched.
-      if (def->video)
-      {
-        const long long cardBytes = cudaDeviceTotalBytes();
-        if (cardBytes > 0)
-        {
-          const long long kVendorPixelFrames = 864LL * 480 * 56;
-          const long long window = kVendorPixelFrames * (cardBytes / (1024LL * 1024 * 1024)) / 24;
-          const long long asked = static_cast<long long>(framesAsked) * width * height;
-          if (asked > window)
-          {
-            int fits = static_cast<int>(window / (static_cast<long long>(width) * height));
-            fits -= fits % 4;
-            if (fits < kMinFrames)
-              fits = kMinFrames;
-            std::fprintf(stderr, "[image] %s asked for %d frames of %dx%d: this card's window holds %d, the clip will be made that long\n",
-                         modelId.c_str(), static_cast<int>(asked / (static_cast<long long>(width) * height)),
-                         width, height, fits);
-            std::fflush(stderr);
-            framesAsked = fits;
-          }
-        }
-      }
+      // what was asked before any bending below: a record that says twelve
+      // frames where a hundred and twenty-four were asked is the card speaking,
+      // and only the two numbers side by side say so.
+      const int framesWanted = framesAsked;
       // the pictures this run starts from, in the order they were handed over:
       // an editing model reads each of them and keeps them apart by position,
       // a redraw model takes one picture and changes it. naming a single
@@ -3419,6 +3588,90 @@ namespace ols
                            std::to_string(kMaxReferenceImages) + ")");
         markState(job, ols::kStateError);
         return;
+      }
+      // A card only holds so many picture-frames at once. The engine keeps no
+      // window over them: the whole clip is one working set, and an ask past
+      // the card dies inside it after every weight has moved. The maker's own
+      // recipe runs 56 frames of 864x480 on a 24 GiB card with the weights
+      // streaming, so that many picture-frames are taken as what such a card
+      // holds, and the window a card of this size holds follows from it.
+      // A clip that starts from a picture carries that picture's features
+      // beside its own frames: measured on MSI 2026-11-19, the same 960x544
+      // clip asked 4341 MB of the manager from words alone and 6355 MB from an
+      // image - and a working model of the cost says why: the picture adds
+      // about 159 bytes per picture-frame on top of the clip's own 37, over a
+      // floor of 4111 MB. The engine lifts a frame count up to the next point
+      // of the grid its temporal model walks - every seventeen frames and
+      // five - and the one step above five is twenty-two: five frames is a
+      // fifth of a second, which reads as a still no matter what the model
+      // drew. So a window too small for twenty-two whole moved-from frames
+      // bends the PICTURE down before it bends the length, rather than
+      // standing a five-frame clip that looks broken; measured the next way
+      // was eight clips of 0.2 s that a person correctly called static.
+      if (def->video)
+      {
+        const long long cardBytes = cudaDeviceTotalBytes();
+        if (cardBytes > 0)
+        {
+          const long long kVendorPixelFrames = 864LL * 480 * 56;
+          long long window = kVendorPixelFrames * (cardBytes / (1024LL * 1024 * 1024)) / 24;
+          if (!sources.empty())
+            window = window * 2 / 3;
+          const long long asked = static_cast<long long>(framesAsked) * width * height;
+          if (asked > window)
+          {
+            int fits = static_cast<int>(window / (static_cast<long long>(width) * height));
+            if (sources.empty())
+            {
+              fits -= fits % 4;
+              if (fits < kMinFrames)
+                fits = kMinFrames;
+              std::fprintf(stderr, "[image] %s asked for %d frames of %dx%d: this card's window holds %d, the clip will be made that long\n",
+                           modelId.c_str(), framesWanted, width, height, fits);
+            }
+            else
+            {
+              if (fits < 22)
+              {
+                // the window cannot hold one whole grid step of frames at the
+                // asked size: trade the side for the seconds, quarter-limit
+                // held (a 256-wide picture is the smallest one worth moving).
+                double scale = std::sqrt((window / 22.0) / (static_cast<double>(width) * height)) * 0.96;
+                int bentW = static_cast<int>(width * scale) & ~15;
+                int bentH = static_cast<int>(height * scale) & ~15;
+                if (bentW < 256)
+                  bentW = 256;
+                if (bentH < 256)
+                  bentH = 256;
+                while (static_cast<long long>(bentW) * bentH * 22 > window &&
+                       (bentW > 256 || bentH > 256))
+                {
+                  bentW = (bentW * 9 / 10) & ~15;
+                  bentH = (bentH * 9 / 10) & ~15;
+                  if (bentW < 256)
+                    bentW = 256;
+                  if (bentH < 256)
+                    bentH = 256;
+                }
+                if (static_cast<long long>(bentW) * bentH * 22 <= window && bentW != width)
+                {
+                  std::fprintf(stderr, "[image] %s asked for %d frames of %dx%d: that card's window holds fewer than twenty-two of those, so the picture bends to %dx%d to keep the clip a clip\n",
+                               modelId.c_str(), framesWanted, width, height, bentW, bentH);
+                  width = bentW;
+                  height = bentH;
+                }
+              }
+              fits = static_cast<int>(window / (static_cast<long long>(width) * height));
+              fits -= (fits - kMinFrames) % 17;
+              if (fits < kMinFrames)
+                fits = kMinFrames;
+              std::fprintf(stderr, "[image] %s: the clip will be %d frames of %dx%d\n",
+                           modelId.c_str(), fits, width, height);
+            }
+            std::fflush(stderr);
+            framesAsked = fits;
+          }
+        }
       }
       struct FreeRefs
       {
@@ -3476,10 +3729,16 @@ namespace ols
       }
       // The whole of a run that stands on the card - opening what it draws
       // with, staging weights, and every step - happens one run at a time,
-      // behind the gate beside the contexts. Counting the run busy before the
-      // gate is crossed would let a queued run cast the standing one out of
-      // the card's memory while that one still holds it; waiting first means
-      // whoever holds the card is whoever holds it.
+      // behind the gate beside the contexts. Standing for the turn first means
+      // the line is the order the machine took its asks in, and not the order
+      // threads happened to wake; counting the run busy before it is crossed
+      // would let a queued run cast the standing one out of the card's memory
+      // while that one still holds it.
+      if (!waitForTurn(job))
+      {
+        markState(job, ols::kStateCancelled);
+        return;
+      }
       std::lock_guard<std::mutex> cardGate(gCardGate);
       {
         std::lock_guard<std::mutex> lock(gCtxMutex);
@@ -3509,7 +3768,12 @@ namespace ols
       // drift apart from the one that was used.
       const bool sageAsked = request.value("sage_attn", prefOn("sage_attn"));
       const bool cpuAsked = request.value("cpu", prefOn("cpu"));
+      const long long openBegan = ols::steadyMs();
       sd_ctx_t *ctx = openContext(modelId, sageAsked, cpuAsked, error, &openedForm);
+      // the open says how much of a run was moving weights rather than drawing:
+      // zero when the model was already standing, whole seconds when it was not.
+      const long long openMs = ols::steadyMs() - openBegan;
+      std::string deviceLabel;
       if (!ctx)
       {
         noteError(job, error);
@@ -3705,7 +3969,8 @@ namespace ols
         std::string deviceName;
         if (!stoodOnCpu)
           deviceName = gpuDeviceName();
-        asked["device"] = stoodOnCpu || deviceName.empty() ? std::string(stoodOnCpu ? "cpu" : "card") : deviceName;
+        deviceLabel = stoodOnCpu || deviceName.empty() ? std::string(stoodOnCpu ? "cpu" : "card") : deviceName;
+        asked["device"] = deviceLabel;
         asked["sage_attn"] = sageAsked;
         asked["batch"] = img.batch_count;
         asked["refs"] = static_cast<int>(sources.size());
@@ -3775,47 +4040,109 @@ namespace ols
         int sampleSteps;
         int pictures;
         int picturesDone;
+        int anchor;    // the engine's own tick total for the trusted window
+        bool full;     // the current picture's window was drawn whole
+        int last;      // the last progress a page was told
       };
-      CancelProbe probe{job, ctx, sample.sample_steps, img.batch_count, 0};
+      CancelProbe probe{job, ctx, sample.sample_steps, img.batch_count, 0, 0, false, 0};
       auto thunk = [](int step, int stepsTotal, float, void *userData)
       {
         auto *probe = static_cast<CancelProbe *>(userData);
         const std::string jobId = probe->job;
-        // the engine counts its own passes, which are not always one per step the
-        // run named - one cold run reported 140 for a window of four - so a page
-        // would print a step count and a rate for a window that run never asked
-        // for; what the page reads is progress inside the window this run named.
         const int window = probe->sampleSteps > 0 ? probe->sampleSteps : 1;
-        const int ticks = stepsTotal > 0 ? stepsTotal : 1;
         const int pictures = probe->pictures > 0 ? probe->pictures : 1;
-        // the engine's own opening tick of a sampling window - zero of its own
-        // steps - starts this picture's count from nothing, whatever the weight
-        // loading and the text encoding left standing before it; the window of
-        // the pictures already made is the only ground it may stand on.
-        if (step == 0 && ticks == window)
+        const int nominal = probe->sampleSteps > 0 ? probe->sampleSteps : 1;
+        // This one hook hears every phase the engine reports, and every phase
+        // climbs a ladder of its own: weight loading counts tensors by the
+        // hundred and seventy, tile decoding counts tile passes, text encoding
+        // counts its own. A bar that believed them all blinks to its last step
+        // before the first real one, then hangs there until the file lands -
+        // and one ladder looks exactly like the sampling from the inside: it
+        // opens at zero and climbs to its whole. What sets the sampling apart
+        // is the size of the ladder it climbs: it is the phase the run's
+        // steps count, so its engine total reads the number of steps the ask
+        // named, while the readying phases count bytes and tiles and end on no
+        // such number. A ladder that long is the window and is believed from
+        // its first tick; a ladder of any other count never teaches the page.
+        // And when no ladder ever matches the steps - which the readying
+        // phases never do and no scheduler seen here either - the honest
+        // floor is a bar that holds at zero and turns to the picture when it
+        // lands, rather than one that lies about a step it never took.
+        if (step <= 0)
         {
-          const int grounded = probe->picturesDone * window;
-          noteProgress(jobId, grounded, window * pictures);
+          if (probe->anchor <= 0)
+            noteProgress(jobId, 0, window * pictures);  // the wait has a size
+          else if (probe->full && stepsTotal == nominal &&
+                   probe->picturesDone + 1 < pictures)
+          {
+            // A whole window behind it, this count opened at zero again: the
+            // run's next picture.
+            probe->picturesDone += 1;
+            probe->full = false;
+            probe->last = probe->picturesDone * window;
+            noteProgress(jobId, probe->picturesDone * window, window * pictures);
+          }
+          // A stop asked after this run has already drawn pictures of its batch
+          // is believed from the start of the next picture, so what came out
+          // stays; a stop before the first picture is believed at once, there
+          // being nothing yet to keep.
           if (cancelledRequested(jobId))
-            sd_cancel_generation(probe->ctx, SD_CANCEL_ALL);
+            sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
+                                                                      : SD_CANCEL_ALL);
           return;
         }
-        int within = static_cast<int>((static_cast<long long>(step + 1) * window) / ticks);
+        if (probe->anchor <= 0)
+        {
+          // A window as long as the steps named, and seen from its first step:
+          // an engine pass seen here opens at zero, completes to the step count
+          // whole inside a heartbeat, and never walks the middle - a bar that
+          // believed it jumped to its end seconds before the first real step
+          // was drawn. Only a ladder that starts counting at one is the
+          // sampling, for the sampler reports every step as it takes it; a
+          // phase that skips its first step never teaches the page at all.
+          if (stepsTotal == nominal && step == 1)
+            probe->anchor = stepsTotal;
+          else
+          {
+            if (cancelledRequested(jobId))
+              sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
+                                                                        : SD_CANCEL_ALL);
+            return;  // some other phase's ladder, or one that skipped its start
+          }
+        }
+        if (stepsTotal != probe->anchor || probe->full)
+        {
+          // A whole window takes no more ticks until its zero, and ladders
+          // of another count are other phases - tiles and bytes are not steps.
+          if (cancelledRequested(jobId))
+            sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
+                                                                      : SD_CANCEL_ALL);
+          return;
+        }
+        int within = static_cast<int>((static_cast<long long>(step) * window) /
+                                      probe->anchor);
         if (within > window)
           within = window;
         if (within < 1)
           within = 1;
-        // a run that makes more than one picture names that window for every one
-        // of them: a page that reads only one picture's window calls a two-picture
-        // run done while its second picture is still being made. the steps of all
-        // the pictures this run was asked for are the work it has left.
         const int done = probe->picturesDone * window + within;
-        noteProgress(jobId, done, window * pictures);
-        if (within >= window && probe->picturesDone < pictures - 1)
-          probe->picturesDone += 1;
+        if (done > probe->last)
+        {
+          probe->last = done;
+          noteProgress(jobId, done, window * pictures);
+        }
+        if (within >= window)
+          probe->full = true;
         if (cancelledRequested(jobId))
-          sd_cancel_generation(probe->ctx, SD_CANCEL_ALL);
+          sd_cancel_generation(probe->ctx, probe->picturesDone > 0 ? SD_CANCEL_NEW_LATENTS
+                                                                    : SD_CANCEL_ALL);
       };
+      // Before the engine speaks at all, a page may have been waiting on this
+      // job through the whole of its open: the line below names the window so
+      // the bar stripes at zero rather than saying nothing.
+      noteProgress(job, 0,
+                   (sample.sample_steps > 0 ? sample.sample_steps : 1) *
+                       (img.batch_count > 0 ? img.batch_count : 1));
       std::lock_guard<std::mutex> generationLock(gGenerationMutex);
       // A stop asked of this job while it waited behind the run before it is
       // believed here: the engine is not started for a picture nobody wants any
@@ -3884,6 +4211,23 @@ namespace ols
       }
 
       const long long created = nowSeconds();
+      // What a run cost and what it stood on, kept beside the file itself: the
+      // wall a person waited from the moment the ask was taken, what opening
+      // the model took of it, the card the work was done on, the card's whole
+      // memory, and the quant the weights really ran as. The words are the
+      // same readings the job record carries, so a file and its record can
+      // never tell two different stories about one run.
+      long long beganRun = 0;
+      {
+        std::lock_guard<std::mutex> lock(gMutex);
+        const auto started = gStartedMs.find(job);
+        if (started != gStartedMs.end())
+          beganRun = started->second;
+      }
+      const json msValue = beganRun > 0 ? json(steadyMs() - beganRun) : json(nullptr);
+      const long long vramBytes = cudaDeviceTotalBytes();
+      const json vramValue = vramBytes > 0 ? json(vramBytes) : json(nullptr);
+      const json quantValue = openedForm.empty() ? std::string("as shipped") : json(openedForm);
       if (def->video)
       {
         // the clip and the parts of it. The clip is the run's output and what a
@@ -3919,6 +4263,43 @@ namespace ols
                                          static_cast<int>(images[0].width * images[0].channel)) != 0;
         const bool previewWritten =
             writeApngPreview(gOutputDir + "/" + previewName, images, produced, kPreviewFps, kPreviewSide);
+        // The one number that says whether a clip moves: the mean change of a
+        // picture between the frames it stands between, read off the pixels
+        // the run made rather than off anyone's hopes. It is recorded because
+        // a card that ends with five frames of a asked hundred and twenty-four
+        // reads as a still to the eye whatever the model drew, and the file
+        // should say what it holds. Measured 2026-11-19: clips that move stand
+        // at three to twelve of 255 between neighbours; a still sits at zero.
+        json motionValue = json(nullptr);
+        if (produced > 1 && images[0].data)
+        {
+          double sum = 0.0;
+          int pairs = 0;
+          const long long pixels = static_cast<long long>(images[0].width) * images[0].height;
+          const int chan = images[0].channel == 4u ? 4 : 3;
+          for (int at = 1; at < produced; ++at)
+          {
+            if (!images[at].data || images[at].width != images[0].width ||
+                images[at].height != images[0].height)
+              continue;
+            double here = 0.0;
+            long long taken = 0;
+            for (long long px = 0; px < pixels; px += 7)
+            {
+              const unsigned char *a = images[at - 1].data + px * chan;
+              const unsigned char *b = images[at].data + px * chan;
+              here += std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]);
+              ++taken;
+            }
+            if (taken > 0)
+            {
+              sum += here / taken / 3.0;
+              ++pairs;
+            }
+          }
+          if (pairs > 0)
+            motionValue = json(std::round(sum / pairs * 100.0) / 100.0);
+        }
         // the plain-pixel clip costs a whole picture per frame, so it is only stood
         // where a person can still carry the file.
         const unsigned long long rawBytes =
@@ -3964,6 +4345,7 @@ namespace ols
                        {"steps", steps},
                        {"seed", vid.seed},
                        {"frames", clipFrames},
+                       {"motion", motionValue},
                        {"fps", rate},
                        {"duration_ms", static_cast<long long>(clipFrames) * 1000 / rate},
                        {"poster", posterValue},
@@ -3972,7 +4354,17 @@ namespace ols
                        {"raw", rawValue},
                        {"channels", clipAudio ? static_cast<long long>(clipAudio->channels) : 0},
                        {"sample_rate", clipAudio ? static_cast<long long>(clipAudio->sample_rate) : 0},
-                       {"references", json(sources)}};
+                       {"references", json(sources)},
+                       {"quant", quantValue},
+                       {"device", deviceLabel},
+                       {"machine", ols::platform::hostName()},
+                       {"vram_bytes", vramValue},
+                       {"sampler", samplerUsed},
+                       {"scheduler", schedulerUsed},
+                       {"tiling", img.vae_tiling_params.enabled},
+                       {"frames_asked", framesWanted},
+                       {"ms", msValue},
+                       {"open_ms", openMs}};
         writeFileText(gOutputDir + "/" + clipName + ".json", record.dump());
         noteResult(job, "/files/outputs/" + clipName);
         json event = {{"type", "video"},
@@ -4011,7 +4403,16 @@ namespace ols
                        {"prompt", prompt},
                        {"steps", steps},
                        {"seed", img.seed},
-                       {"references", json(sources)}};
+                       {"references", json(sources)},
+                       {"quant", quantValue},
+                       {"device", deviceLabel},
+                       {"machine", ols::platform::hostName()},
+                       {"vram_bytes", vramValue},
+                       {"sampler", samplerUsed},
+                       {"scheduler", schedulerUsed},
+                       {"tiling", img.vae_tiling_params.enabled},
+                       {"ms", msValue},
+                       {"open_ms", openMs}};
         writeFileText(gOutputDir + "/" + name + ".json", record.dump());
         noteResult(job, "/files/outputs/" + name);
         pushEvent(job, json{{"type", "image"}, {"url", "/files/outputs/" + name}}.dump());
@@ -4025,6 +4426,7 @@ namespace ols
     {
       std::string wanted = modelId;
       std::string quant;
+      json ask;
       if (kind == "generate")
       {
         const json probe = json::parse(payloadJson, nullptr, false);
@@ -4033,6 +4435,7 @@ namespace ols
           gEngineError = "the body of the ask is not one this machine can read";
           return std::string();
         }
+        ask = probe;
         // read the two names without trusting their types: this runs on the
         // thread that serves the request, and a body that words "model" as a
         // number must be answered with a refusal, not with an exception carried
@@ -4095,13 +4498,52 @@ namespace ols
       const std::string job = makeId("img");
       {
         std::lock_guard<std::mutex> lock(gMutex);
+        // a render stands queued until its turn at the card comes; a download
+        // and an open work the moment they are named.
         gJobs[job] = {{"id", job},
                       {"kind", kind},
                       {"model", wanted},
-                      {"state", ols::kStateRunning},
+                      {"state", kind == "generate" ? std::string(ols::kStateQueued)
+                                                   : std::string(ols::kStateRunning)},
                       {"started_at", nowSeconds()}};
         if (!quant.empty())
           gJobs[job]["quant"] = quant;
+        if (kind == "generate" && ask.is_object())
+        {
+          // the ask as it was made, so a page can draw the picture's card -
+          // its words, its settings, the backs it leans on - while its run
+          // still stands in the line.
+          json standing;
+          for (const char *word : {"prompt", "negative_prompt"})
+            if (ask.contains(word) && ask[word].is_string() && !ask[word].get<std::string>().empty())
+              standing[word] = ask[word];
+          for (const char *word : {"width", "height", "steps", "guidance", "seed", "frames",
+                                   "fps", "strength", "count"})
+            if (ask.contains(word) && ask[word].is_number())
+              standing[word] = ask[word];
+          if (ask.contains("references") && ask["references"].is_array())
+          {
+            json sources = json::array();
+            json doors = json::array();
+            for (const auto &source : ask["references"])
+            {
+              if (!source.is_string())
+                continue;
+              sources.push_back(source);
+              const std::string found = resolveReference(source.get<std::string>());
+              if (found.rfind(gRefsDir + "/", 0) == 0)
+                doors.push_back("/files/refs/" + found.substr(gRefsDir.size() + 1));
+              else if (found.rfind(gOutputDir + "/", 0) == 0)
+                doors.push_back("/files/outputs/" + found.substr(gOutputDir.size() + 1));
+            }
+            if (!sources.empty())
+              standing["refs"] = sources;
+            if (!doors.empty())
+              standing["ref_urls"] = doors;
+          }
+          if (!standing.empty())
+            gJobs[job]["ask"] = standing;
+        }
         gEvents[job];
         gCancel[job] = false;
         gJobOrder.push_back(job);
@@ -4142,6 +4584,35 @@ namespace ols
         out.push_back(entry.second);
       std::sort(out.begin(), out.end(), [](const json &a, const json &b)
                 { return a.value("started_at", 0LL) > b.value("started_at", 0LL); });
+      // the line at the card, as the machine now holds it: zero stands on the
+      // card, and the queued ones are numbered from one in the order they will
+      // go, whether or not anyone is on the card this instant.
+      std::string holder;
+      std::vector<std::string> line;
+      for (const auto &name : gJobOrder)
+      {
+        const auto row = gJobs.find(name);
+        if (row == gJobs.end() || row->second.value("kind", std::string()) != "generate")
+          continue;
+        const std::string state = ols::jobState(row->second);
+        if (state == ols::kStateRunning && holder.empty())
+          holder = name;
+        else if (state == ols::kStateQueued)
+          line.push_back(name);
+      }
+      const auto stamp = [&out](const std::string &name, int place)
+      {
+        for (json &entry : out)
+          if (entry.value("id", std::string()) == name)
+          {
+            entry["queue_pos"] = place;
+            return;
+          }
+      };
+      if (!holder.empty())
+        stamp(holder, 0);
+      for (size_t n = 0; n < line.size(); ++n)
+        stamp(line[n], static_cast<int>(n) + 1);
       return out.dump();
     }
 
@@ -4212,6 +4683,50 @@ namespace ols
       if (found == gJobs.end() || !ols::jobStanding(found->second))
         return false;
       gCancel[id] = true;
+      // a job standing in the line for the card is woken to read its own stop;
+      // one on the card reads it at its next step.
+      gCondition.notify_all();
+      return true;
+    }
+
+    bool ImageService::reorderJob(const std::string &id, int shift)
+    {
+      if (shift == 0)
+        return false;
+      std::lock_guard<std::mutex> lock(gMutex);
+      const auto found = gJobs.find(id);
+      if (found == gJobs.end() || found->second.value("kind", std::string()) != "generate" ||
+          ols::jobState(found->second) != ols::kStateQueued)
+        return false;
+      // the line is the standing generate jobs in gJobOrder's order; a move
+      // trades places with the one beside it and the line keeps its shape.
+      std::vector<std::string> line;
+      for (const auto &name : gJobOrder)
+      {
+        const auto row = gJobs.find(name);
+        if (row == gJobs.end() || row->second.value("kind", std::string()) != "generate")
+          continue;
+        if (ols::jobState(row->second) == ols::kStateQueued)
+          line.push_back(name);
+      }
+      const auto at = std::find(line.begin(), line.end(), id);
+      if (at == line.end())
+        return false;
+      const int moved = static_cast<int>(at - line.begin()) + shift;
+      if (moved < 0 || moved >= static_cast<int>(line.size()))
+        return false;
+      std::iter_swap(at, line.begin() + moved);
+      auto next = line.begin();
+      for (auto &name : gJobOrder)
+      {
+        const auto row = gJobs.find(name);
+        if (row == gJobs.end() || row->second.value("kind", std::string()) != "generate")
+          continue;
+        if (ols::jobState(row->second) != ols::kStateQueued)
+          continue;
+        name = *next++;
+      }
+      gCondition.notify_all();
       return true;
     }
 
@@ -4452,10 +4967,20 @@ namespace ols
         const long long charge = gCtxBytes.count(entry.first) ? gCtxBytes[entry.first] : 0;
         bytes += charge;
         // Which part of the machine this open model works on, named beside its
-        // bytes: a page that says a model is open can say where it stands.
+        // bytes: a page that says a model is open can say where it stands. And
+        // the quant it stands open as: the form this very context was opened
+        // under (gCtxForm, resolved by every open - a chosen form, else the
+        // model's default, else the form its own files answer with), and where
+        // no form resolves at all the same two words the job records use:
+        // "as shipped". An open model always states what it holds open.
+        const auto stands = gCtxForm.find(entry.first);
+        const std::string openQuant = stands == gCtxForm.end() || stands->second.empty()
+                                        ? std::string("as shipped")
+                                        : stands->second;
         resident.push_back({{"model", entry.first},
                             {"bytes", charge},
-                            {"device", (gCtxCpu.count(entry.first) && gCtxCpu[entry.first]) ? "cpu" : "card"}});
+                            {"device", (gCtxCpu.count(entry.first) && gCtxCpu[entry.first]) ? "cpu" : "card"},
+                            {"quant", openQuant}});
         const auto busy = gGenerating.find(entry.first);
         if (busy != gGenerating.end() && busy->second > 0)
           generating.push_back(entry.first);

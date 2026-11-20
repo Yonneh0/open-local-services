@@ -313,6 +313,9 @@ namespace ols
   // Still working.
   inline constexpr const char *kStateRunning = "running";
 
+  // Believed in and named, standing for its turn at the card.
+  inline constexpr const char *kStateQueued = "queued";
+
   // Got all of its own work done.
   inline constexpr const char *kStateDone = "done";
 
@@ -326,10 +329,13 @@ namespace ols
   // a job wears, but the answer that no job was found.
   inline constexpr const char *kStateUnknown = "unknown";
 
-  // Is the job still working?
+  // Is the job still working, or standing for its turn? Both answer the asks a
+  // standing job bears - a stop, a count of what is on the machine - and
+  // neither has ended.
   inline bool jobStanding(const nlohmann::json &record)
   {
-    return jobState(record) == kStateRunning;
+    const std::string state = jobState(record);
+    return state == kStateRunning || state == kStateQueued;
   }
 
   // Is this state word one the job has nowhere further to go in?

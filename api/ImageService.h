@@ -43,6 +43,10 @@ namespace ols
       std::string jobsListJson() const;
       std::string jobStateJson(const std::string &id) const;
       bool cancelJob(const std::string &id);
+      // Move a queued render along its line by the places named. A job that is
+      // not standing queued, or a move that would push it off either end of the
+      // line, is refused.
+      bool reorderJob(const std::string &id, int shift);
       void streamEvents(void *client, const std::string &jobId);
 
       // What this machine's own work costs: every set of settings it has run, the

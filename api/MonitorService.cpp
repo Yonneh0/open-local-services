@@ -53,6 +53,7 @@ namespace ols
     static json engineSummary(const json &jobs, const std::string &engine)
     {
       int running = 0;
+      int queued = 0;
       int done = 0;
       int failed = 0;
       long long latestEnd = 0;
@@ -70,6 +71,11 @@ namespace ols
         if (state == ols::kStateRunning)
         {
           ++running;
+          continue;
+        }
+        if (state == ols::kStateQueued)
+        {
+          ++queued;
           continue;
         }
         if (state == ols::kStateDone)
@@ -98,9 +104,10 @@ namespace ols
         }
       }
       json out = {{"running", running},
+                  {"queued", queued},
                   {"done", done},
                   {"failed", failed},
-                  {"kept", running + done + failed}};
+                  {"kept", running + queued + done + failed}};
       if (lastSeconds > 0)
         out["last_s"] = lastSeconds;
       if (firstAt > 0)
@@ -334,10 +341,52 @@ namespace ols
                               "voice",
                               "port",
                               "error",
-                              "url"})
+                              "url",
+                              "queue_pos",
+                              "bytes",
+                              "total_bytes",
+                              "speed",
+                              "avg",
+                              "file"})
       {
         if (record.contains(key) && (record.at(key).is_number() || record.at(key).is_string()))
           run[key] = record.at(key);
+      }
+      // What the job was asked with, so a standing line on a card can say what
+      // it stands for before any record door is asked: the ask snapshot the job
+      // was filed with, or the settings it wrote when its run took the card.
+      // The words are clipped here - a card line is not the room.
+      const json *source = nullptr;
+      const auto ask = record.find("ask");
+      if (ask != record.end() && ask->is_object())
+        source = &(*ask);
+      else
+      {
+        const auto settings = record.find("settings");
+        if (settings != record.end() && settings->is_object())
+          source = &(*settings);
+      }
+      if (source != nullptr)
+      {
+        const std::string prompt = source->value("prompt", std::string());
+        if (!prompt.empty())
+          run["prompt"] = prompt.size() > 200 ? prompt.substr(0, 200) : prompt;
+        for (const char *key : {"width", "height", "steps"})
+          if (source->contains(key) && source->at(key).is_number())
+            run[key] = source->at(key);
+      }
+      if (source != nullptr && source->contains("ref_urls") && (*source)["ref_urls"].is_array())
+      {
+        json urls = json::array();
+        for (const auto &one : (*source)["ref_urls"])
+        {
+          if (urls.size() >= 4)
+            break;
+          if (one.is_string())
+            urls.push_back(one);
+        }
+        if (!urls.empty())
+          run["ref_urls"] = urls;
       }
       runs.push_back(run);
     }
@@ -351,6 +400,7 @@ namespace ols
       std::string model;
       bool open = false;
       long long residentBytes = -1; // unknown until an engine states it
+      std::string quant;           // the quant an open picture model stands as, when stated
       std::vector<json> runs;
       long long started = 0;
     };
@@ -398,6 +448,9 @@ namespace ols
             ModelRow &row = rowFor("image", model);
             row.open = true;
             row.residentBytes = ols::statedCount(item, "bytes");
+            const std::string quant = ols::statedString(item, "quant");
+            if (!quant.empty())
+              row.quant = quant;
           }
         }
         if (loaded.contains("loaded") && loaded.at("loaded").is_array())
@@ -435,6 +488,7 @@ namespace ols
       {
         const ModelRow &row = entry.second;
         int running = 0;
+        int queued = 0;
         int done = 0;
         int failed = 0;
         json runs = json::array();
@@ -443,6 +497,8 @@ namespace ols
           const std::string state = ols::jobState(run);
           if (state == ols::kStateRunning)
             ++running;
+          else if (state == ols::kStateQueued)
+            ++queued;
           else if (state == ols::kStateDone)
             ++done;
           else
@@ -454,11 +510,14 @@ namespace ols
                       {"open", row.open},
                       {"kept", static_cast<int>(row.runs.size())},
                       {"running", running},
+                      {"queued", queued},
                       {"done", done},
                       {"failed", failed},
                       {"runs", runs}};
         if (row.residentBytes >= 0)
           model["resident_bytes"] = row.residentBytes;
+        if (!row.quant.empty())
+          model["quant"] = row.quant;
         if (row.started != 0)
           model["last_started_at"] = row.started;
         out.push_back(model);

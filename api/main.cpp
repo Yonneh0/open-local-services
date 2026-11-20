@@ -136,11 +136,12 @@ static int rateLimit(const std::string &requested)
 // account its manager works for - SYSTEM, root - and a process started by a plain
 // person is refused with "Access is denied" or a write to /etc that will not open.
 // So the entry point raises itself once, before anything is read, and the person
-// sitting at the machine answers that prompt. A machine that will not raise this
-// one - no sudo that answers without a password, a prompt nobody answered, a
-// person who said no - still runs these doors, and says which level it is
-// standing at. OLS_ELEVATE=off is the one way a person declines the raise on a
-// machine that would otherwise make one.
+// sitting at the machine answers that prompt. And a server that did not get
+// raised does not stand at all: 2026-11-20 a whole evening was lost to plain
+// servers that started gladly, served every page, and died at the first manager
+// ask - a half-armed machine pretending to be armed. Now: raised, or refused
+// loudly with a failing exit. OLS_ELEVATE=off declines the prompt; it does not
+// buy permission to serve unelevated.
 static bool askedForElevation()
 {
   if (const char *named = std::getenv("OLS_ELEVATE"))
@@ -202,8 +203,8 @@ static void standRaised(int argc, char **argv)
   {
     const DWORD last = GetLastError();
     std::cout << (last == ERROR_CANCELLED
-                      ? "The person at this machine said no to raising it: this server runs as a plain person, and a manager ask will be refused with the machine's own words."
-                      : "This machine would not raise it (win32 error " + std::to_string(last) + "): this server runs as a plain person, and a manager ask will be refused with the machine's own words.")
+                      ? "The person at this machine said no to raising it: this server refuses to start."
+                      : "This machine would not raise it (win32 error " + std::to_string(last) + "): this server refuses to start.")
               << std::endl;
     return;
   }
@@ -250,11 +251,10 @@ static void standRaised(int argc, char **argv)
   if (!answersWithoutPassword())
   {
     // Replacing this process with a sudo that then waits for a password would
-    // leave no server at all - over a pipe there is nobody to answer. The doors
-    // still run as this person's, and the machine states the level it stands at.
+    // leave no server at all - over a pipe there is nobody to answer. So this
+    // one declines to stand on that sudo, and the law below refuses the start.
     std::cout << "This machine's sudo would ask for a password nobody can answer here: "
-                 "this server runs as a plain person, and a manager ask will be refused "
-                 "with the machine's own words."
+                 "this server refuses to start."
               << std::endl;
     return;
   }
@@ -267,24 +267,30 @@ static void standRaised(int argc, char **argv)
     passed.push_back(const_cast<char *>(part.c_str()));
   passed.push_back(nullptr);
   execvp("sudo", passed.data());
-  // Only reached when there is no sudo to exec: the doors still run, as a plain
-  // person's, and say so.
-  std::cout << "This machine has no sudo for this server to stand on: it runs as a plain "
-               "person, and a manager ask will be refused with the machine's own words."
+  // Only reached when there is no sudo to exec: the refusal follows below.
+  std::cout << "This machine has no sudo for this server to stand on: it refuses to start."
             << std::endl;
 }
 #endif
 
 static void ensureElevated(int argc, char **argv)
 {
-  if (!askedForElevation())
-  {
-    std::cout << "Not raising this server: OLS_ELEVATE=off. This machine's manager asks will be refused with its own words." << std::endl;
-    return;
-  }
+  if (askedForElevation() && !alreadyElevated())
+    standRaised(argc, argv);
   if (alreadyElevated())
     return;
-  standRaised(argc, argv);
+  // One law on every machine, checked once and after every road the raise could
+  // have taken: a server that does not stand at the manager's level does not
+  // stand. Declining the prompt with OLS_ELEVATE=off is a refusal to be raised,
+  // not a licence to serve half-armed.
+  std::cerr << "open-local-services refuses to start: this process does not carry the "
+               "level its manager works at. Start it through the machine's prompt "
+               "(run.bat answers it once), a task that raises it, or an account that "
+               "already holds it"
+            << (askedForElevation() ? std::string(".")
+                                    : std::string("; OLS_ELEVATE=off declined the prompt on a machine that was not raised."))
+            << std::endl;
+  std::exit(EXIT_FAILURE);
 }
 
 // How many of this machine's own pictures it keeps on disk. Nothing named leaves

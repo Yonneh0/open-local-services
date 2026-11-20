@@ -110,22 +110,58 @@
     return String(job.model || job.voice || job.kind || job.id);
   };
 
+  // How long a stretch of seconds is, in the fewest words that still say it:
+  // seconds under a minute, minutes under an hour, hours and minutes past that.
+  function spanWords(seconds) {
+    const s = Math.round(Number(seconds) || 0);
+    if (s < 60) return s + ' s';
+    if (s < 3600) return Math.round(s / 60) + ' min';
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s - h * 3600) / 60);
+    return h + ' h' + (m > 0 ? ' ' + m + ' min' : '');
+  }
+
   // Header state from the merged snapshot: the bar tracks only counted work
   // (generation, synthesis, downloads); a load has no percentage and is shown
-  // on the loaded chip instead.
+  // on the loaded chip instead. The header is where a reader looks for how the
+  // drawing goes, so it carries the time estimate too: the work furthest into
+  // its window is measured against the pace it has itself held since its start,
+  // and a run whose pace cannot be measured is said without an estimate rather
+  // than with an invented one. Work standing in the line before the engine has
+  // taken it up is named beside it, with no bar to draw - its turn has not come.
+  // Several jobs of one engine and model on a line of their own is noise: a
+  // header that spells "image flux-3-klein" six times has stopped describing
+  // anything. One place folds identical jobs into a count.
+  function collapseJobs(list) {
+    const seen = [];
+    const counts = {};
+    for (const job of list) {
+      const key = UI.jobEngine(job) + ' ' + UI.jobLabel(job);
+      if (counts[key] === undefined) { counts[key] = 0; seen.push(key); }
+      counts[key] += 1;
+    }
+    return seen.map(function (key) {
+      return counts[key] > 1 ? key + ' ×' + counts[key] : key;
+    }).join(', ');
+  }
+
   UI.headerState = function (jobs) {
-    const active = (Array.isArray(jobs) ? jobs : []).filter((j) => j.state === 'running');
+    const list = Array.isArray(jobs) ? jobs : [];
+    const active = list.filter((j) => j.state === 'running');
+    const waiting = list.filter((j) => j.state === 'queued');
     if (!active.length) {
+      if (waiting.length) {
+        UI.headProgress(0, waiting.length + ' queued: ' + collapseJobs(waiting), UI.jobEngine(waiting[0]));
+        return;
+      }
       UI.headIdle();
       return;
     }
-    const what = [];
     let furthest = 0;
     let furthestEngine = 'job';
-    let furthestWindow = 0;
+    let furthestJob = null;
     let onlyLoads = true;
     for (const job of active) {
-      what.push(UI.jobEngine(job) + ' ' + UI.jobLabel(job));
       if (String(job.kind || '') === 'load') continue;
       onlyLoads = false;
       const max = Number(job.max || 0);
@@ -133,13 +169,31 @@
       if (pct > furthest) {
         furthest = pct;
         furthestEngine = UI.jobEngine(job);
-        furthestWindow = max;
+        furthestJob = job;
       }
     }
+    // The header names one job in full - the one furthest along - and counts
+    // the rest. Its estimate rides on that job's own held pace.
+    let line;
+    if (furthestJob) {
+      const max = Number(furthestJob.max || 0);
+      const done = Number(furthestJob.done || 0);
+      line = UI.jobEngine(furthestJob) + ' ' + UI.jobLabel(furthestJob);
+      if (max > 0) line += ' · step ' + done + '/' + max;
+      const since = Number(furthestJob.started_at || 0);
+      const heldSeconds = since > 0 ? Date.now() / 1000 - since : 0;
+      if (max > 0 && done > 1 && heldSeconds > 0 && done < max) {
+        const left = ((max - done) * heldSeconds) / done;
+        if (left > 0 && left < 86400) line += ' · about ' + spanWords(left) + ' left, at the pace it has held';
+      }
+      if (active.length > 1) line += ' · ' + (active.length - 1) + ' more running';
+    } else {
+      line = collapseJobs(active);
+    }
+    if (waiting.length) line += ' · ' + waiting.length + ' waiting for the card';
     // A run that names no window has no percentage to draw: the bar stripes
     // instead, so the header says work is going on without naming a share of it.
-    UI.headProgress(furthest, active.length + ' running: ' + what.join(', '), furthestEngine,
-      '', furthestWindow <= 0);
+    UI.headProgress(furthest, line, furthestEngine, '', Number((furthestJob || {}).max || 0) <= 0);
     // Standing a model up is the one kind of work that has no count to draw:
     // with only loads running, the tab glow is yellow rather than blue.
     if (onlyLoads) UI.serverGlow('loading');
@@ -156,7 +210,7 @@
     const weights = (system.loaded && system.loaded.loaded) ? system.loaded : {};
     const resident = weights.resident || [];
     for (const item of resident) {
-      labels.push('picture ' + String(item.model));
+      labels.push('picture ' + String(item.model) + (item.quant ? ' as ' + String(item.quant) : ''));
       bytes += Number(item.bytes || 0);
     }
     if (!resident.length && Array.isArray(weights.loaded)) {
@@ -401,7 +455,6 @@
 
   UI.log = function (text, kind) {
     const words = String(text);
-    const here = E('log');
     const kept = logRead();
     kept.push({ at: Date.now(), page: logWords(), kind: kind || '', words: words });
     try {
@@ -410,7 +463,18 @@
       // A store that will not take the record loses it; the page still says the
       // line the same way it did before the record existed.
     }
-    if (!here && (kind === 'err' || kind === 'warn')) UI.toastPush(words, kind);
+    // A page that draws the whole log from the record says the line itself.
+    if (E('log')) return;
+    // A page with one line to speak with says the newest line there, in the
+    // line's own colour, rather than stacking toasts over the work it describes.
+    const spoken = E('status-line');
+    if (spoken) {
+      spoken.textContent = words;
+      spoken.className = 'status-line' + (kind ? ' ' + kind : '');
+      return;
+    }
+    // With nowhere else to say it, only a hand that needs an answer makes noise.
+    if (kind === 'err' || kind === 'warn') UI.toastPush(words, kind);
   };
 
   // The record as the page that draws it wants it: newest last, the plainest
@@ -650,15 +714,20 @@
   // and a machine that is absent are different facts, and pages say which happened.
   UI.apiStatus = 0;
   UI.apiError = '';
-  UI.api = function (path, method, body) {
+  UI.api = function (path, method, body, opts) {
     return (async function () {
       UI.apiStatus = 0;
       UI.apiError = '';
-      const res = await fetch(path, {
+      const init = {
         method: method || 'GET',
         body: body === undefined ? undefined : JSON.stringify(body),
         headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      });
+      };
+      // A reading a page takes to find out what changed may not be answered from
+      // a kept copy of the answer; {cache: 'no-store'} says so to the fetch, and
+      // to this machine's own browser cache, which reads the same word.
+      if (opts && opts.cache) init.cache = String(opts.cache);
+      const res = await fetch(path, init);
       UI.apiStatus = res.status;
       // a refusal carries the reason the server gave, so a page can repeat what
       // it said rather than guess why its own ask was turned down.
@@ -895,29 +964,6 @@
     }
   };
 
-  // What a standing state the pages already announced: the browser keeps it, so
-  // a page opened again says nothing about a state nothing changed. a real
-  // change carries different words and so a different mark, and is announced.
-  UI.toastSeenMark = function (signature) {
-    try {
-      const key = 'ols-notice-seen';
-      const box = JSON.parse(localStorage.getItem(key) || '{}');
-      const now = Date.now();
-      for (const held in box) {
-        if (now - Number(box[held]) > 900000) delete box[held];
-      }
-      box[String(signature)] = now;
-      localStorage.setItem(key, JSON.stringify(box));
-    } catch (ignored) { }
-  };
-  UI.toastFresh = function (signature) {
-    try {
-      const box = JSON.parse(localStorage.getItem('ols-notice-seen') || '{}');
-      const seen = Number(box[String(signature)] || 0);
-      return (Date.now() - seen) > 600000;
-    } catch (ignored) { return true; }
-  };
-
   // Put one thing on the stack. kind names only the colour the app already uses
   // for that state; the words are the machine's or the page's own, never made up
   // here. secs is the reading time, and a notice about something that failed
@@ -1066,17 +1112,6 @@
     return live;
   };
 
-  // Whether a notice the browser kept is still on the stack: a record on its way
-  // off, or one the ticker has already taken off, is not a card a page can draw
-  // on. A page that paints work as its notices hold it asks this before it writes,
-  // so work is never described where nothing describes it any more - and a page
-  // that keeps its own map of these records drops the entry with the record, which
-  // is how a batch came to lose pictures at random and to describe one picture on
-  // two cards.
-  UI.toastStanding = function (live) {
-    return !!live && !live.closing && UI.toastLive.indexOf(live) >= 0;
-  };
-
   // Say where a tracked job stands now: its own done/max, its own state words.
   UI.toastStep = function (live, done, max, words) {
     if (!live || live.paused) return;
@@ -1102,33 +1137,6 @@
     live.opened = true;
     if (live.el) live.el.classList.add('toast-open');
     if (live.fill) live.fill.style.width = '';
-  };
-
-  // The shape a notice is drawn as: a running thing is a card with a bar and its
-  // own two hands, work that has not started is one line of a queue. The sheet
-  // decides what that class looks like; this only says which one it is.
-  UI.toastShape = function (live, queued) {
-    if (!live || !live.el) return;
-    if (queued) live.el.classList.add('queued');
-    else live.el.classList.remove('queued');
-  };
-
-  // A notice that describes a piece of work rather than a moment, drawn in the
-  // shape the model cards are drawn in: the thing it is doing named at the top in
-  // the loudest type, the words it was asked with smaller under it, the settings
-  // it runs at in italic, and its state as a line that follows it through. The
-  // sheet decides what each of those lines looks like. A line with no words in
-  // it is not drawn - a card says nothing about a thing the machine did not state.
-  UI.toastCard = function (live, lines) {
-    if (!live || !live.wordsEl) return;
-    while (live.wordsEl.firstChild) live.wordsEl.removeChild(live.wordsEl.firstChild);
-    for (const line of lines) {
-      if (!line || !line[1]) continue;
-      const row = document.createElement('div');
-      row.className = 'toast-line ' + String(line[0]);
-      row.textContent = String(line[1]);
-      live.wordsEl.appendChild(row);
-    }
   };
 
   // A job's own card, drawn below the rows it belongs to when a reader presses
@@ -1275,13 +1283,6 @@
     if (row) panel.removeChild(row);
   };
 
-  UI.progressClearPrefixed = function (panel, prefix) {
-    if (!panel) return;
-    for (const row of panel.querySelectorAll('[data-job]')) {
-      if (String(row.dataset.job).indexOf(prefix) === 0) panel.removeChild(row);
-    }
-  };
-
   // ---------- replay of this browser's last reading ----------
   // What this browser last read, so pages can paint machine state before the
   // first live answer. Within an hour the copy still describes this machine
@@ -1351,6 +1352,76 @@
   };
 
   UI.mountPageChrome();
+})();
+
+// The corner clock: a seven-segment face in the header that blinks 12:00 like
+// the one on a microwave whose clock nobody ever set. Every segment stands on
+// the face while dark - the ghosts behind the lit ones are what make a real
+// panel read as a panel - and the lighting of each is a class a script toggles.
+// Tapping the face lets it tell the browser's real time, minute by minute;
+// tapping again hands it back to blinking. No server is asked for the hour,
+// because no server is keeping this clock.
+(function mountClock() {
+  const top = document.getElementById('topbar');
+  if (!top) return;
+  const SEG = { '0': 'abcdef', '1': 'bc', '2': 'abged', '3': 'abgcd', '4': 'afgbc',
+    '5': 'afgcd', '6': 'afgedc', '7': 'abc', '8': 'abcdefg', '9': 'abcfgd', ' ': '' };
+  const KEY = 'ols-clock-set';
+  const isSet = () => { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } };
+  const four = [];
+  const face = document.createElement('div');
+  face.className = 'clock7';
+  face.title = 'a clock nobody set blinks 12:00. tap it to let it tell the time, tap again to put it back to blinking.';
+  for (let i = 0; i < 4; i++) {
+    if (i === 2) {
+      const colon = document.createElement('div');
+      colon.className = 'c7col';
+      for (let d = 0; d < 2; d++) {
+        const dot = document.createElement('i');
+        dot.className = 'c7dot on';
+        colon.appendChild(dot);
+      }
+      face.appendChild(colon);
+    }
+    const digit = document.createElement('div');
+    digit.className = 'c7num';
+    for (const letter of 'abcdefg') {
+      const s = document.createElement('i');
+      s.className = 'c7s c7' + letter;
+      s.dataset.s = letter;
+      digit.appendChild(s);
+    }
+    face.appendChild(digit);
+    four.push(digit);
+  }
+  top.appendChild(face);
+  const paint = (text) => {
+    for (let i = 0; i < 4; i++) {
+      const want = SEG[text[i]] || '';
+      for (const s of four[i].children)
+        s.classList.toggle('on', want.indexOf(s.dataset.s) >= 0);
+    }
+  };
+  const show = () => {
+    if (!isSet()) { paint('1200'); return; }
+    const now = new Date();
+    const hour = now.getHours() % 12 || 12;
+    paint(('   ' + hour + String(now.getMinutes()).padStart(2, '0')).slice(-4));
+  };
+  show();
+  // the unset blink: every three seconds the whole face dims to its ghosts
+  // for a moment - the segments stay standing, only the light leaves them.
+  setInterval(() => {
+    if (isSet()) { face.classList.remove('blink'); return; }
+    face.classList.add('blink');
+    setTimeout(() => { if (!isSet()) face.classList.remove('blink'); }, 900);
+  }, 3000);
+  setInterval(show, 1000);
+  face.addEventListener('click', () => {
+    try { localStorage.setItem(KEY, isSet() ? '0' : '1'); } catch (e) { }
+    face.classList.remove('blink');
+    show();
+  });
 })();
 
 // the one alias every page script uses

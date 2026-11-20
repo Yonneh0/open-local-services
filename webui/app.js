@@ -22,6 +22,11 @@ let galleryGroups = new Map();
 // The pictures marked by the bulk buttons, kept by id so a re-draw of the list
 // marks the same ones again. Only pictures on this screen are ever marked.
 const markedShots = new Set();
+// What this page deleted while it stands. A delete the machine confirmed still
+// leaves the record in this client's memory until the next reading of its page
+// passes it on; a room-walk that carries such a record back would stand it as a
+// ghost whose picture is already gone.
+const deletedShots = new Set();
 // The pictures on this screen, in the order they are shown: the viewer steps
 // through these, so prev and next answer what a person is looking at.
 let shownItems = [];
@@ -48,11 +53,6 @@ let startRefs = [];
 // A kept picture this page picked up and carried onto the prompt panel.
 let draggedRef = '';
 let running = null;
-let lastJob = '';
-// The job ids of the ask this page has standing on the machine right now, when
-// that ask is a batch: the cancel hand stops the whole of it, each job by its
-// own name, and the machine answers for the ones already drawn by leaving them.
-let batchJobs = null;
 // The model this machine has open, per its own state.
 let pickedModel = '';
 // The model a run draws with, as last picked on a card; empty means the model
@@ -915,19 +915,23 @@ async function putInUse(model) {
   paintRunState();
 }
 
-// How many pictures one run of this machine answers for. The engine keeps a run
-// inside one model's work, and one run makes one picture: a batch is therefore
-// many jobs, not one heavy one. The X4 hand asks four separate jobs and the X16
-// hand sixteen separate ones, so every picture stands on the machine as its own
-// record - its own entry in the jobs table, its own cancel, its own line in the
-// gallery - and stopping an ask leaves the drawn pictures drawn. Every count on
-// the page - what it asks a run for, what it plans notices for, and where a
-// run's boundary sits - is read from this one number, so the pictures the page
-// laid out and the pictures the machine makes are the same pictures.
-const kRunPictures = 1;
+// How many pictures one run of this machine answers for. The engine draws a
+// run's pictures back to back inside one model open and writes them when the
+// run's drawing is done, so the fill is a balance: too many pictures in a run
+// and the room sees nothing for minutes at a stretch, too few and the queue
+// floods and the ask breaks into cards nobody ordered. Four is that balance -
+// the X4 hand is exactly one run, one card, one queue line, and even the X16
+// hand shows new pictures every few seconds of drawing. A run stopped on a
+// word keeps the pictures it had already drawn. Every count on the page - what
+// it asks a run for, what it plans notices for, and where a run's boundary
+// sits - is read from this one number, so the pictures the page laid out and
+// the pictures the machine makes are the same pictures.
+const kRunPictures = 4;
 
 function picturesPerRun(model) {
-  return kRunPictures;
+  // A model that moves makes one clip per run: an ask of clips is several runs.
+  const found = findModel(String(model || '')) || {};
+  return found.video === true ? 1 : kRunPictures;
 }
 
 // What the ask on this page will make: what its own images field named, kept
@@ -939,7 +943,7 @@ function askedPictures() {
   return chosen > kMaxBatchPictures ? kMaxBatchPictures : chosen;
 }
 
-function payload() {
+function payload(count) {
   const size = sizePick();
   const body = {
     model: modelChoice(),
@@ -948,10 +952,10 @@ function payload() {
     width: size.width,
     height: size.height,
     seed: ui.numberField('seed', -1),
-    // One job makes one picture. Asking the machine for several inside one job is
-    // not what this page does any more: an ask of several pictures is several
-    // jobs, so each one can be watched, cancelled, and kept on its own.
-    count: 1,
+    // How many pictures this run draws: back to back inside one model open, in
+    // the machine's own order, each written as its own file. The ask hands over
+    // its count here so a batch is one job and one line in the queue.
+    count: Math.max(1, Math.min(kMaxBatchPictures, Math.round(Number(count) || 1))),
   };
   const steps = ui.textField('steps').trim();
   if (steps !== '') body.steps = Number(steps);
@@ -977,21 +981,13 @@ function payload() {
   return body;
 }
 
-// The studio's own render states its progress in the header alone: the header
-// fills behind its words to the step it is on, and the line beside the badges
-// names the model and the step, while it runs. There is no second bar here -
-// the home page paints the same run's bar for anyone who wants it.
-function setProgress(done, max, label, model) {
-  const pct = max > 0 ? Math.min(100, Math.round((done / max) * 100)) : 0;
-  ui.headProgress(pct, label + ' · ' + (model || running || 'this job') + ' · step ' + done + '/' + max, 'image');
-}
-
+// The studio's render states its progress in the header alone: the header fills
+// behind its words to the step it is on, and the line beside the badges names the
+// model and the step, while a run works. paintPictureNotices owns that line: every
+// standing render reaches it, whichever window asked for it. There is no second
+// bar here - the home page paints the same run's bar for anyone who wants it.
 function finishJob() {
   running = null;
-  const cancelBtn = E('cancel-btn');
-  cancelBtn.disabled = true;
-  cancelBtn.title = 'Only available while a render is running.';
-  ui.headIdle();
 }
 
 // What a model's own name is, for words a person reads.
@@ -1007,19 +1003,27 @@ function modelName(id) {
 // same numbers a few seconds later.
 const jobTimes = {};
 
-/* ---------- one notice per picture ----------
-   A batch is watched picture by picture rather than run by run: what a person is
-   counting is the pictures still to come, so an ask of sixteen pictures puts
-   sixteen notices on the stack, each one taking its own place in the queue, its
-   own state, and its own bar. Nothing in a notice is invented: the steps, the
-   state, and the moment a picture is drawn come from the machine's record of the
-   job that picture stands in; the position in the batch comes from what this page
-   asked, which is the only place that number exists; and the time given is a rate
-   measured from the ticks the machine really made - the rate this run is holding
-   now, otherwise the rate a finished run here showed, and when neither is measured
-   the notice keeps the moving bar and states no time. */
+/* ---------- one card per ask, in the gallery ----------
+   A batch is watched as the one ask it is: an ask of sixteen pictures stands as
+   one card from the moment it is made, the runs still to come or standing on
+   the machine shown as ghosts in the card's row beside the pictures that have
+   landed. Nothing on a card is invented: the steps, the state, and the moment a
+   picture is drawn come from the machine's record of the job the card's head
+   stands in; the number of runs comes from what this page asked, which is the
+   only place that number exists; and the time given is a rate measured from the
+   ticks the machine really made - the rate this run is holding now, otherwise
+   the rate a finished run here showed, and when neither is measured the card
+   states no time. */
 const plannedPictures = [];
-const pictureNotices = new Map();
+// The nodes of the standing cards, kept by picture key so a paint pass can move
+// a bar and a line of words without drawing the gallery again. renderGallery
+// fills this when it draws a pending card, and the paint pass clears the keys
+// whose pictures no longer stand.
+const pendingEls = new Map();
+// What the queue pass decided last time it ran: one row per picture that stands,
+// in the order they will be drawn. The gallery draws a row as a card at the head
+// of the stack its ask names; a row whose ask has no stack yet opens a new one.
+let pendingRows = [];
 // What the machine states about the runs this page has watched: aggregate ticks
 // over the wall time they took, which is the unit the machine's own count uses.
 const aggregateRate = {};
@@ -1186,36 +1190,34 @@ function costWords(ms) {
   return Math.round(seconds / 60) + ' min';
 }
 let planSeq = 0;
-// The biggest ask this studio makes at once, and how many cards the work of
-// another window may add: the stack keeps one card per picture of this page's own
-// batch, plus the nearest of another window's standing work. The rest of that work
-// is counted in the position every card names but not drawn, since the stack would
-// otherwise fill with waiting cards that all say the same thing.
+// The biggest ask this studio makes at once: every picture of it stands in the
+// gallery as a card of its own, so this number is at once the pictures drawn and
+// the cards the gallery carries for one ask.
 const kMaxBatchPictures = 16;
-const kForeignPictureCards = 8;
 
 function pictureKeyFor(job, index) {
   return 'img-' + String(job) + '-' + String(index);
 }
 
 // Where a picture sits in the queue, in the few words its card carries under its
-// state. Nothing here is invented: the batch numbers come from what this page
-// asked for, which is the only place that number exists, and the standing count
-// is what the machine states about the work it holds.
+// state. One number for one place: the batch number when a single ask made
+// several pictures, and the standing count when the machine holds more than one
+// job. A one-picture job is not told twice.
 function picturePosition(entry, position, standing) {
-  if (!(Number(entry.of) > 0)) {
-    return 'its run · its pictures are not named in what this machine states' +
-      (standing > 1 ? ' · ' + position + ' of ' + standing + ' standing here' : '');
+  const parts = [];
+  if (Number(entry.of) > 1) {
+    parts.push('picture ' + (Number(entry.n) + 1) + ' of ' + Number(entry.of) + ' asked together');
   }
-  return 'picture ' + (Number(entry.n) + 1) + ' of ' + Number(entry.of) +
-    (entry.of > entry.inRun ? ' · job ' + entry.run + ' of ' + entry.runs : '') +
-    (standing > 1 ? ' · ' + position + ' of ' + standing + ' standing here' : '');
+  if (standing > 1) parts.push(position + ' of ' + standing + ' standing here');
+  return parts.join(' · ');
 }
 
 // What this page's next ask will run at, in the words a card carries under the
 // picture: the prompt it will draw with and the settings the ask named. A
 // setting the ask did not name is not claimed - the machine's own default stays
-// the machine's.
+// the machine's. The whole row of settings comes back too: it is what a standing
+// card stacks under, what its placeholder is shaped like, and what a cost row is
+// keyed by before any machine record speaks.
 function describeAsk() {
   const body = payload();
   const parts = [];
@@ -1228,47 +1230,186 @@ function describeAsk() {
     parts.push('from ' + body.references.length +
       (body.references.length === 1 ? ' picture' : ' pictures'));
   }
-  return { prompt: String(body.prompt || ''), settings: parts.join(' · ') };
+  const card = findModel(String(body.model || '')) || {};
+  return {
+    prompt: String(body.prompt || ''), settings: parts.join(' · '),
+    fields: {
+      width: Number(body.width) > 0 ? Number(body.width) : Number(card.width) || 0,
+      height: Number(body.height) > 0 ? Number(body.height) : Number(card.height) || 0,
+      steps: steps,
+      guidance: Number(body.guidance) > 0 ? Number(body.guidance) : Number(card.guidance) || 0,
+      seed: Number(body.seed), negative: String(body.negative_prompt || ''),
+      frames: Number(body.frames) > 0 ? Number(body.frames) : Number(card.frames) || 0,
+      fps: Number(card.fps) || 0,
+      refs: (body.references || []).slice(),
+      video: card.video === true,
+    },
+  };
 }
 
-// Put a picture's notice on the stack as its card. The lines it carries are the
-// machine's and this page's own words, and a line with nothing in it is not
-// drawn: a card says nothing about a thing neither of them knows.
-function trackPictureNotice(entry, firstLine) {
-  const live = ui.toastTrack(entry.key, firstLine || '', 'wait');
-  if (!live) return null;
-  ui.toastShape(live, true);
-  pictureNotices.set(entry.key, live);
-  return live;
+// The address of a kept picture's file, for a standing card's row of backs.
+function refThumbUrl(id) {
+  for (const ref of refs) {
+    if (String(ref.id) === String(id)) return ui.fileSrc('/files/refs/' + String(ref.file || ref.id));
+  }
+  return '';
 }
 
-// The card a picture lives on now. A picture whose card the stack had to take
-// down is stood up again rather than left out of the queue, since the queue is
-// the only thing that says what that picture is doing.
-function standingNotice(entry) {
-  const held = pictureNotices.get(entry.key);
-  if (ui.toastStanding(held)) return held;
-  return trackPictureNotice(entry, modelName(entry.model));
+// A row the gallery can draw as a card: shaped like a gallery record enough to
+// join the stack its own ask names (the stack key reads these fields), and
+// carrying its whole state so a paint pass can fill it without a second look.
+// A standing card stated in the same fields the machine states about a landed
+// render - no more. A record names its guidance to nobody: a card that stated
+// one would stand in a stack of its own rather than join the ask it belongs
+// to. The card's own lines still say everything the dials hold.
+function pendingItem(row) {
+  const video = row.video === true;
+  return {
+    id: 'pending-' + row.key, pending: row,
+    model: row.model, prompt: row.prompt,
+    width: row.width, height: row.height, steps: row.steps || '',
+    negative_prompt: '', guidance: '',
+    frames: video ? (row.frames || '') : '',
+    fps: video ? (row.fps || '') : '',
+    kind: video ? 'video' : '',
+  };
 }
 
-// A picture planned but not yet asked for: its card, standing where its turn
-// will come.
-function noticeForPicture(entry, firstLine) {
-  const live = trackPictureNotice(entry, firstLine);
-  if (live) paintPictureCard(live, entry, 'not asked for yet', 0, 0, '');
-  return live;
+// A standing card, drawn once and then only filled: the shape the picture will
+// come back at, the words it will draw with, its state as one line, its bar,
+// and its own stop hand. It stands where the gallery puts the ask it belongs
+// to - at the head of that stack - and when the picture lands the real record
+// takes its place under the same key.
+function pendingCard(item, earlier) {
+  const shot = document.createElement('div');
+  shot.className = 'shot pending-shot';
+  const box = document.createElement('div');
+  box.className = 'pending-box';
+  box.style.aspectRatio = String(item.width || 1) + ' / ' + String(item.height || 1);
+  const shape = document.createElement('span');
+  shape.className = 'pending-shape';
+  shape.textContent = String(item.kind) === 'video' ? 'a clip in the making' : 'a picture in the making';
+  const bar = document.createElement('div');
+  bar.className = 'prog-bar';
+  const fill = document.createElement('i');
+  bar.appendChild(fill);
+  box.appendChild(shape);
+  box.appendChild(bar);
+  shot.appendChild(box);
+  const said = document.createElement('div');
+  said.className = 'shot-prompt';
+  const meta = document.createElement('div');
+  meta.className = 'shot-meta';
+  const queue = document.createElement('div');
+  queue.className = 'shot-queue';
+  shot.appendChild(said);
+  shot.appendChild(meta);
+  shot.appendChild(queue);
+  const row0 = item.pending;
+  if (row0.refThumbs && row0.refThumbs.length) {
+    // The pictures this ask starts from, on the card that will hold what comes
+    // out of them.
+    const backs = document.createElement('div');
+    backs.className = 'shot-backs';
+    row0.refThumbs.forEach(function (url) {
+      const back = document.createElement('img');
+      back.setAttribute('width', '34');
+      back.setAttribute('height', '34');
+      back.setAttribute('alt', 'a picture this ask starts from');
+      back.title = 'this ask starts from this picture';
+      back.src = url;
+      backs.appendChild(back);
+    });
+    shot.appendChild(backs);
+  }
+  const act = document.createElement('div');
+  act.className = 'shot-act';
+  const stop = document.createElement('button');
+  stop.className = 'shot-save';
+  stop.textContent = 'stop';
+  stop.title = 'Stop this run: on the machine if it runs - keeping any picture it has already drawn - or off the line if its turn has not come.';
+  act.appendChild(stop);
+  shot.appendChild(act);
+  if (earlier && earlier.length) {
+    // Every other run of this ask joins this card's row: the landed ones with
+    // their pictures, the standing ones as ghosts - an ask stands as one card
+    // from the moment it is asked, not as one card per run that settles last.
+    const landed = earlier.filter(function (past) { return !past.pending; });
+    const row = document.createElement('div');
+    row.className = 'shot-stack';
+    const words = document.createElement('span');
+    words.className = 'stack-count';
+    words.textContent = 'the ' + (earlier.length + 1) + ' runs of this ask';
+    words.title = 'The renders this same prompt and these same settings made and stand for, newest first. A ghost is a run standing on the machine.';
+    row.appendChild(words);
+    landed.forEach(function (past, at) {
+      const thumb = document.createElement('img');
+      thumb.setAttribute('width', '52');
+      thumb.setAttribute('height', '52');
+      thumb.setAttribute('alt', 'an earlier run of this ask');
+      thumb.title = 'run ' + (at + 2) + ' of this prompt and these settings · ' + ui.whenText(past.created) +
+        ' · press to open it';
+      thumb.src = ui.fileSrc(cardPicture(past));
+      ui.onPress(thumb, function () { openRender(past); });
+      row.appendChild(thumb);
+    });
+    for (let g = landed.length; g < earlier.length; ++g) {
+      const ghost = document.createElement('div');
+      ghost.className = 'shot-ghost';
+      ghost.title = 'a run of this ask standing on the machine';
+      row.appendChild(ghost);
+    }
+    shot.appendChild(row);
+  }
+  const els = {
+    shot: shot, fill: fill, said: said, meta: meta, queue: queue, stop: stop, item: item,
+  };
+  pendingEls.set(row0.key, els);
+  fillPending(els);
+  ui.onPress(stop, function () {
+    // Read the job from the row as it stands at the press: this card was drawn
+    // before the machine named the job, and the hand must stop what stands now.
+    const standing0 = String((els.item.pending && els.item.pending.job) || '');
+    if (standing0 === '') return;
+    void (async function () {
+      const answer = await ui.api('/api/jobs/' + encodeURIComponent(standing0) + '/cancel', 'POST');
+      if (answer) log('Stop sent for this picture.', 'warn');
+      else log('This picture is not standing any more: ' + (ui.apiError || 'the server gave no words'), 'err');
+    }());
+  });
+  return shot;
 }
 
-// A picture's card: what it will draw with named at the top, the prompt smaller
-// under it, the settings it runs at in italic, and its state as the last line.
-function paintPictureCard(live, entry, state, position, standing, basis) {
-  ui.toastCard(live, [
-    ['model', modelName(entry.model)],
-    ['prompt', entry.prompt],
-    ['settings', entry.settings],
-    ['state', state + (state === 'not asked for yet' ? '' : ' · ' + picturePosition(entry, position, standing)) +
-      (basis && state !== 'not asked for yet' ? ' · ' + basis : '')],
-  ]);
+// One card filled from its row, at the drawing and at every paint after: the
+// bar, the words, the stop hand's reach. Nothing is written that already reads
+// right.
+function fillPending(els) {
+  const row = els.item.pending;
+  els.shot.classList.toggle('held', !!row.held);
+  els.shot.classList.toggle('queued', !!row.queued && !row.held);
+  const pct = row.max > 0 ? Math.min(100, Math.round((row.done / row.max) * 100)) : 0;
+  els.fill.style.width = pct + '%';
+  els.shot.classList.toggle('measured', pct > 0 || !!row.held);
+  if (els.said.textContent !== row.prompt) {
+    els.said.textContent = ui.clip(row.prompt, 200);
+    els.said.title = row.prompt;
+  }
+  const meta = modelName(row.model) + (row.settingsWords ? ' · ' + row.settingsWords : '');
+  if (els.meta.textContent !== meta) els.meta.textContent = meta;
+  let line = row.stage;
+  if (row.position) line += ' · ' + row.position;
+  // The basis names where the estimate's rate came from, so it is spoken of
+  // only when there is an estimate to explain.
+  if (row.estimateMs > 0) {
+    line += ' · about ' + costWords(row.estimateMs) + ' away';
+    if (row.basis) line += ' · ' + row.basis;
+  } else if (row.noTime) {
+    line += ' · ' + row.noTime;
+  }
+  if (els.queue.textContent !== line) els.queue.textContent = line;
+  els.queue.title = 'job ' + (row.job || '-') +
+    (row.max > 0 ? ' · step ' + row.done + ' of ' + row.max : '');
+  els.stop.disabled = !row.job;
 }
 
 // The steps a run this page asks for will take: what its own dial named,
@@ -1298,27 +1439,27 @@ function planPictures(model, pictures) {
       key: 'pic-' + batch + '-' + n, batch: batch, n: n, of: pictures,
       runs: runs, run: run, inRun: Math.min(perRun, pictures - (run - 1) * perRun),
       model: String(model), job: '', index: -1, asked: false, steps: steps,
-      dropped: false, prompt: ask.prompt, settings: ask.settings,
+      dropped: false, prompt: ask.prompt, settings: ask.settings, fields: ask.fields,
     };
     plannedPictures.push(entry);
-    noticeForPicture(entry, modelName(model));
   }
+  paintPictureNotices(lastJobs);
   return batch;
 }
 
 // A batch that will not continue leaves the pictures it never asked for off the
 // plan: they were planned, and saying so once is enough, and keeping them would
-// read as pictures still to come. A picture whose card was already taken down had
+// read as pictures still to come. A picture whose card had already come down had
 // its outcome read from the machine, so it is not described a second time here;
 // a picture a run was asked for is not one that was never asked for, and what
 // stopped was that run.
 function finishPlan(batch, words) {
   if (!batch) return;
-  for (const entry of plannedPictures) {
+  for (const entry of plannedPictures.slice()) {
     if (String(entry.batch) !== String(batch)) continue;
     entry.dropped = true;
-    if (!pictureNotices.has(entry.key)) continue;
-    endPictureNotice(entry, entry.asked ? 'its run did not come out' : words, 'warn');
+    retirePicture(entry, entry.asked ? 'a picture of this ask: its run did not come out' : words,
+      entry.asked ? 'err' : 'warn');
   }
 }
 
@@ -1343,12 +1484,17 @@ function bindPlannedPictures(batch, jobId, asked) {
   return bound;
 }
 
-// Take a picture's card down and hand its outcome to the stack as its own line.
-function endPictureNotice(entry, words, kind) {
-  const live = pictureNotices.get(entry.key);
-  pictureNotices.delete(entry.key);
-  if (ui.toastStanding(live)) ui.toastEnd(live, words, kind);
-  else ui.toastPush(words, kind);
+// Take a picture off the standing cards. A picture that landed leaves without a
+// word of its own: the record of the render itself comes up in the gallery, and
+// two voices for one picture is one too many. A stopped or failed picture says
+// so once, in the log - and a failure says it as a toast too, because a failure
+// nobody notices is a failure nobody can act on.
+function retirePicture(entry, words, kind) {
+  const at = plannedPictures.indexOf(entry);
+  if (at >= 0) plannedPictures.splice(at, 1);
+  if (!words) return;
+  log(words, kind === 'err' ? 'err' : (kind === 'warn' ? 'warn' : 'ok'));
+  if (kind === 'err') ui.toastPush(ui.clip(String(words), 200), 'err');
 }
 
 // The pictures a named run carries, in the order they will be drawn.
@@ -1361,23 +1507,8 @@ function boundPictures(jobId) {
   return found;
 }
 
-// The picture a frame names: the machine names the file it wrote by the index of
-// the picture it drew, so which picture ended is the machine's own word.
-function pictureIndexOfUrl(url) {
-  const match = /-(\d+)\.[A-Za-z]+$/.exec(String(url || ''));
-  return match ? Number(match[1]) : -1;
-}
-
-function pictureByIndex(jobId, index) {
-  if (!(index >= 0)) return null;
-  for (const entry of plannedPictures) {
-    if (String(entry.job) === String(jobId) && Number(entry.index) === index) return entry;
-  }
-  return null;
-}
-
 // What the last reading of the machine stated, and what a stream followed since:
-// the stack is repainted from these without asking the machine again.
+// the cards are repainted from these without asking the machine again.
 let lastJobs = [];
 const liveProgress = {};
 
@@ -1448,8 +1579,11 @@ function rememberMeasuredRun(model, times) {
 // The machine's own ledger comes first: it was written by a run that finished at
 // these settings on this machine, and it survives the page. A run's own rate is
 // nearer, and the rate the runs this page watched held is what is left when the
-// machine has no row for these settings.
-function rateBasis(liveRate, model, found) {
+// machine has no row for these settings. Last stands the pace the run itself has
+// kept since the machine took it up - its first tick over the whole time it has
+// stood, the model's open included - which names the wait over rather than the
+// wait left, and is said as what it is.
+function rateBasis(liveRate, model, found, elapsedRate) {
   if (liveRate > 0) return "at this run's own rate";
   if (found && Number(found.row.count) > 0) {
     return found.exact
@@ -1458,60 +1592,50 @@ function rateBasis(liveRate, model, found) {
       : 'at the per-step cost its runs here showed';
   }
   if (aggregateRateFor(model) > 0) return 'at the rate its runs here held';
+  if (elapsedRate > 0) return 'at the pace it has held since its start';
   return '';
 }
 
 // The settings a standing run is working at, as the machine states them beside
 // the job it is working. A row of the machine's own cost ledger is keyed by
-// exactly these, so a run's own words are the match; where a record states none,
-// what this page would ask of that model is the nearest it can honestly say.
+// exactly these, so a run's own words are the match. A run still queued has no
+// settings yet, but it carries the ask it was filed with - its numbers, filled
+// onto its model card's own defaults, are the nearest that is not a lie; what
+// the dials on this page happen to read is nobody's answer about somebody
+// else's run.
 function standingAskOf(record) {
   const stated = record.settings;
-  if (!stated || typeof stated !== 'object') return askFields(record.model);
-  return {
-    model: String(record.model),
-    width: Number(stated.width),
-    height: Number(stated.height),
-    steps: Number(stated.steps),
-    guidance: Number(stated.guidance),
-    sampler: String(stated.sampler || 'engine default'),
-    scheduler: String(stated.scheduler || 'engine default'),
-    cache: stated.cache === true,
-    device: String(stated.device || 'card'),
-    quant: String(stated.quant || 'as shipped'),
-    sage_attn: stated.sage_attn === true,
-    batch: Number(stated.batch) > 0 ? Number(stated.batch) : 1,
-    refs: Number(stated.refs) || 0,
-    frames: Number(stated.frames) || 0,
-    fps: Number(stated.fps) || 0,
-  };
-}
-
-// What one picture of a run costs, in the machine's own count of its work: the
-// steps it samples for one picture. The record states them; a model's card
-// states what its runs take; a window that divides between the pictures the run
-// was asked for says it itself.
-function pictureStepsOf(record, cards) {
-  const stated = record.settings;
-  if (stated && Number(stated.steps) > 0) return Number(stated.steps);
-  const card = findModel(String(record.model));
-  if (card && Number(card.steps) > 0) return Number(card.steps);
-  const max = Number(record.max) || 0;
-  if (max > 0 && cards > 0 && max % cards === 0) return max / cards;
-  return 0;
-}
-
-// How many pictures a standing run was asked for. The record states the batch it
-// is answering; a window that divides by the steps a picture takes says it
-// itself; a run that states neither is not split, and one card says so.
-function picturesOfRun(record) {
-  const stated = record.settings;
-  if (stated && Number(stated.batch) > 0) return Math.round(Number(stated.batch));
-  const max = Number(record.max) || 0;
-  const card = findModel(String(record.model));
-  const steps = card && Number(card.steps) > 0 ? Number(card.steps) : 0;
-  if (max > 0 && steps > 0 && max % steps === 0) return max / steps;
-  return 0;
+  if (stated && typeof stated === 'object') {
+    return {
+      model: String(record.model),
+      width: Number(stated.width),
+      height: Number(stated.height),
+      steps: Number(stated.steps),
+      guidance: Number(stated.guidance),
+      sampler: String(stated.sampler || 'engine default'),
+      scheduler: String(stated.scheduler || 'engine default'),
+      cache: stated.cache === true,
+      device: String(stated.device || 'card'),
+      quant: String(stated.quant || 'as shipped'),
+      sage_attn: stated.sage_attn === true,
+      batch: Number(stated.batch) > 0 ? Number(stated.batch) : 1,
+      refs: Number(stated.refs) || 0,
+      frames: Number(stated.frames) || 0,
+      fps: Number(stated.fps) || 0,
+    };
+  }
+  const ask = record.ask && typeof record.ask === 'object' ? record.ask : null;
+  if (!ask) return null;
+  const base = askFields(String(record.model), true);
+  if (!base) return null;
+  if (Number(ask.width) > 0) base.width = Number(ask.width);
+  if (Number(ask.height) > 0) base.height = Number(ask.height);
+  if (Number(ask.steps) > 0) base.steps = Number(ask.steps);
+  if (Number(ask.guidance) > 0) base.guidance = Number(ask.guidance);
+  if (Number(ask.count) > 1) base.batch = Number(ask.count);
+  if (Number(ask.frames) > 0) base.frames = Number(ask.frames);
+  if (Array.isArray(ask.refs)) base.refs = ask.refs.length;
+  return base;
 }
 
 // What a run's own steps cost, from the two moments its stream named: the ticks
@@ -1525,189 +1649,263 @@ function runRateOf(times) {
   return steps / (times.tickAt - times.firstAt);
 }
 
-// Draw what this machine states about every picture that stands here. This runs
-// from the reading the page takes on every poll, and from the kept reading before
-// the first one, which is what keeps the notices true across a page reload, after
-// a job finishes, and after another window asked for work of its own.
+// Draw what this machine states about every picture that stands here, as cards
+// in the gallery: this page's own asks by their planned cards, and another
+// window's asks from the machine's record of them - prompt, settings, and the
+// pictures they lean on are what the record itself carries. One job draws one
+// picture, so one standing job is one card, and the line the cards come out in
+// is the machine's own: what stands on the card first, then the queued ones in
+// the places the machine holds for them. The estimates stay honest: a rate is
+// this run's own ticks, otherwise the cost this machine measured at these
+// settings, otherwise the pace this page has watched, otherwise the pace the
+// run has held since it was taken up - a last bound, named as one - and when
+// not even that stands, the card says no time rather than making one up.
 function paintPictureNotices(jobs) {
-  // A picture whose card the stack no longer carries is not carried in the plan
-  // either: what is planned is only what is still standing or still to be asked.
-  // A card the stack took down is taken out of the kept map with it, so a picture
-  // is never left pointing at a notice that is no longer on the stack.
-  const still = [];
-  for (const entry of plannedPictures) {
-    const held = pictureNotices.get(entry.key);
-    if (held && !ui.toastStanding(held)) pictureNotices.delete(entry.key);
-    if (ui.toastStanding(held) || (!entry.asked && !entry.dropped)) still.push(entry);
-  }
-  if (still.length !== plannedPictures.length) {
-    plannedPictures.length = 0;
-    for (const entry of still) plannedPictures.push(entry);
-  }
   const records = Array.isArray(jobs) ? jobs : [];
   const standing = [];
+  const settled = {};
   for (const record of records) {
     if (String(record.kind) !== 'generate') continue;
     const state = String(record.state);
-    if (state === 'running') {
+    if (state === 'running' || state === 'queued') {
       standing.push(record);
       continue;
     }
-    // A settled run the stack still carries is taken down: what its notice said
-    // while it ran is not a description of a machine that is done.
-    for (const entry of plannedPictures.slice()) {
-      if (String(entry.job) !== String(record.id)) continue;
-      if (pictureNotices.has(entry.key)) {
-        endPictureNotice(entry, state === 'done'
-          ? 'its picture is in the gallery'
-          : (state === 'cancelled' ? 'stopped on the machine' : 'its run failed'),
-          state === 'done' ? 'ok' : (state === 'cancelled' ? 'warn' : 'err'));
-      }
-    }
+    settled[String(record.id)] = state;
   }
-  // The machine takes the runs it holds one after another in the order it was
-  // asked for them, which is what the order of its own records states.
+  // A run that settled leaves no card behind: what its card said while it ran
+  // is not a description of a machine that is done. A landed picture needs no
+  // word either - the record of the render itself comes up in the gallery.
+  for (const entry of plannedPictures.slice()) {
+    const state = settled[String(entry.job)];
+    if (!state) continue;
+    retirePicture(entry, state === 'done' ? '' :
+      (state === 'cancelled' ? 'a picture stopped on the machine' : 'a picture failed: its run stopped'),
+      state === 'done' ? 'ok' : (state === 'cancelled' ? 'warn' : 'err'));
+  }
   standing.sort(function (a, b) {
+    const pa = Number(a.queue_pos) >= 0 ? Number(a.queue_pos) : Number.MAX_SAFE_INTEGER;
+    const pb = Number(b.queue_pos) >= 0 ? Number(b.queue_pos) : Number.MAX_SAFE_INTEGER;
+    if (pa !== pb) return pa - pb;
     return (Number(a.started_at) || 0) - (Number(b.started_at) || 0);
   });
 
-  // The pictures of every standing run, in the order they will be drawn.
-  const lanes = [];
-  let foreignCards = 0;
-  for (const record of standing) {
-    const id = String(record.id);
-    const entries = boundPictures(id);
-    if (entries.length) {
-      lanes.push({ record: record, entries: entries, count: entries.length });
-      continue;
-    }
-    // Work another window asked for: the machine states the batch it is answering
-    // and the window it works in, so its pictures are counted from its own words.
-    // Only the nearest of them get cards, since a wall of identical waiting cards
-    // says nothing the nearest ones have already not said - the rest are still
-    // counted in the position every drawn card names.
-    const named = picturesOfRun(record);
-    const cards = named > 0 ? named : 1;
-    const room = kForeignPictureCards - foreignCards;
-    const drawn = named > 0 ? (cards < room ? cards : (room > 0 ? room : 0)) : (room > 0 ? 1 : 0);
-    foreignCards += drawn;
-    const own = [];
-    for (let at = 0; at < drawn; ++at) {
-      const key = pictureKeyFor(id, at);
-      const entry = {
-        key: key, batch: '', n: at, of: named, runs: 1, run: 1,
-        inRun: cards, model: String(record.model), job: id, index: at, asked: true,
-        steps: pictureStepsOf(record, cards), prompt: '', settings: ''
-      };
-      plannedPictures.push(entry);
-      own.push(entry);
-    }
-    lanes.push({ record: record, entries: own, count: cards });
+  const rows = [];
+  for (let at = 0; at < standing.length; ++at) {
+    const record = standing[at];
+    const entry = boundPictures(String(record.id))[0] || null;
+    const row = rowOfRecord(record, entry, at + 1, standing.length);
+    if (row) rows.push(row);
   }
-
-  // What stands here, counted in pictures, is the position every notice names.
-  let standingPictures = 0;
-  for (const lane of lanes) standingPictures += lane.count;
-
-  // The work ahead is counted in the machine's own steps, and a picture's own
-  // place in its run is counted with it: the pictures of a run that come after a
-  // picture are not that picture's wait, so a queued card names the part of the
-  // work that really is before it rather than the whole of every run standing.
-  let workAhead = 0;
-  let positionBase = 0;
-  for (const lane of lanes) {
-    const record = lane.record;
-    const id = String(record.id);
-    const done = Number(record.done) || 0;
-    const max = Number(record.max) || 0;
-    // A run that has stated no step has not begun the window it states: the model
-    // may still be opening, and nothing is being sampled here yet. Its card says
-    // the run has not started rather than counting a step that has not happened.
-    const sampling = done > 0;
-    // A run whose record states no count at all - the machine states these while
-    // its own work runs, and a page following such a run before its first step
-    // answers gets only that the run stands here - is not a run that has not
-    // started: its count is nothing this page was told, so its card says so.
-    const unmeasured = record.done === undefined || record.done === null;
-    // The window a run takes, in the machine's own count: what it states while it
-    // works, otherwise what this page asked it for.
-    let window = max;
-    if (!window) {
-      let nominal = 0;
-      for (const entry of lane.entries) {
-        if (Number(entry.steps) > 0) nominal += Number(entry.steps);
-      }
-      window = nominal;
+  // Planned and not yet standing at the machine by name: the few seconds of a
+  // batch being handed over, and a job whose ask was accepted between two
+  // readings. The card stands from the ask and never blinks out while the
+  // machine is catching up - the record row takes it over when its reading comes.
+  const standingJobs = new Set();
+  for (const record of standing) standingJobs.add(String(record.id));
+  for (const entry of plannedPictures) {
+    if (entry.asked && standingJobs.has(String(entry.job))) continue;
+    const row = rowOfEntry(entry);
+    if (!row) continue;
+    if (entry.asked) {
+      row.job = String(entry.job);
+      row.stage = 'the machine has taken this one';
     }
-    const remaining = max > 0 ? Math.max(0, max - done)
-      : (window > 0 ? window : 0);
-    const model = String(record.model);
-    // What a step of this run costs is one answer for the whole run, not one per
-    // card: the machine's ledger at the settings this run is working at, or the
-    // rate this very run has held since its first step.
-    const times = jobTimes['job-' + id] || null;
-    const runRate = runRateOf(times);
-    const found = costRow(standingAskOf(record));
+    const found = costRow(askFields(entry.model));
     const stepMs = found ? stepMsOf(found) : 0;
-    const heldRate = aggregateRateFor(model);
-    const rate = runRate > 0 ? runRate
-      : (stepMs > 0 ? 1 / stepMs : (heldRate > 0 ? heldRate : 0));
-    const basis = rateBasis(runRate, model, found);
-    // What one picture of this run is worth, so a picture's estimate stops at
-    // the picture it stands for rather than at the end of the run.
-    const perPicture = pictureStepsOf(record, lane.count);
-    const cards = lane.entries;
-    for (let at = 0; at < cards.length; ++at) {
-      const entry = cards[at];
-      const live = standingNotice(entry);
-      if (!live) continue;
-      const position = positionBase + at + 1;
-      const behind = perPicture > 0 ? (cards.length - 1 - at) * perPicture : 0;
-      const untilItLands = remaining > behind ? remaining - behind : 0;
-      const estimateMs = rate > 0 ? Math.round((workAhead + untilItLands) / rate) : 0;
-      // Which part of the run this picture is at, in the machine's own count: a
-      // picture costs its own steps, so the run's count says which of them the
-      // machine has already sampled, which one it is sampling now, and which one
-      // has not come to yet - the cards of one run are not all "drawing".
-      const split = perPicture > 0;
-      const own = split ? at * perPicture : 0;
-      const stage = unmeasured ? 'its steps are not counted here'
-        : (!sampling ? 'its run has not started'
-          : (split && done <= own ? 'its turn has not come' : ''));
-      if (stage) {
-        ui.toastShape(live, true);
-        if (estimateMs > 0) {
-          paintPictureCard(live, entry, stage, position, standingPictures, basis);
-          ui.toastEta(live, estimateMs, '');
-        } else {
-          paintPictureCard(live, entry, stage, position, standingPictures,
-            'its time is not measured here yet');
-          ui.toastOpen(live);
-        }
-      } else if (split ? done >= own + perPicture : (max > 0 && done >= max)) {
-        ui.toastShape(live, false);
-        paintPictureCard(live, entry, 'its steps are drawn · waiting for the picture',
-          position, standingPictures, basis);
-        // a countdown from an earlier reading is not this picture's stage: its
-        // steps are over, and what waits for now is the file.
-        ui.toastEta(live, 0, '');
-        ui.toastStep(live, done, max, '');
-      } else {
-        ui.toastShape(live, false);
-        if (estimateMs > 0) {
-          paintPictureCard(live, entry, 'drawing', position, standingPictures, basis);
-          ui.toastEta(live, estimateMs, '');
-        } else {
-          paintPictureCard(live, entry, 'drawing', position, standingPictures,
-            'its time is not measured here yet');
-          ui.toastEta(live, 0, '');
-          ui.toastStep(live, done, max, '');
-        }
-      }
-    }
-    positionBase += lane.count;
-    workAhead += remaining;
+    const held = aggregateRateFor(String(entry.model));
+    row.rate = stepMs > 0 ? 1 / stepMs : held;
+    rows.push(row);
   }
+  // The wait in front of each card, in order, at the best rate any of them
+  // commands: a job whose own settings were never timed borrows the rate a
+  // standing run of the same work just showed, rather than saying nothing when
+  // the page is holding the number in its hand.
+  let shared = 0;
+  for (const row of rows) shared = row.rate > shared ? row.rate : shared;
+  let workAhead = 0;
+  for (const row of rows) {
+    const rate = row.rate > 0 ? row.rate : shared;
+    row.estimateMs = rate > 0 ? Math.round((workAhead + row.remaining) / rate) : 0;
+    if (!(row.estimateMs > 0)) row.noTime = 'its time is not measured here yet';
+    workAhead += row.remaining;
+  }
+
+  pendingRows = rows;
+  renderGallery(galleryItems);
+  paintPending(rows);
+  paintStandingHeader(standing, rows, records);
+}
+
+// The settings row of a standing record, from what the machine carries about it:
+// the ask snapshot stood the moment the ask was made, and the full settings
+// written when its run took the card. Only named numbers are spoken of.
+function recordFields(record) {
+  const ask = record.ask || {};
+  const stated = record.settings || {};
+  const card = findModel(String(record.model)) || {};
+  const words = [];
+  const steps = Number(ask.steps || stated.steps) || 0;
+  if (steps > 0) words.push('steps ' + steps);
+  const width = Number(ask.width || stated.width) || 0;
+  const height = Number(ask.height || stated.height) || 0;
+  if (width > 0 && height > 0) words.push('at ' + width + 'x' + height);
+  const guidance = Number(ask.guidance || stated.guidance) || 0;
+  if (guidance > 0) words.push('guidance ' + guidance);
+  const seed = Number(ask.seed);
+  if (Number.isFinite(seed) && seed >= 0) words.push('seed ' + seed);
+  const refs = Array.isArray(ask.refs) ? ask.refs : [];
+  if (refs.length) words.push('from ' + refs.length + (refs.length === 1 ? ' picture' : ' pictures'));
+  return {
+    width: width, height: height, steps: steps, guidance: guidance,
+    negative: String(ask.negative_prompt || ''),
+    frames: Number(ask.frames || stated.frames) || 0,
+    fps: Number(stated.fps) || Number(card.fps) || 0,
+    refUrls: Array.isArray(ask.ref_urls) ? ask.ref_urls : [],
+    video: card.video === true,
+    words: words.join(' · '),
+  };
+}
+
+// One standing run's card row: what it is, where it stands, how far it has got,
+// and what the wait in front of it is worth in the machine's own steps.
+function rowOfRecord(record, entry, place, standingCount) {
+  const id = String(record.id);
+  const fields = entry && entry.fields ? entry.fields : recordFields(record);
+  const queued = String(record.state) === 'queued';
+  const done = Number(record.done) || 0;
+  const max = Number(record.max) || 0;
+  const unmeasured = record.done === undefined || record.done === null;
+  const window = max || Number(fields.steps) || 0;
+  const remaining = max > 0 ? Math.max(0, max - done) : window;
+  const model = String(record.model);
+  const times = jobTimes['job-' + id] || null;
+  const runRate = runRateOf(times);
+  const found = costRow(standingAskOf(record));
+  const stepMs = found ? stepMsOf(found) : 0;
+  const heldRate = aggregateRateFor(model);
+  // The pace the run has kept since the machine took it up: the model's open is
+  // inside it, so it names the wait over rather than the wait left - a bound,
+  // said as one, rather than no number at all.
+  const since = Number(record.started_at) || 0;
+  const elapsedMs = since > 0 ? Date.now() - since * 1000 : 0;
+  const elapsedRate = done > 1 && elapsedMs > 0 ? done / elapsedMs : 0;
+  const rate = runRate > 0 ? runRate
+    : (stepMs > 0 ? 1 / stepMs : (heldRate > 0 ? heldRate : elapsedRate));
+  const held = !queued && !unmeasured && max > 0 && done >= max;
+  let stage;
+  if (queued) {
+    stage = standingCount > 1 ? 'waiting its turn' : 'waiting its turn at the card';
+  } else if (unmeasured) {
+    stage = 'its steps are not counted here';
+  } else if (done <= 0) {
+    stage = 'opening what it draws with';
+  } else if (held) {
+    stage = 'its steps are drawn · writing the file';
+  } else {
+    stage = 'drawing';
+  }
+  let refThumbs = fields.refUrls || [];
+  if (entry && entry.fields && !refThumbs.length) {
+    refThumbs = [];
+    for (const refId of entry.fields.refs) {
+      const url = refThumbUrl(refId);
+      if (url !== '') refThumbs.push(url);
+    }
+  }
+  return {
+    key: entry ? entry.key : pictureKeyFor(id, 0),
+    job: id, model: model,
+    prompt: entry ? entry.prompt : String((record.ask && record.ask.prompt) || ''),
+    settingsWords: entry ? entry.settings : fields.words,
+    width: fields.width, height: fields.height, steps: fields.steps,
+    guidance: fields.guidance, negative: fields.negative,
+    frames: fields.frames, fps: fields.fps, video: fields.video === true,
+    refThumbs: refThumbs,
+    queued: queued, held: held,
+    done: done, max: max, remaining: remaining, rate: rate,
+    stage: stage, estimateMs: 0, noTime: '',
+    position: entry ? picturePosition(entry, place, standingCount) : '',
+    basis: queued ? '' : rateBasis(runRate, model, found, elapsedRate),
+  };
+}
+
+// A card for a picture this page planned before any run of its own stands: the
+// same shape, the same stack, and a state that says its turn has not come.
+function rowOfEntry(entry) {
+  if (!entry.fields) return null;
+  const fields = entry.fields;
+  const thumbs = [];
+  for (const refId of fields.refs) {
+    const url = refThumbUrl(refId);
+    if (url !== '') thumbs.push(url);
+  }
+  return {
+    key: entry.key, job: '', model: String(entry.model),
+    prompt: entry.prompt, settingsWords: entry.settings,
+    width: fields.width, height: fields.height, steps: fields.steps,
+    guidance: fields.guidance, negative: fields.negative,
+    frames: fields.frames, fps: fields.fps, video: fields.video === true,
+    refThumbs: thumbs,
+    queued: true, held: false, done: 0, max: 0,
+    remaining: Number(entry.steps) || 0, rate: 0,
+    stage: 'not asked for yet', estimateMs: 0, noTime: '',
+    position: entry.of > 1
+      ? 'picture ' + (Number(entry.n) + 1) + ' of ' + entry.of + ' asked together' : '',
+    basis: '',
+  };
+}
+
+// Fill the standing cards from their rows, and let go of the cards whose
+// pictures no longer stand.
+function paintPending(rows) {
+  const keys = new Set();
+  for (const row of rows) {
+    keys.add(row.key);
+    const els = pendingEls.get(row.key);
+    if (!els) continue;
+    els.item.pending = row;
+    fillPending(els);
+  }
+  for (const key of Array.from(pendingEls.keys())) {
+    if (!keys.has(key)) pendingEls.delete(key);
+  }
+}
+
+// The header carries the working render: its share of steps, its model, and the
+// wait it states - every window reads the same run from the same record. With
+// renders queued it names the line, and with nothing of the image engine's
+// standing it hands the header back to the other engines' own state.
+function paintStandingHeader(standing, rows, records) {
+  let run = null;
+  for (const record of standing) {
+    if (String(record.state) === 'running') { run = record; break; }
+  }
+  if (run) {
+    const id = String(run.id);
+    let row = null;
+    for (const candidate of rows) {
+      if (candidate.job === id) { row = candidate; break; }
+    }
+    const done = Number(run.done) || 0;
+    const max = Number(run.max) || 0;
+    const pct = max > 0 ? Math.min(100, Math.round((done / max) * 100)) : 0;
+    let text = 'drawing · ' + modelName(String(run.model));
+    if (max > 0) text += ' · step ' + done + '/' + max;
+    if (row && row.estimateMs > 0) text += ' · about ' + costWords(row.estimateMs) + ' left';
+    ui.headProgress(pct, text, 'image', '', max <= 0);
+    return;
+  }
+  if (standing.length) {
+    ui.headProgress(0, 'queued · ' + standing.length + ' waiting for the card · ' +
+      modelName(String(standing[0].model)), 'image');
+    return;
+  }
+  if (plannedPictures.length) {
+    ui.headProgress(0, 'starting · ' + modelName(String(plannedPictures[0].model)), 'image');
+    return;
+  }
+  ui.headerState(records);
 }
 
 // How a job ended, read from what the job's own stream said: a batch of runs is
@@ -1724,8 +1922,11 @@ const jobOutcomes = {};
 function handleEvent(event, model, key) {
   const jobId = key && key.indexOf('job-') === 0 ? key.slice(4) : '';
   const mine = jobId ? boundPictures(jobId) : [];
+  // A render's stream speaks to the gallery cards and the header; every other
+  // piece of work this page starts - a model being opened, its bytes coming
+  // down - has no card to fill, and its toast is the only place that tells it.
+  const kind = jobTimes[key] ? String(jobTimes[key].kind || '') : '';
   if (event.type === 'progress') {
-    setProgress(Number(event.done), Number(event.max), 'drawing', model);
     const done = Number(event.done);
     const max = Number(event.max);
     const times = jobTimes[key] || (jobTimes[key] = { start: Date.now() });
@@ -1739,19 +1940,19 @@ function handleEvent(event, model, key) {
     times.max = max > 0 ? max : times.max;
     times.tickAt = Date.now();
     times.tickDone = done;
-    if (mine.length) {
-      // The machine's own ticks of this run are kept so the stack is repainted
+    if (kind === 'generate') {
+      // The machine's own ticks of this run are kept so the cards are repainted
       // from the stream itself - the next reading of the machine would state the
-      // same numbers a few seconds later.
+      // same numbers a few seconds later. The header moves with them.
       liveProgress[jobId] = { model: String(model), done: done, max: max };
       repaintPictures();
       return;
     }
-    const live = ui.toastTrack(key, '', 'wait');
     // The estimate comes from what this machine has really done: this run's own
     // rate once it has taken more than one step, otherwise the cost it measured
-    // for a run of these settings, otherwise the rate the runs this page watched
-    // held. None of them is a wish.
+    // for these settings, otherwise the rate the runs this page watched held.
+    // None of them is a wish.
+    const live = ui.toastTrack(key, '', 'wait');
     let rate = runRateOf(times);
     if (rate <= 0) {
       const found = costRow(askFields(model));
@@ -1771,71 +1972,21 @@ function handleEvent(event, model, key) {
     return;
   }
   if (event.type === 'image' || event.type === 'video') {
-    const tray = E('tray');
-    const shot = document.createElement('div');
-    // A run's own render is drawn in its own frame: it is not a gallery card, and
-    // a gallery card is sized and marked like one.
-    shot.className = 'tray-shot';
-    const img = document.createElement('img');
-    const moving = event.type === 'video';
-    img.alt = moving ? 'the clip this run just made' : 'the render just made';
-    img.title = moving
-      ? 'The clip this run just made, played here as the small animated copy of it; its whole file is kept in the gallery below.'
-      : 'The picture this run just made; it is in the gallery below.';
-    // A clip is not a picture a browser can show: what plays in the frame is the
-    // machine's own animated copy of it, and the poster is its still first frame
-    // when that copy was not written. The whole clip is what the gallery's card
-    // and the save hand point at.
-    const shown = moving
-      ? String(event.preview || event.poster || event.clip || event.url || '')
-      : String(event.url || '');
-    img.src = ui.fileSrc(shown);
-    shot.appendChild(img);
-    if (moving && event.audio) {
-      // The clip's own sound reaches the page beside its moving frames: the file
-      // the machine wrote stands here, nothing is played that it did not make.
-      const sound = document.createElement('audio');
-      sound.setAttribute('controls', '');
-      sound.appendChild((function () {
-        const source = document.createElement('source');
-        source.src = ui.fileSrc(String(event.audio));
-        return source;
-      })());
-      shot.appendChild(sound);
-    }
-    tray.appendChild(shot);
     log('Render saved: ' + String(event.clip || event.url), 'ok');
     if (key) {
       // What the run's steps cost is kept from the moments its own stream named.
       // A picture's event names no steps at all, so the run's own count is the
       // only honest source of what its steps cost.
       rememberMeasuredRun(model, jobTimes[key]);
-      // Which picture this frame is: the machine names the file it wrote by the
-      // index of the picture it drew.
-      const picture = mine.length
-        ? pictureByIndex(jobId, pictureIndexOfUrl(String(event.clip || event.url || '')))
-        : null;
-      const drawn = (moving ? 'its clip is drawn' : 'its picture is drawn') + ' · kept in the gallery';
-      if (picture) {
-        endPictureNotice(picture, drawn, 'ok');
-      } else if (mine.length) {
-        // A frame the machine did not name is still one picture of this run, and
-        // the machine draws them in the order it was asked, so it is the first of
-        // them that still stands.
-        let first = null;
-        for (const entry of mine) {
-          if (ui.toastStanding(pictureNotices.get(entry.key))) {
-            first = entry;
-            break;
-          }
-        }
-        if (first) endPictureNotice(first, drawn, 'ok');
-      } else {
-        ui.toastEnd(ui.toastTrack(key, (moving ? 'Clip done: ' : 'Image done: ') + modelName(model), 'ok'),
-          (moving ? 'Clip done: ' : 'Image done: ') + modelName(model), 'ok');
-      }
+      // One frame retires one card: a run draws its pictures in order and this
+      // frame is the next of them, so the card that comes down is the first of
+      // the ones still standing. The cards behind it describe pictures that
+      // have not been made yet, and they stay.
+      jobLanded[key] = (Number(jobLanded[key]) || 0) + 1;
+      if (mine.length) retirePicture(mine[0], '', 'ok');
       jobOutcomes[key] = 'done';
     }
+    void landRender(String(event.url || event.clip || ''));
     return;
   }
   if (event.type === 'error') {
@@ -1844,17 +1995,16 @@ function handleEvent(event, model, key) {
       delete jobTimes[key];
       delete liveProgress[jobId];
       jobOutcomes[key] = 'error';
-      if (mine.length) {
-        // The run stopped at a step: its pictures say what it stopped as, in the
-        // machine's own words.
+      if (kind === 'generate') {
+        // The run stopped at a step: its picture says what it stopped as, in the
+        // machine's own words, and its card comes down saying so.
         for (const entry of mine) {
-          if (pictureNotices.has(entry.key)) {
-            endPictureNotice(entry, 'its run failed: ' + String(event.message), 'err');
-          }
+          retirePicture(entry, 'its run failed: ' + String(event.message), 'err');
         }
+        repaintPictures();
       } else {
-        ui.toastEnd(ui.toastTrack(key, 'Image failed: ' + String(event.message), 'err'),
-          'Image failed: ' + String(event.message), 'err');
+        ui.toastEnd(ui.toastTrack(key, 'Job failed: ' + String(event.message), 'err'),
+          'Job failed: ' + String(event.message), 'err');
       }
     }
     return;
@@ -1865,17 +2015,46 @@ function handleEvent(event, model, key) {
       delete jobTimes[key];
       delete liveProgress[jobId];
       jobOutcomes[key] = 'cancelled';
-      if (mine.length) {
+      if (kind === 'generate') {
         for (const entry of mine) {
-          if (pictureNotices.has(entry.key)) {
-            endPictureNotice(entry, 'stopped on the machine', 'warn');
-          }
+          retirePicture(entry, 'stopped on the machine', 'warn');
         }
+        repaintPictures();
       } else {
-        ui.toastEnd(ui.toastTrack(key, 'Generation cancelled', 'warn'), 'Generation cancelled', 'warn');
+        ui.toastEnd(ui.toastTrack(key, 'Stopped', 'warn'), 'Stopped', 'warn');
       }
     }
   }
+}
+
+// The record of a render this page watched comes straight up out of the machine:
+// the file it names is the record's whole address, and waiting a poll cycle to
+// see a picture that has already landed is a wait nobody asked for. A record
+// that cannot be read falls back to walking the gallery's front page, which
+// states the truth a moment later.
+async function landRender(url) {
+  const name = String(url || '').split('/').pop().replace(/\.[A-Za-z]+$/, '');
+  let record = null;
+  if (name) record = await ui.api('/api/gallery/' + encodeURIComponent(name));
+  if (record && !record.error && String(record.id || '') !== '') {
+    const id = String(record.id);
+    if (!galleryItems.some(function (item) { return String(item.id) === id; })) {
+      // Put where its own moment puts it, not blindly on top: two pictures of
+      // one batch can finish their slow reads in either order, and a list that
+      // is only ever prepended turns that race into a stack whose second
+      // picture sits above its third until the next poll sorts the lie out.
+      const created = Number(record.created) || 0;
+      let at = 0;
+      while (at < galleryItems.length &&
+        (Number(galleryItems[at].created) || 0) >= created) ++at;
+      galleryItems = galleryItems.slice(0, at).concat([record], galleryItems.slice(at));
+      galleryHeld += 1;
+      log('Landed: ' + id, 'ok');
+    }
+    renderGallery(galleryItems);
+    return;
+  }
+  await refreshGallery();
 }
 
 // Every piece of work this page starts lives on the timed stack while it runs: its
@@ -1890,7 +2069,10 @@ function handleEvent(event, model, key) {
 // said - which is what a batch of runs reads to decide whether to start the next.
 async function streamJob(job, model, action) {
   const key = 'job-' + String(job);
-  jobTimes[key] = { start: Date.now() };
+  // What kind of work this is, kept beside its moments: a render's stream speaks
+  // to the gallery cards, everything else to its toast, and the stream itself
+  // does not say which it is.
+  jobTimes[key] = { start: Date.now(), kind: String(action || '') };
   // The card of the model this work is on: what is already on this machine and
   // what its opens cost on this one are stated there, not by a model's name.
   const card = findModel(String(model)) || {};
@@ -1950,6 +2132,9 @@ async function streamJob(job, model, action) {
   rememberMeasuredRun(model, jobTimes[key]);
   delete jobTimes[key];
   delete liveProgress[String(job)];
+  // An ending is a change of fact: what runs costs now has a new row, and a
+  // model that just opened or came down is no longer what the cards say.
+  needHeavy = true;
   await refresh();
   // What the machine said about how this job ended. The stream's own words come
   // first. A stream that closed without ever stating one is followed at the job's
@@ -1968,7 +2153,7 @@ async function streamJob(job, model, action) {
       const record = await ui.api('/api/jobs/' + asked);
       const state = record && record.state ? String(record.state) : '';
       if (state === 'done' || state === 'error' || state === 'cancelled') ended = state;
-      else if (state !== 'running') break;
+      else if (state !== 'running' && state !== 'queued') break;
       await ui.sleep(2000);
     }
   }
@@ -1994,16 +2179,12 @@ async function startJob(model, action, extra, batch) {
     if (action === 'generate') finishPlan(batch, 'the ask was refused here');
     return 'error';
   }
-  lastJob = started.job;
   if (action === 'generate') {
     running = started.job;
     // The run the machine just took carries the next of the pictures this page
     // planned for the batch this ask laid out, and the machine's own job id is
     // what ties them to it from here on.
     bindPlannedPictures(batch, started.job, Number(body.count || 1));
-    const cancelBtn = E('cancel-btn');
-    cancelBtn.disabled = false;
-    cancelBtn.title = 'Stop this render at the next sampling step.';
   }
   log('Job ' + started.job + ' started', 'ok');
   // The header shows something running the moment the click happens, before the
@@ -2012,12 +2193,9 @@ async function startJob(model, action, extra, batch) {
   return await streamJob(started.job, model, action);
 }
 
-// The room the timed stack keeps for this page's own work: one card per picture
-// of the biggest ask this studio makes, plus the nearest of another window's work.
-// Below the room a picture of this page's own batch can be taken off the stack
-// while its run still has not come, which is how a batch came to read as pictures
-// that were lost.
-ui.toastTrackedCap = kMaxBatchPictures + kForeignPictureCards + 4;
+// The stack of toasts keeps only the work that has no card: a model being
+// opened, bytes coming down. Renders stand in the gallery, not here.
+ui.toastTrackedCap = 8;
 
 // What an ask needs before it runs: the model the page picked has to be on this
 // machine. A model the machine does not name is refused at its own door, so there
@@ -2035,15 +2213,22 @@ function readyToDraw(model) {
   return true;
 }
 
-// The ask every generate hand takes: one picture, or the quick batches. Every
-// picture is its own job on the machine - the X4 hand is four separate jobs and
-// the X16 hand sixteen - so the whole ask is handed over at once, each job keeps
-// its own record, and the cancel hand can stop the ones that have not been drawn
-// without touching the ones already made. Each job is then followed by its own
-// name to its own ending, and what came out is counted from those endings alone.
+// The ask every generate hand takes: one picture, or the quick batches. A run
+// draws up to kRunPictures of them back to back inside one model open, so the
+// X4 hand is one run of four and the X16 hand one run of sixteen - one job, one
+// queue line, one standing card - and only an ask deeper than one run's fill
+// comes out as several runs. The whole ask is handed over at once; each picture
+// still lands as its own record, and stopping a run stops the ones not drawn
+// yet without touching the ones already made. Each run is then followed by its
+// own name to its own ending, and what came out is counted from the pictures
+// that really landed, and from a run the machine says finished, never from
+// wishes.
 // The model this ask draws with is the one this page has picked: the ask's own
 // words name that pick, so the hand carries no model that another pick would
 // answer for.
+const jobLanded = {};
+const jobBound = {};
+
 async function drawAsk(pictures) {
   const model = modelChoice();
   if (!model) {
@@ -2056,64 +2241,65 @@ async function drawAsk(pictures) {
   // of this model rather than on a card's opening words.
   keepAsk(model);
   const batch = planPictures(model, pictures);
+  const perRun = picturesPerRun(model);
+  const runs = Math.ceil(pictures / perRun);
   log('An ask of ' + pictures + ' picture' + (pictures === 1 ? '' : 's') + ' with ' + modelName(model) +
-    (pictures === 1 ? ', as one job.' : ': ' + pictures + ' separate one-picture jobs, drawn one after another.'), 'ok');
-  // Hand every ask of the batch to the machine first, so all its job records
+    (runs === 1 ? ', as one job.'
+      : ', in ' + runs + ' runs of up to ' + perRun + ', drawn one after another.'), 'ok');
+  // Hand every run of the batch to the machine first, so all its job records
   // stand from the start and a refusal says so while the rest of the batch is
   // still whole enough to talk about.
   const jobs = [];
-  for (let n = 1; n <= pictures; ++n) {
-    const started = await ui.postJob('/api/generate', payload());
+  let left = pictures;
+  while (left > 0) {
+    const take = left > perRun ? perRun : left;
+    const started = await ui.postJob('/api/generate', payload(take));
     if (!started.job) {
       log('Render refused' + (started.status ? ' ' + started.status : '') +
         (started.error ? ': ' + started.error : ''), 'err');
       ui.toastNo('start the image', started);
       finishPlan(batch, 'never asked for: the machine refused here');
-      batchJobs = null;
       finishJob();
+      paintPictureNotices(lastJobs);
       return;
     }
-    lastJob = started.job;
     // The run the machine just took carries the next of the pictures this page
     // planned for the batch, and the machine's own job id is what ties them to
-    // it from here on - one job, one picture.
-    bindPlannedPictures(batch, started.job, 1);
+    // it from here on - one run, its own fill of pictures, in this order. The
+    // card stands with its stop hand from this moment: the line at the machine
+    // is the line the cards show.
+    bindPlannedPictures(batch, started.job, take);
+    jobBound[String(started.job)] = take;
     jobs.push(started.job);
-    if (jobs.length === 1) {
-      running = started.job;
-      const cancelBtn = E('cancel-btn');
-      cancelBtn.disabled = false;
-      cancelBtn.title = 'Stop this ask: every job of it that the machine has not drawn.';
-      ui.headProgress(0, 'starting · ' + model, 'image');
-    }
+    left -= take;
+    if (jobs.length === 1) running = started.job;
+    paintPictureNotices(lastJobs);
   }
-  batchJobs = jobs.slice();
-  // Follow the batch job by job, each by its own name. The machine draws them in
-  // the order it took them; a job that failed or was stopped is counted as what
-  // it was, and never hides the pictures that did come out.
+  // Follow the batch run by run, each by its own name. The machine draws them in
+  // the order it holds them; a run that failed or was stopped is counted as what
+  // it was - the pictures of it that really landed - and never hides the
+  // pictures that did come out.
   let drawn = 0;
   for (let k = 0; k < jobs.length; ++k) {
     running = jobs[k];
-    // A finished job's watch hands the header and the cancel hand back between
-    // jobs; the ask is not over, so the hand stands back up until its last job.
-    if (k > 0) {
-      const cancelBtn = E('cancel-btn');
-      cancelBtn.disabled = false;
-      cancelBtn.title = 'Stop this ask: every job of it that the machine has not drawn.';
-    }
     const ended = await streamJob(jobs[k], model, 'generate');
-    if (ended === 'done') ++drawn;
+    // A run that showed pictures is counted by the frames that landed - a run
+    // stopped short of its fill ends as done with fewer of them than it was
+    // asked for, and its own frames are the only honest count. A run that
+    // ended as done without a single frame named is a stream that died silent,
+    // and its fill is all that can be claimed for it.
+    const landed = Number(jobLanded['job-' + jobs[k]]) || 0;
+    drawn += landed > 0 ? landed
+      : ended === 'done' ? Math.max(1, Number(jobBound[String(jobs[k])]) || 1) : 0;
   }
-  batchJobs = null;
   finishJob();
   finishPlan(batch, 'never drawn');
   if (drawn === pictures) {
-    log('The ask is drawn: ' + drawn + ' pictures, each its own job, in the gallery.', 'ok');
+    log('The ask is drawn: ' + drawn + ' pictures in the gallery.', 'ok');
   } else if (drawn > 0) {
-    log('The ask ended short: ' + drawn + ' of ' + pictures + ' pictures drawn; ' +
-      (pictures - drawn) + ' job' + (pictures - drawn === 1 ? '' : 's') + ' did not come out.', 'warn');
+    log('The ask ended short: ' + drawn + ' of ' + pictures + ' pictures drawn.', 'warn');
   } else {
-    log('None of the ' + pictures + ' jobs came out.', 'warn');
+    log('None of the ' + pictures + ' pictures came out.', 'warn');
   }
 }
 
@@ -2144,14 +2330,12 @@ function drawStatus(snapshot) {
 
   const jobs = (snapshot && Array.isArray(snapshot.jobs)) ? snapshot.jobs : [];
   lastJobs = jobs;
-  // While a render this studio started is on screen, its own line paints the
-  // header, so this general reading waits rather than overwriting it.
-  if (!running) {
-    ui.headerState(jobs);
-  }
-  // The stack is repainted from the machine's own records on every reading, so the
-  // pictures that stand here - this page's or another window's - are stated after a
-  // page reload, after a run finishes, and after work asked for elsewhere appears.
+  // The queue pass owns the header: every standing render reaches it, and with
+  // nothing of the image engine's standing it hands the header to the state of
+  // the other engines. The cards are repainted from the machine's own records on
+  // every reading, so the pictures that stand here - this page's or another
+  // window's - are stated after a page reload, after a run finishes, and after
+  // work asked for elsewhere appears.
   paintPictureNotices(jobs);
 }
 
@@ -2164,7 +2348,12 @@ function drawStatus(snapshot) {
 // as a batch; nothing about one page depends on the next. The list grows as each
 // batch lands, and repeats of one ask stack across the whole room.
 async function refreshGallery() {
-  const first = await ui.api(galleryPageUrl(0));
+  // The newest page is asked for past the cache - and past the copy a poll made
+  // a moment ago: this is exactly the reading that must not be answered with a
+  // memory from before a render landed. (The held copy is what made a page that
+  // came back from elsewhere stand on the world as it was before the renders
+  // finished, sometimes for a full heavy round.)
+  const first = await ui.api(galleryPageUrl(0), 'GET', undefined, { cache: 'no-store' });
   if (!first) return false;
   const seen = new Set();
   const merged = [];
@@ -2176,41 +2365,59 @@ async function refreshGallery() {
       merged.push(row);
     }
   };
-  // The newest page comes first, then what this client held that the newest page
-  // did not carry - older records, so the order the machine serves stays intact.
   take(first.items);
-  take(galleryItems);
   let held = Number(first.total || merged.length);
+  // What this client carries that the machine's pages do not, split where the
+  // pages end: records older than the machine's newest page belong behind it,
+  // and records newer than that page's last line - pictures that landed while
+  // this walk was in flight, which no fetched page can hold yet - keep their
+  // place in front. A record this page deleted stays gone: carried back, it
+  // stood as a ghost whose picture was no longer there.
+  const carried = function () {
+    const floor = merged.length ? Number(merged[merged.length - 1].created) || 0 : 0;
+    const behind = [];
+    const front = [];
+    for (const item of galleryItems) {
+      const id = String(item.id);
+      if (seen.has(id) || deletedShots.has(id)) continue;
+      if (Number(item.created) >= floor) front.push(item);
+      else behind.push(item);
+    }
+    return front.concat(merged, behind);
+  };
   const commit = function () {
-    galleryItems = merged;
-    galleryHeld = Math.max(held, merged.length);
+    const whole = carried();
+    galleryItems = whole;
+    galleryHeld = Math.max(held, whole.length);
     galleryOffset = 0;
     renderGallery(galleryItems);
   };
   commit();
   let failed = false;
-  // The room is walked forward from what this client holds: each round asks for the
-  // next pages, several at a time, and stops when the room's own count is held or
-  // when an answer brought nothing new - a room that stops answering is reported as
-  // incomplete rather than spun around.
-  while (merged.length < held) {
-    const before = merged.length;
+  // The room is walked by the machine's own windows: the offsets asked with are
+  // the machine's positions, so records this client carries beside them cannot
+  // make a window skip its turn - and no window is asked twice. A page that
+  // refused is reported, and the walk stops when the machine's count is held.
+  let walked = first.items ? first.items.length : 0;
+  while (walked < held) {
     const starts = [];
     for (let step = 0; step < kGalleryRoomBatch; ++step) {
-      const at = before + step * kGalleryPage;
+      const at = walked + step * kGalleryPage;
       if (at < held) starts.push(at);
     }
     if (!starts.length) break;
     const answers = await Promise.all(starts.map(function (at) {
       return ui.api(galleryPageUrl(at));
     }));
-    for (const answer of answers) {
+    for (let step = 0; step < answers.length; ++step) {
+      const answer = answers[step];
+      if (walked + step * kGalleryPage >= held) continue;
       if (!answer) { failed = true; continue; }
       take(answer.items);
       if (answer.total !== undefined && answer.total !== null) held = Number(answer.total);
     }
+    walked += starts.length * kGalleryPage;
     commit();
-    if (merged.length === before) break;
   }
   if (failed) return false;
   return merged.length >= held;
@@ -2223,6 +2430,17 @@ function galleryPageUrl(offset) {
   return '/api/gallery?limit=' + kGalleryPage + '&offset=' + start;
 }
 
+// The talking between this browser and the machine is the expensive thing, so
+// one thing is asked on every reading - the monitor, which answers about the
+// machine, every engine's jobs, and the counts at once - and everything else
+// comes when the thing it describes changes: a render lands, an open or a
+// download finishes, a cost table turns a minute old. Renders standing ask the
+// gallery's front page again, because that is where a picture lands; a page
+// that has walked the whole room pays one request for that asking.
+let heavyAt = 0;
+const kHeavyMs = 60000;
+let needHeavy = true;
+
 async function refresh() {
   const snapshot = await ui.api('/api/monitor');
   if (!snapshot) {
@@ -2230,55 +2448,81 @@ async function refresh() {
     throw new Error('/api/monitor returned nothing');
   }
   drawStatus(snapshot);
-
-  // What this machine says its own work costs, asked before the cards are drawn so
-  // they can state it. A door that answers nothing - an older build of the machine
-  // that has no such door, or one that refused this ask - leaves the last reading
-  // standing: the costs are facts about this machine, not something to forget because
-  // one answer did not come.
-  const costs = await ui.api('/api/timings');
-  if (costs) {
-    costRows = Array.isArray(costs.generations) ? costs.generations : [];
-    openRows = Array.isArray(costs.loads) ? costs.loads : [];
+  let standing = false;
+  const rows = (snapshot && Array.isArray(snapshot.jobs)) ? snapshot.jobs : [];
+  for (const job of rows) {
+    if (String(job.kind) !== 'generate') continue;
+    const state = String(job.state);
+    if (state === 'running' || state === 'queued') { standing = true; break; }
   }
-  // The card's full name, asked once and kept: it is a fact about the machine
-  // for as long as this page stands, and the cost rows are keyed by it.
-  if (!cardNamed) {
-    const sys = await ui.api('/api/system');
-    const devs = sys && Array.isArray(sys.devices) ? sys.devices : [];
-    for (const d of devs) {
-      if (d.type === 'gpu' || d.type === 'accel') {
-        cardNamed = String(d.name);
-        break;
+  // Does the machine still keep the same number of renders this screen shows?
+  // When the two part ways, something landed or went away while this page was
+  // not looking - a render that finished while the person stood on another
+  // page, or a delete from another window - and the room is asked again now,
+  // not whenever the next heavy round happens to fall due. The room's own
+  // count is enough to notice this, and one line of it costs no more than a
+  // thumbnail; a job that stands already asks the room every reading.
+  let desynced = false;
+  if (!standing) {
+    const tell = await ui.api('/api/gallery?limit=1&offset=0');
+    const keptNow = tell && tell.total !== undefined ? Number(tell.total) : -1;
+    desynced = keptNow >= 0 && keptNow !== galleryHeld;
+  }
+  const now = Date.now();
+  const heavy = needHeavy || now - heavyAt > kHeavyMs;
+  if (heavy) {
+    needHeavy = false;
+    heavyAt = now;
+    // What this machine says its own work costs, asked before the cards are
+    // drawn so they can state it. A door that answers nothing - an older build
+    // of the machine that has no such door, or one that refused this ask -
+    // leaves the last reading standing: the costs are facts about this machine,
+    // not something to forget because one answer did not come.
+    const costs = await ui.api('/api/timings');
+    if (costs) {
+      costRows = Array.isArray(costs.generations) ? costs.generations : [];
+      openRows = Array.isArray(costs.loads) ? costs.loads : [];
+    }
+    // The card's full name, asked once and kept: it is a fact about the machine
+    // for as long as this page stands, and the cost rows are keyed by it.
+    if (!cardNamed) {
+      const sys = await ui.api('/api/system');
+      const devs = sys && Array.isArray(sys.devices) ? sys.devices : [];
+      for (const d of devs) {
+        if (d.type === 'gpu' || d.type === 'accel') {
+          cardNamed = String(d.name);
+          break;
+        }
       }
     }
+    const prefs = await ui.api('/api/prefs');
+    // a reading that did not answer is not a machine that remembers nothing:
+    // drawing the switches from an empty answer turns every one of them off and
+    // forgets the model this machine remembered, and the next write of the
+    // page's own switches would store that guess over the machine's memory.
+    if (prefs) applyPrefs(prefs);
+    const list = await ui.api('/api/models');
+    if (list) {
+      models = list.models || [];
+      renderModels();
+      // The cards carry the choice: the marked card is what a run draws with, so
+      // nothing else on the page is given a model.
+      fillGalleryOptions();
+      syncPrompt();
+    }
+    const kept = await ui.api('/api/refs');
+    if (kept) {
+      refs = kept.items || [];
+      renderRefs();
+    }
   }
-
-  const prefs = await ui.api('/api/prefs');
-  // a reading that did not answer is not a machine that remembers nothing: drawing
-  // the switches from an empty answer turns every one of them off and forgets the
-  // model this machine remembered, and the next write of the page's own switches
-  // would store that guess over the machine's memory.
-  if (prefs) applyPrefs(prefs);
-  const list = await ui.api('/api/models');
-  if (list) {
-    models = list.models || [];
-    renderModels();
-    // The cards carry the choice: the marked card is what a run draws with, so
-    // nothing else on the page is given a model.
-    fillGalleryOptions();
-    syncPrompt();
-  }
-  // The room is asked for again, so a render that just landed appears at the top of
-  // a list that stayed put otherwise; the pages beyond what this client already
-  // holds are asked for in batches.
-  await refreshGallery();
-  const kept = await ui.api('/api/refs');
-  if (kept) {
-    refs = kept.items || [];
-    renderRefs();
-  }
-  paintRunState();
+  // The room is asked for again, so a render that just landed appears at the top
+  // of a list that stayed put otherwise; the pages beyond what this client
+  // already holds are asked for in batches. A room whose count no longer matches
+  // the machine's own is asked for whatever else stands or not: this is what
+  // catches a page up after it was away while the machine worked.
+  if (standing || heavy || desynced) await refreshGallery();
+  if (heavy) paintRunState();
 }
 
 // Rebuilding a choice list throws away the browser's current selection, so the
@@ -2414,21 +2658,29 @@ function heldRef(id) {
   return null;
 }
 
-// Which render of a repeated ask a card shows: the ask is the key, the chosen
-// render's id is the value. The cards are drawn again on a poll and on a filter,
-// so the choice is kept here rather than in the node: a picture a person picked
-// with their own click does not jump back to the newest one because the machine
-// answered a request in the meantime. A chosen render that is no longer there -
-// deleted, or filtered out of its own ask - falls back to the newest.
+// Which render of a repeated ask a card shows: the ask is the key, and the
+// value is the chosen render together with the head the card wore when it was
+// chosen. The cards are drawn again on a poll and on a filter, so the choice is
+// kept here rather than in the node: a picture a person picked with their own
+// click does not jump back to the newest one because the machine answered a
+// request in the meantime. But a new run of the same ask puts a new head on the
+// card, and that picture is the one to show: a choice made about an older ask
+// does not get to stare down every render that comes after it - kept past its
+// head it would sit on whatever the newest pushed into its place, and slide
+// further down the row with every landing. A head the choice was not made
+// under, or a chosen render no longer there, shows the newest.
 const galleryShown = {};
 
 function chosenOf(group) {
   const key = stackKeyFor(group[0]);
-  const wanted = galleryShown[key];
-  if (wanted) {
-    for (let at = 0; at < group.length; ++at) {
-      if (String(group[at].id) === String(wanted)) return at;
-    }
+  const held = galleryShown[key];
+  if (!held) return 0;
+  if (String(held.head) !== String(group[0].id)) {
+    delete galleryShown[key];
+    return 0;
+  }
+  for (let at = 0; at < group.length; ++at) {
+    if (String(group[at].id) === String(held.pick)) return at;
   }
   return 0;
 }
@@ -2441,6 +2693,7 @@ function chosenOf(group) {
 // one on the screen: `save` saves the picture being looked at, `delete` deletes
 // that one, `again` puts that one's ask back in the field.
 function galleryCard(item, earlier) {
+  if (item.pending) return pendingCard(item, earlier);
   const group = earlier && earlier.length ? [item].concat(earlier) : [item];
   const shot = document.createElement('div');
   shot.className = 'shot';
@@ -2470,6 +2723,14 @@ function galleryCard(item, earlier) {
     // top card, so the picture on screen is in the row too and is ringed: which
     // one is being looked at is then read off the card, not guessed.
     group.forEach(function (past, at) {
+      if (past.pending) {
+        // A run of this ask still standing: a ghost, not a picture yet.
+        const ghost = document.createElement('div');
+        ghost.className = 'shot-ghost';
+        ghost.title = 'a run of this ask standing on the machine';
+        row.appendChild(ghost);
+        return;
+      }
       const thumb = document.createElement('img');
       thumb.setAttribute('width', '52');
       thumb.setAttribute('height', '52');
@@ -2489,7 +2750,9 @@ function galleryCard(item, earlier) {
     const url = renderUrl(one);
     const picture = cardPicture(one);
     const moving = String(one.kind || '') === 'video';
-    galleryShown[stackKeyFor(group[0])] = String(one.id);
+    galleryShown[stackKeyFor(group[0])] = {
+      pick: String(one.id), head: String(group[0].id),
+    };
     img.setAttribute('width', String(one.width));
     img.setAttribute('height', String(one.height));
     img.setAttribute('alt', (one.name || one.model) + ' ' + one.width + 'x' + one.height +
@@ -2497,8 +2760,8 @@ function galleryCard(item, earlier) {
     img.title = shotCaption(one) + (moving ? ' · this clip plays here, at the small copy the machine wrote' : '') +
       ' · tap to open';
     // The kept copy of this file answers without a request: a render is read
-    // once, and every later drawing of it — this card, the tray, the viewer —
-    // uses what is already in this browser.
+    // once, and every later drawing of it — this card, the viewer, the row of
+    // thumbnails — uses what is already in this browser.
     const next = ui.fileSrc(picture);
     if (img.getAttribute('src') !== next) {
       img.src = next;
@@ -2630,6 +2893,14 @@ function galleryCard(item, earlier) {
           ', which this machine no longer offers.', 'warn');
         return;
       }
+      // The picture and the model that made it belong together. Drawing this prompt
+      // with whatever else happened to be in use answered under this picture's name
+      // in another model's voice - and when that other model was not on the machine,
+      // the press ended in "that model is not downloaded" about a model the card
+      // said was ready. The model moves first: putting a model in use puts back
+      // what this browser kept for it, and writing the words before that move let
+      // the kept ask pour over this picture's prompt before the draw ever saw it.
+      await putInUse(row);
       E('prompt-field').value = one.prompt || '';
       const length = E('clip-length');
       if (length && Number(one.frames || 0) > 0) {
@@ -2654,12 +2925,6 @@ function galleryCard(item, earlier) {
         }
         paintRunState();
       }
-      // The picture and the model that made it belong together. Drawing this prompt
-      // with whatever else happened to be in use answered under this picture's name
-      // in another model's voice - and when that other model was not on the machine,
-      // the press ended in "that model is not downloaded" about a model the card
-      // said was ready.
-      await putInUse(row);
       log('Queued again: ' + (one.name || one.model) + ' · prompt and model put in use', 'ok');
       generate();
     });
@@ -2749,6 +3014,10 @@ function groupStacks(ordered) {
 
 // Redrawing the list is what a filter change does: the controls say what to show,
 // and the screen answers the moment they are moved rather than at the next poll.
+// What stands in the line stands here too, as a card at the head of the stack
+// its own ask names - the ask of a run being drawn is the ask of the picture it
+// will make, so the placeholder joins its own future record's group and steps
+// out of the way when that record lands.
 function renderGallery(items) {
   const pane = E('gallery');
   // The counts beside the names in the model filter are the pictures this page
@@ -2756,7 +3025,14 @@ function renderGallery(items) {
   // them only when the models arrived left every name at (0) on a page whose
   // gallery landed afterwards.
   fillGalleryOptions();
-  const kept = galleryFilter(items);
+  const real = items || [];
+  let list = real;
+  if (pendingRows.length) {
+    const heads = [];
+    for (const row of pendingRows) heads.push(pendingItem(row));
+    list = heads.concat(real);
+  }
+  const kept = galleryFilter(list);
   shownItems = kept;
   // A picture open in the viewer keeps its place in the list, so prev and next
   // still name the one it came from after the filter moved.
@@ -2766,11 +3042,10 @@ function renderGallery(items) {
   // opened with the other runs of its own ask in the row under it, drawn out of
   // this same grouping rather than out of a second read of the machine.
   galleryGroups = groups;
-  // The cards are thrown away and drawn again on every poll, which loses a press
-  // that lands while they are being replaced - the same lost click the model cards
-  // had. A drawn picture does not change under a person, so the list is rebuilt when
-  // what it holds changes: a new render, a keep, a mark, a filter, the picture open
-  // in the viewer, or how many the machine holds.
+  // The cards are thrown away and drawn again when what they hold changes: a new
+  // render, a standing picture, a keep, a mark, a filter, the picture open in
+  // the viewer, or how many the machine holds. Progress moves a bar in place -
+  // it never redraws a card.
   const signature = JSON.stringify([openShot, galleryHeld, Array.from(groups.keys()),
     kept.map(function (item) { return [item.id, item.kept === true, item.marked === true]; })]);
   if (signature === galleryCardState && pane.childElementCount) return;
@@ -2779,10 +3054,17 @@ function renderGallery(items) {
   const drawn = new Set();
   for (const entry of groups.values()) drawn.add(String(entry[0].id));
   for (const item of kept) {
+    // One card stands for an ask: the head of its group and nothing else. The
+    // standing siblings of a batch - the four runs of a sixteen, the pictures
+    // of an ask the machine has not taken yet - join that card as ghosts in
+    // its row rather than each holding up a card of its own.
     if (!drawn.has(String(item.id))) continue;
     pane.appendChild(galleryCard(item, groups.get(stackKeyFor(item)).slice(1)));
   }
-  drawGalleryNote(kept, items, groups);
+  // The note counts pictures the machine keeps, and a standing card is not one
+  // of those until its file is written.
+  drawGalleryNote(kept.filter(function (item) { return !item.pending; }),
+    real, groups);
 }
 
 // The whole room is drawn, so the note normally says the machine's own count. It
@@ -2868,7 +3150,10 @@ async function deleteRenders(targets) {
     if (!cut.has(String(item.id))) rest.push(item);
   }
   galleryItems = rest;
-  for (const id of cut) markedShots.delete(id);
+  for (const id of cut) {
+    markedShots.delete(id);
+    deletedShots.add(id);
+  }
   galleryHeld = Math.max(0, galleryHeld - gone);
   renderGallery(galleryItems);
   fillGalleryOptions();
@@ -3730,7 +4015,10 @@ function stepViewer(step) {
     log('This picture did not come from the list on this page, so nothing is beside it to open.', 'warn');
     return;
   }
-  const to = viewerAt + step;
+  let to = viewerAt + step;
+  // A standing card is not a picture yet: the step walks past it to the next
+  // render there is.
+  while (to >= 0 && to < shownItems.length && shownItems[to].pending) to += step;
   if (to < 0) {
     log('This is the first of the ' + shownItems.length + ' on this page. Nothing newer is on the screen.', 'warn');
     return;
@@ -3894,31 +4182,9 @@ async function main() {
   // same price as the picture a single generate draws, and no setting makes a
   // batch cheaper per picture than one run.
   ui.onPress(E('gen-4x'), function () { generateMany(4); });
-  // The deepest quick batch and the room the stack keeps are one number, so a
-  // whole ask is never trimmed for want of space.
+  // The deepest quick batch and the most pictures one ask may stand, in the
+  // gallery and on the machine, are one number.
   ui.onPress(E('gen-16x'), function () { generateMany(kMaxBatchPictures); });
-  ui.onPress(E('cancel-btn'), function () {
-    // The hand stops this page's whole ask: every job it handed over that the
-    // machine has not drawn. A job already drawn, failed, or stopped answers
-    // that it is not running, which is the truth and is left at that.
-    const targets = batchJobs && batchJobs.length ? batchJobs.slice() : (lastJob ? [lastJob] : []);
-    if (!targets.length) { log('No render was asked from this page: there is nothing here to stop.', 'warn'); return; }
-    void (async function () {
-      let stopped = 0;
-      let words = '';
-      for (const job of targets) {
-        const answer = await ui.api('/api/jobs/' + encodeURIComponent(job) + '/cancel', 'POST');
-        if (answer) ++stopped;
-        else if (!words) words = ui.apiError || '';
-      }
-      if (stopped) {
-        log('Cancel sent for ' + stopped + ' job' + (stopped === 1 ? '' : 's') +
-          ' of this ask; the drawn ones stay drawn.', 'warn');
-      } else {
-        log('None of this ask is running any more: ' + (words || 'the server gave no words'), 'err');
-      }
-    })();
-  });
   // Each button names a step; the step is clamped to the ones that exist rather
   // than left off at either end, so a press always draws a picture.
   ui.onPress(E('viewer-fit'), function () { paintZoom(kZoomFit); });

@@ -160,12 +160,11 @@
           <button id="gen-4x" class="caution"
             title="Draw four pictures from this prompt: four separate one-picture jobs, drawn one after another. Four times the work of one generate.">X4</button>
           <button id="gen-16x" class="caution"
-            title="Draw sixteen pictures from this prompt: sixteen separate one-picture jobs, drawn one after another. Sixteen times the work of one generate. The cancel hand stops the jobs that have not been drawn.">X16</button>
+            title="Draw sixteen pictures from this prompt: sixteen separate one-picture jobs, drawn one after another. Sixteen times the work of one generate. Every job stands in the gallery as its own card; the stop hand on a card stops that job.">X16</button>
         </div>
-        <button id="cancel-btn" title="Stop the running job at the next step.">cancel</button>
+        <div class="status-line" id="status-line"
+          title="The last thing this page has to say. Renders speak on their own cards in the gallery; this line carries the words beside them - what a press did, or what it could not."></div>
       </section>
-
-      <div id="tray" title="The images from the run you just did."></div>
 
       <section class="panel"
         title="Every render this machine keeps, newest first, drawn whole rather than cropped into a fixed box. The room is loaded in full: its records arrive a page at a time with the asks batched, and the line under the controls says when the whole room is here. A repeated ask - the same prompt and the same settings, a different seed - is one card whose thumbnails name every run. The model field shows how many of the pictures this machine keeps each model made, so a name with (0) beside it is a model this machine has no kept renders from. The bulk buttons work on what is shown here: select all marks every picture after the filters, clear puts them back, and the two deletes remove the pictures and their files on the machine, which cannot be undone.">

@@ -256,11 +256,17 @@
 
   window.fetch = async function (url, options) {
     const path = pathOf(url);
+    const mode = String((options || {}).cache || '');
+    // What a fetch's own standard words mean: 'no-store' and 'reload' ask the
+    // machine now and take nothing from a kept copy. A reading that exists to
+    // find out what changed may not be answered with the answer from before
+    // the change, or it says "nothing changed" about a fact that just moved.
+    const mayReplay = mode !== 'no-store' && mode !== 'reload';
     const method = String((options || {}).method || 'GET').toUpperCase();
     if (method === 'GET' && path) {
       sweep();
       const hit = entries[path];
-      if (hit && Date.now() < Number(hit.until)) return replay(path);
+      if (mayReplay && hit && Date.now() < Number(hit.until)) return replay(path);
       const keptFile = replayFile(path);
       if (keptFile) return keptFile;
 
@@ -274,7 +280,7 @@
           return retry;
         }
         const kept = entries[path];
-        if (kept && Date.now() < Number(kept.until)) return replay(path);
+        if (mayReplay && kept && Date.now() < Number(kept.until)) return replay(path);
         const keptNow = replayFile(path);
         if (keptNow) return keptNow;
         return await inner(url, options);

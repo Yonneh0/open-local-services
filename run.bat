@@ -438,11 +438,11 @@ if not defined SD_DONE (
     if errorlevel 1 exit /b 1
 ) else (
     rem an engine root that stands here is asked for anything new on every run,
-    the way the api is asked below: the engine's sources belong to this tree,
-    and an edit no build ever reads is an edit that never happened. The same
-    studio environment the configure above stands in is stood in here, since
-    a bare shell hands the compiler a standard library from another visual
-    studio than the one whose clang it is.
+    rem the way the api is asked below: the engine's sources belong to this tree,
+    rem and an edit no build ever reads is an edit that never happened. The same
+    rem studio environment the configure above stands in is stood in here, since
+    rem a bare shell hands the compiler a standard library from another visual
+    rem studio than the one whose clang it is.
     if defined CUDA_ON (
         call "!VS_ROOT!\VC\Auxiliary\Build\vcvars64.bat" >nul
     ) else (
@@ -592,9 +592,10 @@ echo.
 echo The first thing the server does is stand at the level this machine's manager
 echo works at, because a boot entry, a task ended, a service started are the
 echo manager's to take. Started by a plain person, that is one prompt - the
-echo machine's own - and the person sitting at it answers it. A machine that
-echo declines still runs every door and names the level it stands at; OLS_ELEVATE=off
-echo declines the prompt on a machine that would otherwise ask.
+echo machine's own - and the person sitting at it answers it. A server that is
+echo not raised does not serve at all: it says so and exits. OLS_ELEVATE=off
+echo declines the prompt - on a machine that was not raised, that is a refusal
+echo to start.
 api\open-local-services.exe %*
 set SERVER_EXIT=%ERRORLEVEL%
 rem this script hands the server to the window, so reaching here means the server
