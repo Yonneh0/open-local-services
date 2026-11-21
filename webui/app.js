@@ -517,9 +517,18 @@ function renderModels() {
     const marks = [];
     if (live) marks.push('model-on');
     if (inUse) marks.push('model-chosen');
+    // Each model's own shape sits behind its facts, so a card is recognised by
+    // its mark rather than read name by name. The shape was drawn from that
+    // model's published logo or card art through another model's doors (webui/
+    // model-marks.js carries the result, and plan.md the asks); the page only
+    // places it, and the colour it is drawn in stays the card's own, so the mark
+    // is a watermark at any theme and never competes with the words on the card.
+    const wear = window.ols.modelMarks ? String(window.ols.modelMarks[model.id] || '') : '';
+    if (wear !== '') marks.push('model-mark');
     const shell = ui.cardShell(marks.join(' '));
     const card = shell.card;
     if (live) card.dataset.live = '1';
+    if (wear !== '') card.style.setProperty('--model-mark', 'url("' + wear + '")');
 
     const head = shell.main;
     const name = document.createElement('span');
