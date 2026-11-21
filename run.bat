@@ -206,15 +206,18 @@ rem environment, then the card in this box as nvidia-smi names it - the same
 rem words on every machine, so a run here writes for the card here and a run on
 rem the laptop down the network for the card in that one. what nvidia-smi calls
 rem 8.6 is the number 86 to the compiler, so the dot goes out. a box whose
-rem nvidia-smi cannot name that field, with nothing named, writes for the oldest
-rem shape this project supports. a word, or the environment, has said which card
+rem nvidia-smi names no capability - no device here, or a driver that has no
+rem such field - leaves nothing named, and the shape taken below is the one a
+rem box with no card takes. a word, or the environment, has said which card
 rem before this block is reached, and what they named is never overwritten here.
 rem the comma of the format is quoted: cmd reads it as a separator, and hands
 rem nvidia-smi two options where one name was written.
 rem a box whose device is gone answers "No devices were found" on the standard
 rem output, where the line below reads it - that sentence names no capability,
-rem so a word with anything but digits and a dot in it is dropped here, and the
-rem shape taken below is the one a box with no card takes.
+rem so a word with anything but digits and a dot in it is dropped here - and a
+rem box with no driver at all writes its refusal where the line below sends it
+rem away. either way nothing is named, and the shape taken below is the one a
+rem box with no card takes.
 set SMICAP=
 if not defined CUDA_ARCH for /f "delims=" %%L in ('nvidia-smi --query-gpu=compute_cap "--format=csv,noheader" 2^>nul') do (
   if not defined SMICAP set "SMICAP=%%L"
@@ -247,21 +250,22 @@ if defined NINJA_EXE for %%P in ("!NINJA_EXE!\..") do set NINJA_DIR=%%~fP
 rem what the shape this run builds asks of the machine, said before any build is
 rem asked of it: the CUDA path needs the toolkit, ninja, and the studio
 rem environment, and asks nothing of an SDK; the Vulkan path needs its SDK, and
-rem refuses for it above. a box that names no card and holds no toolkit is not a
-rem CUDA machine: it builds on the Vulkan sdk it carries, the shape the vulkan
-rem word names, and only a box carrying no sdk too takes the shape with no
-rem device backend, as build-rel.sh names it for such a box. a card named by
-rem word or environment with no toolkit under it stays the refusal it always
-rem was - that shape was asked for by name, and this script does not answer a
-rem named shape with another.
-if defined CUDA_ON if not defined CUDA_HOME if not defined CUDA_ARCH (
+rem refuses for it above. a box whose card probe named nothing is not a CUDA
+rem machine, whatever toolkit may stand under it - with no card named there is
+rem no device here to write code for - so it builds on the Vulkan sdk it carries,
+rem the shape the vulkan word names, and only a box carrying no sdk too takes
+rem the shape with no device backend, as build-rel.sh names it for such a box.
+rem a card named by word or environment keeps the CUDA path: that shape was
+rem asked for by name, and this script does not answer a named shape with another.
+if defined CUDA_ON if not defined CUDA_ARCH (
   set CUDA_ON=
   if defined VULKAN_DIR (
-    echo No CUDA toolkit here and nvidia-smi names no card, but the Vulkan sdk
-    echo stands here: this build takes the sdk's shape, in the plain roots.
+    echo nvidia-smi named no card and none was named by a word or the environment:
+    echo there is no card here to write code for. the Vulkan sdk stands here, so
+    echo this build takes the sdk's shape, in the plain roots.
     set VULKAN_WANTED=1
   ) else (
-    echo No CUDA toolkit here, nvidia-smi names no card, and no Vulkan sdk stands here:
+    echo nvidia-smi named no card, none was named, and no Vulkan sdk stands here:
     echo this build carries no device backend, the shape build-rel.sh names -DOLS_NO_DEVICE=1.
     set NODEVICE=1
   )
