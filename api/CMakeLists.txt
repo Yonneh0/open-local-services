@@ -213,6 +213,10 @@ target_link_libraries(ols-voice-capi PRIVATE engine_runtime)
 # their own flags: nothing here asks a warning of their code. The voice probe is
 # named with the server because it is one of our sources, not an engine's.
 if(MSVC)
+  # the level the build system puts in by default is not the one we want, and
+  # leaving both on a line makes the compiler report an override for every file;
+  # the level is taken out here and named once below.
+  string(REGEX REPLACE "/W[0-9]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   target_compile_options(open-local-services PRIVATE /utf-8 /MP /W4)
   target_compile_options(voice-probe PRIVATE /utf-8 /MP /W4)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
