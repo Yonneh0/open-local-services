@@ -563,7 +563,7 @@ namespace ols
       }();
       if (all.size() < 12 || all.compare(0, 4, "RIFF") != 0 || all.compare(8, 4, "WAVE") != 0)
         return {};
-      size_t fmt = 0, dataAt = 0, dataBytes = 0;
+      size_t dataAt = 0, dataBytes = 0;
       uint16_t width = 0, count = 0;
       int sampleRate = 0;
       for (size_t at = 12; at + 8 <= all.size();)
@@ -601,7 +601,6 @@ namespace ols
         }
         at = body + ((len + 1) & ~static_cast<uint32_t>(1)); // chunks pad to even
       }
-      (void)fmt;
       if (!dataBytes || !count || !width || !sampleRate)
         return {};
       if (width != 16)
@@ -2053,16 +2052,6 @@ namespace ols
       gHouseAnswer = out.dump();
       gHouseAnswerFresh = true;
       return gHouseAnswer;
-    }
-
-    static std::string modelCardsJson(const std::string &query)
-    {
-      return modelCardsPageJson(query);
-    }
-
-    static std::string modelsSummaryJson()
-    {
-      return modelsHouseJson();
     }
 
     static std::string engineStateJson()

@@ -2100,20 +2100,6 @@ namespace ols
       gPendingErase.erase(modelId);
     }
 
-    // On some GPUs the engine's flash-attention kernel has no device code for
-    // that card (it aborts the whole process, which took the server down
-    // mid-suite on the compute-7.0 box). The engine's own probe cannot see
-    // this, so ask the card before the model is opened and turn flash-attention
-    // off. The rule is held to the cards the abort was ever seen on: the
-    // weight maker's own run of MiniMax H3 carries --diffusion-fa on ordinary
-    // cards, and 2026-11-19 a compute-7.5 card (RTX 2080) held by a blanket
-    // under-8.0 rule ran a grainy clip without it while the same settings on a
-    // card the rule did not touch ran clean. Log it once.
-    static int cudaDeviceComputeMajor()
-    {
-      return cardAnswer().computeMajor;
-    }
-
     // The engine's own last complaint, kept where a failed run can speak it.
     // Runs are made one at a time, so one slot tells the truth for the run in
     // front of it; the log callback fills it as the engine talks.
@@ -2250,6 +2236,16 @@ namespace ols
         params.rng_type = CPU_RNG;
       if (!def->wtype.empty())
         params.wtype = str_to_sd_type(def->wtype.c_str());
+      // On some GPUs the engine's flash-attention kernel has no device code for
+      // that card (it aborts the whole process, which took the server down
+      // mid-suite on the compute-7.0 box). The engine's own probe cannot see
+      // this, so the card is asked before the model is opened and flash-attention
+      // is turned off here. The rule is held to the cards the abort was ever seen
+      // on: the weight maker's own run of MiniMax H3 carries --diffusion-fa on
+      // ordinary cards, and 2026-11-19 a compute-7.5 card (RTX 2080) held by a
+      // blanket under-8.0 rule ran a grainy clip without it while the same
+      // settings on a card the rule did not touch ran clean. The card of this
+      // machine does not change while the server stands, so it is asked once.
       static const CardAnswer &kCard = cardAnswer();
       if (kCard.computeMajor >= 0 &&
           (kCard.computeMajor < 7 || (kCard.computeMajor == 7 && kCard.computeMinor < 5)))
@@ -2627,11 +2623,6 @@ namespace ols
       }
       markState(job, ols::kStateDone);
       return true;
-    }
-
-    static std::string nameOf(const std::string &path)
-    {
-      return std::filesystem::path(path).filename().string();
     }
 
     static void doLoad(const std::string &job, const std::string &modelId)
@@ -4559,7 +4550,7 @@ namespace ols
           if (!standing.empty())
             gJobs[job]["ask"] = standing;
         }
-        gEvents[job];
+        gEvents.try_emplace(job);
         gCancel[job] = false;
         gJobOrder.push_back(job);
         gStartedMs[job] = steadyMs();

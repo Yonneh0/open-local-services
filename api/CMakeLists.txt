@@ -207,12 +207,19 @@ add_library(ols-voice-capi OBJECT
 set_property(TARGET ols-voice-capi PROPERTY CXX_STANDARD 17)
 target_link_libraries(ols-voice-capi PRIVATE engine_runtime)
 
+# The server's own sources are compiled at the strictest warning level this
+# compiler has, so the compiler, and not a reader, states what in them is never
+# read or can never be reached. The vendored engines keep their own build and
+# their own flags: nothing here asks a warning of their code. The voice probe is
+# named with the server because it is one of our sources, not an engine's.
 if(MSVC)
-  target_compile_options(open-local-services PRIVATE /utf-8 /MP)
+  target_compile_options(open-local-services PRIVATE /utf-8 /MP /W4)
+  target_compile_options(voice-probe PRIVATE /utf-8 /MP /W4)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
 else()
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-  target_compile_options(open-local-services PRIVATE -O2)
+  target_compile_options(open-local-services PRIVATE -O2 -Wall)
+  target_compile_options(voice-probe PRIVATE -O2 -Wall)
 endif()
 
 target_include_directories(open-local-services PRIVATE

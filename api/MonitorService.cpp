@@ -686,7 +686,11 @@ namespace ols
           ++active;
       }
 
+      // The cap of the ledger is stated with its counts: the home page names how
+      // many jobs an engine keeps, and that number belongs to this machine, not
+      // to a page.
       json summary = {{"retained", static_cast<int>(jobs.size())},
+                      {"at_most", static_cast<int>(ols::kKeptJobs)},
                       {"active", active},
                       {"image", engineSummary(jobs, "image")},
                       {"voice", engineSummary(jobs, "voice")}};

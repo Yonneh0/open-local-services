@@ -1306,7 +1306,11 @@ namespace ols
                 }
                 catch (const std::exception &)
                 {
-                  writeStreamChunk(&sink, "event: error\ndata: stream failed\n\n");
+                  // The reason travels as the machine's own words, in the shape
+                  // every other frame of this stream is written in: a page that
+                  // reads a stream does not have to guess why it stopped.
+                  writeStreamChunk(&sink,
+                                   "event: error\ndata: " + nlohmann::json{{"type", "error"}, {"message", "stream failed"}}.dump() + "\n\n");
                 }
                 sendAll(sink, "0\r\n\r\n");
               }
@@ -1631,13 +1635,18 @@ namespace ols
       // Our pages use only same-origin scripts and styles; no page embeds a
       // stylesheet of its own, but they all apply inline style attributes to
       // stand their parts at read numbers - the config panel's place, a
-      // progress bar's reach, a zoom's size - so only the attribute position
-      // is opened ('unsafe-inline' on style-src-attr alone), never an inline
-      // <style>. data: images are allowed because the webui draws kept files
-      // as data URLs. No page puts a frame of another origin on it now, so
-      // no page asks for frame-src.
+      // progress bar's reach, a zoom's size - so the attribute position is
+      // opened. The attribute's own spelling below is the narrow statement of
+      // that intent, for the readers that know it; the same 'unsafe-inline' is
+      // put on style-src as well because a reader that does not know that
+      // directive falls back to style-src, and the browser that reads this
+      // header here is such a reader - asked without it, it refuses the styles
+      // the pages stand their parts at, and says so in its console. data:
+      // images are allowed because the webui draws kept files as data URLs. No
+      // page puts a frame of another origin on it now, so no page asks for
+      // frame-src.
       std::string csp =
-          "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr "
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr "
           "'unsafe-inline'; img-src 'self' data:; connect-src "
           "'self'; frame-ancestors 'none'";
       r.headers["Content-Security-Policy"] = csp;
