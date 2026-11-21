@@ -300,7 +300,7 @@ async function followSpeak(job, model) {
     ui.progressSet(progressPanel, job, 0, 1,
       'speaking · ' + Math.floor(elapsed / 1000) + 's', 'load');
     if (String(state.state) === 'running') {
-      await ui.sleep(800);
+      await ui.sleepWindow('/voice/api/jobs/' + job, 400, 5000);
       continue;
     }
     ui.progressClear(progressPanel, job);
@@ -340,7 +340,7 @@ async function followFetch(modelId, job) {
       (max > 0 ? 'fetching · ' + done + ' of ' + max : 'fetching') +
       ' · ' + Math.floor((Date.now() - startedAt) / 1000) + 's', 'load');
     if (String(state.state) === 'running') {
-      await ui.sleep(800);
+      await ui.sleepWindow('/voice/api/jobs/' + job, 400, 5000);
       continue;
     }
     ui.progressClear(progressPanel, job);
@@ -1829,7 +1829,7 @@ function keepChosenOrClear(models) {
 
 // A machine that stops answering is said once; the loop keeps trying quietly
 // and says so only when the answer comes back.
-var offlineSaid = false;
+let offlineSaid = false;
 function offline(err) {
   ui.headUnknown();
   if (updated) updated.textContent = 'not connected · retrying';
@@ -2008,7 +2008,7 @@ async function followJob(job, words) {
     ui.progressSet(progressPanel, job, 0, 1, words + ' · ' + elapsed + 's', 'load');
     const stateName = String(state.state);
     if (stateName === 'running') {
-      await ui.sleep(800);
+      await ui.sleepWindow('/voice/api/jobs/' + job, 400, 5000);
       continue;
     }
     ui.progressClear(progressPanel, job);

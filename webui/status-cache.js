@@ -15,6 +15,8 @@
 //   address to be read from again, and is stored in localStorage under the name
 //   the machine gave it, via window.olsCache.keep(path, dataUrl, type).
 // - Concurrent requests for one path share a single network read.
+// - A page that watches one door can read the moment its kept copy leaves the
+//   window the machine stated, so it asks again only past that point.
 // - If localStorage refuses a store write, entries still live in this page's
 //   memory for the session.
 (function () {
@@ -191,6 +193,14 @@
     return { text: hit.text, at: Number(hit.at), age: now - Number(hit.at), live: now < Number(hit.until) };
   }
 
+  // The moment a kept copy of this path leaves the window the machine stated,
+  // or 0 when nothing of it is held. A page that watches one door asks again at
+  // that moment: a door is never asked twice inside one of its own windows.
+  function staleAt(path) {
+    const hit = entries[pathOf(path)];
+    return hit ? Number(hit.until) : 0;
+  }
+
   function clearFamily(prefix) {
     for (const path of Object.keys(entries)) {
       if (path.indexOf(prefix) === 0) delete entries[path];
@@ -212,6 +222,7 @@
       keepFile(pathOf(path), String(data), String(type), Number(seconds) > 0 ? Number(seconds) : 31536000);
     },
     lastCopy: lastCopy,
+    staleAt: staleAt,
   };
 
   // A stored answer replays as an equivalent live one: same body, same

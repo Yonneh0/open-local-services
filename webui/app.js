@@ -2147,7 +2147,7 @@ async function streamJob(job, model, action) {
       const state = record && record.state ? String(record.state) : '';
       if (state === 'done' || state === 'error' || state === 'cancelled') ended = state;
       else if (state !== 'running' && state !== 'queued') break;
-      await ui.sleep(2000);
+      await ui.sleepWindow('/api/jobs/' + asked, 400, 5000);
     }
   }
   return ended;

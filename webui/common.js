@@ -1287,6 +1287,19 @@
     }
   };
 
+  // The wait one door owes: the time until the copy of its answer this browser
+  // holds leaves the window that door stated. A page that follows one job waits
+  // here rather than at a number copied beside the loop, so a door is never
+  // asked twice inside one of its own windows. With nothing held - a door that
+  // states no window, or a read that failed - the floor stands, and the cap
+  // keeps a page from ever sitting past a reading it was told to keep.
+  UI.sleepWindow = async function (path, floorMs, capMs) {
+    const held = window.olsCache ? Number(window.olsCache.staleAt(path)) : 0;
+    const owed = held > Date.now() ? held - Date.now() : Number(floorMs);
+    const wait = Math.min(Math.max(owed, Number(floorMs)), Number(capMs));
+    await UI.sleep(wait);
+  };
+
   // How often a studio re-reads the machine. A page's reading is a whole set of
   // answers, so it waits rather than crowding the door: four seconds is soon
   // enough to see a job start and long enough to leave the machine alone. A page

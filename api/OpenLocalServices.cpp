@@ -585,10 +585,13 @@ namespace ols
           {"/api/jobs", 2},
           {"/api/timings", 2},
           {"/api/system", 2},
-          // The network document is composed fresh every read and its every
-          // number moves within seconds; and the scan door answers a forced
-          // scan, which no browser may answer out of its own pocket.
-          {"/api/network", 0},
+          {"/api/network", 2},
+          {"/api/network/scan", 0},
+          // The network document is composed here rather than stored, and the
+          // machine samples its counters every two seconds, so two seconds is
+          // as long as one of its numbers is worth calling current; the scan
+          // door is left out entirely because it does work on being asked, and
+          // a forced scan may not be answered out of a browser's pocket.
           {"/api/service", 4},
           {"/api/config", 15},
           {"/api/models", 2},
