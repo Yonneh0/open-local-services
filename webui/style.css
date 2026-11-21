@@ -954,32 +954,6 @@ form.file-door {
 .model-main {
   flex: 1 1 55%;
   min-width: 140px;
-  position: relative;
-}
-
-/* The shape this model is known by, worn behind its words - drawn from its
-   published logo or card art through another model's doors (webui/model-marks.js
-   carries the result, and plan.md the asks). The page names the shape per model,
-   so a card is picked out by its mark rather than read name by name; the shape
-   is painted through a mask, which means the colour stays the card's own ink and
-   the mark reads as a watermark at any theme, and it sits behind the name and the
-   notes rather than beside them. The drawing carried its own soft edges and
-   shades as alpha, so a mark keeps its detail. */
-.model-card.model-mark .model-main::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius);
-  pointer-events: none;
-  background: color-mix(in srgb, var(--fg) 22%, transparent);
-  -webkit-mask-image: var(--model-mark);
-  mask-image: var(--model-mark);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: auto 86%;
-  mask-size: auto 86%;
 }
 
 .model-fingers {
