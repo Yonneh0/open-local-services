@@ -703,7 +703,12 @@
   // null when the body would fit.
   UI.tooBigBody = function (body) {
     const text = JSON.stringify(body === undefined ? {} : body);
-    if (text.length <= UI.bodyBytes) return null;
+    // the door counts the bytes as they travel, and words outside the plain
+    // seventy-two take more of them than they do characters, so the count of
+    // bytes is only asked for where a body could carry such words.
+    let octets = text.length;
+    if (!/^[\x00-\x7f]*$/.test(text)) octets = new TextEncoder().encode(text).length;
+    if (octets <= UI.bodyBytes) return null;
     let widest = '';
     let widestLength = 0;
     if (body) {
@@ -721,9 +726,9 @@
       status: 413,
       error: holdsAFile
         ? 'that file is bigger than one request can carry: the request stands at ' +
-        UI.sizeText(text.length) + ', and a door reads at most two megabytes at a time. trim the file, or pick a shorter part of it.'
+        UI.sizeText(octets) + ', and a door reads at most two megabytes at a time. trim the file, or pick a shorter part of it.'
         : 'the words this request carries are more than one door can read: the request stands at ' +
-        UI.sizeText(text.length) + ', and a door reads at most two megabytes at a time. send a shorter passage, or fewer words.',
+        UI.sizeText(octets) + ', and a door reads at most two megabytes at a time. send a shorter passage, or fewer words.',
     };
   };
 
@@ -834,9 +839,11 @@
     return 'no reason given';
   };
 
-  // The event stream of a running job: SSE frames arrive as "data: {...}"
-  // blocks until an "event: end" frame; a frame that fails to parse is skipped
-  // without losing the run. Answers false only if the stream itself is absent.
+  // The event stream of a running job: SSE frames arrive as blocks until an
+  // "event: end" frame; a frame is read line by line, as the protocol writes one,
+  // so the "event:" line names the frame and the "data:" line carries the
+  // machine's own words. A frame whose words do not parse is skipped without
+  // losing the run. Answers false only if the stream itself is absent.
   UI.streamEvents = function (url, onEvent) {
     return (async function () {
       const res = await fetch(url);
@@ -852,10 +859,16 @@
         while (split >= 0) {
           const frame = raw.slice(0, split);
           raw = raw.slice(split + 2);
-          if (frame.indexOf('event: end') === 0) return true;
-          if (frame.indexOf('data: ') === 0) {
+          let named = '';
+          let words = '';
+          for (const line of frame.split('\n')) {
+            if (line.indexOf('event: ') === 0) named = line.slice(7);
+            else if (line.indexOf('data: ') === 0) words += (words ? '\n' : '') + line.slice(6);
+          }
+          if (named === 'end') return true;
+          if (words) {
             try {
-              onEvent(JSON.parse(frame.slice(6)));
+              onEvent(JSON.parse(words));
             } catch (badFrame) {
             }
           }
@@ -1106,7 +1119,10 @@
         const overTracked = tracked * 2 > UI.toastTrackedCap;
         for (const live of UI.toastLive) {
           if (live.closing) continue;
-          if (!!live.counted === overTracked) oldest = live;
+          if (!!live.counted === overTracked) {
+            oldest = live;
+            break;
+          }
         }
         if (!oldest) break;
         UI.toastClose(oldest);

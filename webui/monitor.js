@@ -58,10 +58,16 @@ const cardRowsShown = 12;
 // page answers the touch at once instead of waiting for a number to move.
 let lastSnapshot = null;
 
-// The cap each engine keeps its own jobs to - the one number the shared job
-// ledger states for every module that owns a store. The page names it once, so
-// its two sentences cannot drift apart from each other or from the machine.
-const engineKeptJobs = 200;
+// The cap each engine keeps its own jobs to. The machine states its own beside
+// the jobs it hands over, so a reading is read from that answer; the number
+// kept here is only what this build's own ledger was written to, for a reading
+// that comes without one.
+const engineKeptJobsStated = 200;
+
+function keptJobsCap(snapshot) {
+  const stated = Number(((snapshot.summary || {}).at_most || 0));
+  return stated > 0 ? stated : engineKeptJobsStated;
+}
 
 // ---------- the words the page writes about numbers ----------
 
@@ -248,7 +254,7 @@ function traceOf(samples, pick) {
 // line drawn beside it for comparison. unit names what the numbers are counted
 // in, so the words state them in their own units.
 function drawTrace(host, series, unit) {
-  const window = kTraceWindowSeconds;
+  const reach = kTraceWindowSeconds;
   // The right edge is the newest moment anything here was read, not the moment
   // this page runs: a figure whose numbers did not move draws again in the same
   // place, so the wall does not slide sideways on every read while the machine
@@ -264,7 +270,7 @@ function drawTrace(host, series, unit) {
       'Nothing at all was read here; a line needs two moments read inside the window.');
     return;
   }
-  const left = right - window;
+  const left = right - reach;
   const lines = [];
   const apart = [];
   for (const line of series) {
@@ -289,7 +295,7 @@ function drawTrace(host, series, unit) {
   }
   if (!lines.length) {
     noFigure(host, 'no line yet',
-      'Nothing was read here inside the ' + whole(window / 60) + '-minute window this page draws; a line needs two moments read inside it.');
+      'Nothing was read here inside the ' + whole(reach / 60) + '-minute window this page draws; a line needs two moments read inside it.');
     return;
   }
   // The step these readings were taken at, read off the readings themselves: the
@@ -323,7 +329,7 @@ function drawTrace(host, series, unit) {
   if (high <= low) high = low + 1;
   const width = kTraceWidth;
   const height = kTraceHeight;
-  const x = (at) => ((at - left) / window) * width;
+  const x = (at) => ((at - left) / reach) * width;
   const y = (value) => height - 4 - ((value - low) / (high - low)) * (height - 8);
   // The lines and their words stand in one box, so the words set beside a
   // point are placed against the drawing and not against the panel around it.
@@ -333,7 +339,7 @@ function drawTrace(host, series, unit) {
   const svg = svgFigure('trace', width, height);
   box.appendChild(svg);
   const figures = meterFigures(unit);
-  const said = ['window ' + whole(window / 60) + ' min · readings ' + whole(Math.max(1, step)) + 's apart'];
+  const said = ['window ' + whole(reach / 60) + ' min · readings ' + whole(Math.max(1, step)) + 's apart'];
   let drawable = 0;
   for (const line of lines) {
     // A reading past a stretch this line's own readings did not cover ends the
@@ -439,7 +445,7 @@ function drawTrace(host, series, unit) {
   scale.className = 'graph-scale';
   scale.textContent = said.join(' · ');
   scale.setAttribute('title',
-    'The window drawn is ' + whole(window / 60) + ' minutes ending at the newest reading here; that reading stands at the right edge, and an older one sits to the left of it. ' +
+    'The window drawn is ' + whole(reach / 60) + ' minutes ending at the newest reading here; that reading stands at the right edge, and an older one sits to the left of it. ' +
     'Each label sits on the plot at the reading it names: the highest, the lowest, and the mean taken inside that window.');
   host.appendChild(scale);
 }
@@ -468,8 +474,7 @@ function drawBars(host, values, unit) {
   // still gets a shape rather than an invented tallest.
   let top = 0;
   for (const value of clean) if (value > top) top = value;
-  const smallestDivisor = 1;
-  const divisor = (top > 0) ? top : smallestDivisor;
+  const divisor = (top > 0) ? top : 1;
   const width = 240;
   const height = 46;
   const svg = svgFigure('bars', width, height);
@@ -1780,16 +1785,17 @@ function drawModelCards(snapshot) {
       drawCard(entry, system, history);
     }
   }
+  const keptCap = keptJobsCap(snapshot);
   let firstAt = 0;
   for (const job of records) {
     const at = Number(job.started_at || 0);
     if (at > 0 && (firstAt === 0 || at < firstAt)) firstAt = at;
   }
   sinceLine.textContent = firstAt
-    ? 'Each engine keeps its newest ' + engineKeptJobs + ' jobs · oldest kept: ' + ui.clock(firstAt)
+    ? 'Each engine keeps its newest ' + keptCap + ' jobs · oldest kept: ' + ui.clock(firstAt)
     : 'Nothing has run yet.';
   if (firstAt) sinceLine.setAttribute('title',
-    'Each engine keeps its newest ' + engineKeptJobs + ' jobs; older ones are dropped. The oldest kept job started at ' + ui.clock(firstAt) + '.');
+    'Each engine keeps its newest ' + keptCap + ' jobs; older ones are dropped. The oldest kept job started at ' + ui.clock(firstAt) + '.');
 }
 
 // Which way each engine mark wears now: a mark wears while its engine's cards

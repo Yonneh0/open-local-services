@@ -2830,15 +2830,6 @@ main.monitor {
   --engine-tint: var(--accent2);
 }
 
-.status-card .card-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 8px;
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 5px;
-}
-
 /* The engine's mark and the model's name, with the state of its engine beside
    them in a well of the same one the machine's panels state their readings in. */
 .status-card .card-tag {
@@ -4095,7 +4086,7 @@ a:focus-visible {
   white-space: normal;
 }
 
-.net-check input[type="checkbox"] {
+.net-input[type="checkbox"] {
   width: 14px;
   height: 14px;
   accent-color: var(--accent);

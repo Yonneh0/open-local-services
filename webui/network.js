@@ -322,7 +322,6 @@
       if (/^[0-9a-fA-F:]+$/.test(String(addr.value)) && addr.value.indexOf(':') >= 0 && formMemory['prefix:' + name] === '24')
         formMemory['prefix:' + name] = '64';
     });
-    mode.addEventListener('change', function () { });
     ipForm.appendChild(hand('apply addresses', null, 'one by one, the machine applies these; anything it refuses comes back in its own words', function () {
       const body = {
         action: 'ip_set',
@@ -982,7 +981,7 @@
   function offline() {
     line.textContent = 'the network door did not answer';
     line.className = 'meta';
-    if (adapterShapeKey) { adapterShapeKey = ''; }
+    adapterShapeKey = '';
     wifiShapeKey = '';
     settingsShapeKey = '';
   }
