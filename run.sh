@@ -275,6 +275,18 @@ for WHAT in "vendor/stable-diffusion.cpp $PIN_IMAGE leejet/stable-diffusion.cpp"
   fi
 done
 
+# ---- the ssh road's pinned hands (E2) ----
+# the clone doors spawn an ssh running git-upload-pack for an ssh address, and
+# refuse every such ask in words until it stands. on windows run.bat fetches
+# its release zip; here the studio asks nothing of a download - the pinned
+# portable OpenSSH is named below, and the transport's honest branch says the
+# same words until it does. when this machine takes its hands, they stand flat
+# under vendor/openssh where sshBinDir reads them, on the release run.bat
+# names: PIN_SSH=10.4.0.0p1-Preview (the spike's build).
+if [ ! -f vendor/openssh/ssh ]; then
+  echo "The ssh road has no pinned hands here yet: vendor/openssh/ssh is owed (run.bat names the release)." >&2
+fi
+
 # ---- the one incremental path every entry point shares ----
 # build-rel.sh names these same values for its native target, in the same
 # roots: the cpu backend of every engine is built for the baseline of its
