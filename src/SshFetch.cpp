@@ -453,6 +453,10 @@ namespace ols
                 pathOut = path.string();
                 return true;
             }
+            // The room is made before the file is asked for: the key room
+            // stands only once the first hand puts it there, and an ask that
+            // arrives first writes the config into a folder it makes itself.
+            std::filesystem::create_directories(path.parent_path(), ec);
             std::ofstream out(path);
             if (!out)
             {
