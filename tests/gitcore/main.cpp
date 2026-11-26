@@ -189,3 +189,6 @@ int main(int argc, char** argv)
 #include "test_resolutions.cpp"
 #include "test_issues.cpp"
 #include "test_fetch.cpp"
+// The ssh road's cases stand under _WIN32 inside their file: the pinned release
+// they ride is the Windows side's, and the other platform reads an empty file.
+#include "test_ssh.cpp"

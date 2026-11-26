@@ -9,7 +9,7 @@
 
 cmake_minimum_required(VERSION 3.14)
 
-add_executable(ols-git-tests main.cpp crash_guard.cpp ../../src/gitcore/refs.cpp ../../src/gitcore/diff.cpp ../../src/gitcore/objects.cpp ../../src/gitcore/packfile.cpp ../../src/gitcore/zlibwrap.cpp ../../src/gitcore/receive.cpp ../../src/gitcore/fetch_wire.cpp ../../src/gitcore/fetch.cpp ../../src/gitcore/merge.cpp ../../src/ProjectPulls.cpp ../../src/ProjectIssues.cpp)
+add_executable(ols-git-tests main.cpp crash_guard.cpp ../../src/gitcore/refs.cpp ../../src/gitcore/diff.cpp ../../src/gitcore/objects.cpp ../../src/gitcore/packfile.cpp ../../src/gitcore/zlibwrap.cpp ../../src/gitcore/receive.cpp ../../src/gitcore/fetch_wire.cpp ../../src/gitcore/fetch.cpp ../../src/gitcore/merge.cpp ../../src/ProjectPulls.cpp ../../src/ProjectIssues.cpp ../../src/SshFetch.cpp)
 
 # The code under test is named here — refs.cpp, the B3 refs unit, diff.cpp,
 # the B4 line diff, and receive.cpp, the receive-pack answer — while the cases
