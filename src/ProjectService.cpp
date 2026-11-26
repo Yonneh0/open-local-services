@@ -1076,10 +1076,13 @@ namespace ols
     static bool cloneProject(const std::string &url, const std::string &nameHint,
                              const std::string &apiKey, std::string &madeSlug)
     {
-      // The address, weighed where it first stands: trailing slashes off,
-      // then splitUrl's own readings (HttpFetch.h:234-300) - the https
-      // refusal naming TLS among them. A control byte would travel into the
-      // request line, so it is refused here, where it is seen.
+      // The address, weighed where it first stands: trailing slashes off, then
+      // splitUrl's own readings (HttpFetch.h:234-300) - the https refusal
+      // naming TLS among them. A control byte would travel into the request
+      // line, so it is refused here, where it is seen. An ssh address rides a
+      // different road entirely (E2): splitUrl reads http only, and its words
+      // must not be the last thing an ssh ask ever says - the readings take
+      // that form's name, host, and path instead.
       std::string link = url;
       while (link.size() > 1u && link.back() == '/')
         link.pop_back();
@@ -1097,11 +1100,21 @@ namespace ols
           return false;
         }
       }
+      ols::ssh::SshTarget sshRead;
+      const bool sshRoad = ols::ssh::looksSsh(link, sshRead);
       std::string host;
       std::uint16_t port = 0u;
       std::string target;
       std::string words;
-      if (!ols::http::splitUrl(link, host, port, target, words))
+      if (sshRoad)
+      {
+        // The readings refused nothing - looksSsh answered true with them:
+        // the spawn carries host, optional login and port, and the path in
+        // ssh's own dress. These locals only feed the name below.
+        host = sshRead.host;
+        target = sshRead.path;
+      }
+      else if (!ols::http::splitUrl(link, host, port, target, words))
       {
         noteError(words);
         return false;
