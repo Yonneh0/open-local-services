@@ -464,10 +464,30 @@ namespace ols
                                std::string &words)
       {
         const State now = state();
-        const std::string root = selfRoot();
-        if (root.empty() || exeName.empty())
+        // The folder the program itself sits in - not selfRoot's walk to .env:
+        // the running binary stands under src\ while its tree's root stands a
+        // level above, and the hand moves the file this process actually runs
+        // from. The staging room belongs to the tree, so it rides the state's
+        // reading of where the server is home.
+        const std::string selfFolder = selfExe();
+        if (selfFolder.empty())
         {
-          words = "this server cannot name its own folder or program: nothing was handed.";
+          words = "this server cannot name the program it runs as: nothing was handed.";
+          rememberWords(words);
+          return false;
+        }
+        const std::filesystem::path programPath(selfFolder);
+        if (exeName.empty() || programPath.filename().string() != exeName)
+        {
+          words = "the program this server runs as is not named " + exeName +
+                  ": nothing was handed to the wrong file.";
+          rememberWords(words);
+          return false;
+        }
+        const std::string root = now.root;
+        if (root.empty())
+        {
+          words = "this server cannot name its own folder: nothing was handed.";
           rememberWords(words);
           return false;
         }
@@ -486,6 +506,12 @@ namespace ols
 #ifdef _WIN32
         const bool byTask = now.installed && now.manager == "the task scheduler";
         const bool byService = now.installed && now.manager == "the service control manager";
+        // The program's own folder: the binary and the image library beside it
+        // move where they stand, not where the tree's root happens to be. A
+        // scheduled task that ends itself is left for its scheduler - ending a
+        // running task takes the hand down with it, so /run alone brings the
+        // new program up; only an already-stopped server needs both asks.
+        const std::string progDir = programPath.parent_path().string();
         const std::string script =
             (std::filesystem::temp_directory_path() / "ols-update-hand.cmd").string();
         std::ofstream out{script, std::ios::binary | std::ios::trunc};
@@ -497,32 +523,50 @@ namespace ols
         }
         out << "@echo off\r\n"
                "set \"ROOT=" << root << "\"\r\n"
+               "set \"PROG=" << progDir << "\"\r\n"
                "set \"LOG=%ROOT%\\data\\update-hand.log\"\r\n"
                "echo [%DATE% %TIME%] the hand waits for the running program to let go>>\"%LOG%\"\r\n"
                ":again\r\n"
-               "move /y \"%ROOT%\\" << exeName << "\" \"%ROOT%\\" << exeName << ".old\" >nul 2>&1\r\n"
+               "move /y \"%PROG%\\" << exeName << "\" \"%PROG%\\" << exeName << ".old\" >nul 2>&1\r\n"
                "if errorlevel 1 (\r\n"
                "  timeout /t 1 /nobreak >nul\r\n"
                "  goto :again\r\n"
                ")\r\n"
-               "move /y \"%ROOT%\\bin\\" << exeName << "\" \"%ROOT%\\" << exeName << "\" >nul 2>&1\r\n"
+               "move /y \"%ROOT%\\bin\\" << exeName << "\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
                "if errorlevel 1 (\r\n"
                "  echo [%DATE% %TIME%] the staged binary would not take the old one's place: putting the old one back>>\"%LOG%\"\r\n"
-               "  move /y \"%ROOT%\\" << exeName << ".old\" \"%ROOT%\\" << exeName << "\" >nul 2>&1\r\n"
+               "  move /y \"%PROG%\\" << exeName << ".old\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
                "  exit /b 1\r\n"
                ")\r\n";
         if (!dllName.empty())
           out << "if exist \"%ROOT%\\bin\\" << dllName << "\" move /y \"%ROOT%\\bin\\" << dllName
-              << "\" \"%ROOT%\\" << dllName << "\" >nul 2>&1\r\n";
+              << "\" \"%PROG%\\" << dllName << "\" >nul 2>&1\r\n";
         out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n";
         if (byTask)
-          out << "schtasks /end /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
-              << "schtasks /run /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n";
+        {
+          out << "schtasks /run /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
+              << "echo [%DATE% %TIME%] the hand asked the task to run again>>\"%LOG%\"\r\n";
+          said << "the task that holds this server is asked to run again on the new binary - "
+                  "this server stops now, and its scheduler brings it back at the level the "
+                  "task was set to.";
+        }
         else if (byService)
-          out << "sc stop \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
-              << "sc start \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n";
+        {
+          out << "sc start \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n";
+          said << "the service manager starts this name again on the new binary; this server stops now.";
+        }
         else
-          out << "start \"ols-server\" \"%ROOT%\\" << exeName << "\"\r\n";
+        {
+          // No manager holds this server: it raised itself when it started, so
+          // the hand asks its own program of the machine's runas verb once -
+          // the same single prompt the server itself was raised by at start.
+          // A refusal leaves everything moved and standing; the words say so.
+          out << "cd /d \"%ROOT%\"\r\n"
+              << "powershell -NoProfile -Command \"Start-Process -FilePath '" << progDir << "\\"
+              << exeName << "' -WorkingDirectory '%ROOT%' -Verb RunAs\" >>\"%LOG%\" 2>&1\r\n";
+          said << "no manager holds this server: the new program is asked of the machine's own "
+                  "elevation once, as it was when this server first started. this server stops now.";
+        }
         out << "echo [%DATE% %TIME%] the hand is done>>\"%LOG%\"\r\n"
                "exit /b 0\r\n";
         out.close();
@@ -541,14 +585,6 @@ namespace ols
         }
         CloseHandle(gone.hThread);
         CloseHandle(gone.hProcess);
-        if (byTask)
-          said << "the task that holds this server starts it again on the new binary - "
-                  "this server stops now, at the level its task set.";
-        else if (byService)
-          said << "the service manager starts this name again on the new binary; this server stops now.";
-        else
-          said << "no manager holds this server: the new program starts as the hand's own child, "
-                  "at the level this server stands at. this server stops now.";
 #else
         if (now.installed && now.manager == "systemd")
         {
@@ -565,16 +601,17 @@ namespace ols
           }
           out << "#!/bin/sh\n"
               << "ROOT=\"" << root << "\"\n"
+              << "PROG=\"" << programPath.parent_path().string() << "\"\n"
               << "LOG=\"$ROOT/data/update-hand.log\"\n"
               << "echo \"[$(date)] the hand waits for the running program to let go\" >>\"$LOG\"\n"
-              << "while ! mv \"$ROOT/" << exeName << "\" \"$ROOT/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
-              << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$ROOT/" << exeName << "\" 2>/dev/null; then\n"
+              << "while ! mv \"$PROG/" << exeName << "\" \"$PROG/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
+              << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$PROG/" << exeName << "\" 2>/dev/null; then\n"
               << "  echo \"[$(date)] the staged binary would not take the old one's place: putting the old one back\" >>\"$LOG\"\n"
-              << "  mv \"$ROOT/" << exeName << ".old\" \"$ROOT/" << exeName << "\" 2>/dev/null\n"
+              << "  mv \"$PROG/" << exeName << ".old\" \"$PROG/" << exeName << "\" 2>/dev/null\n"
               << "  exit 1\n"
               << "fi\n";
           if (!dllName.empty())
-            out << "mv \"$ROOT/bin/" << dllName << "\" \"$ROOT/" << dllName << "\" 2>/dev/null || true\n";
+            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName << "\" 2>/dev/null || true\n";
           out << "echo \"[$(date)] the staged binary took the running one's place\" >>\"$LOG\"\n"
               << "systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
               << "echo \"[$(date)] the hand is done\" >>\"$LOG\"\n";
@@ -608,15 +645,16 @@ namespace ols
           }
           out << "#!/bin/sh\n"
               << "ROOT=\"" << root << "\"\n"
+              << "PROG=\"" << programPath.parent_path().string() << "\"\n"
               << "LOG=\"$ROOT/data/update-hand.log\"\n"
-              << "while ! mv \"$ROOT/" << exeName << "\" \"$ROOT/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
-              << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$ROOT/" << exeName << "\" 2>/dev/null; then\n"
-              << "  mv \"$ROOT/" << exeName << ".old\" \"$ROOT/" << exeName << "\" 2>/dev/null\n"
+              << "while ! mv \"$PROG/" << exeName << "\" \"$PROG/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
+              << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$PROG/" << exeName << "\" 2>/dev/null; then\n"
+              << "  mv \"$PROG/" << exeName << ".old\" \"$PROG/" << exeName << "\" 2>/dev/null\n"
               << "  exit 1\n"
               << "fi\n";
           if (!dllName.empty())
-            out << "mv \"$ROOT/bin/" << dllName << "\" \"$ROOT/" << dllName << "\" 2>/dev/null || true\n";
-          out << "nohup \"$ROOT/" << exeName << "\" >>\"$LOG\" 2>&1 &\n";
+            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName << "\" 2>/dev/null || true\n";
+          out << "cd \"$ROOT\" && nohup \"$PROG/" << exeName << "\" >>\"$LOG\" 2>&1 &\n";
           out.close();
           const pid_t runner = fork();
           if (runner == 0)
