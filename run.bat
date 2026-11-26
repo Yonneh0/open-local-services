@@ -707,7 +707,7 @@ set PINNED=
 :pin_ssh_get
 echo Taking the ssh road release archive for openssh-%~2
 if not exist "%~f1" mkdir "%~f1"
-curl -sSL --fail --retry 2 -o "%~f1\openssh-release.zip" "https://github.com/PowerShell/Win32-OpenSSH/releases/download/%~2/OpenSSH-Win64-v%~2.zip"
+curl -sSL --fail --retry 2 -o "%~f1\openssh-release.zip" "https://github.com/PowerShell/Win32-OpenSSH/releases/download/%~2/OpenSSH-Win64.zip"
 if errorlevel 1 exit /b 1
 certutil -hashfile "%~f1\openssh-release.zip" SHA256 | find /i "%~3" >nul
 if errorlevel 1 (
