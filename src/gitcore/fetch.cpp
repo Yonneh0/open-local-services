@@ -853,12 +853,21 @@ namespace ols
         {
             refsOut.clear();
             outWords.clear();
-            std::string targetUrl;
-            std::uint16_t port = 0u;
-            std::string path;
-            if (!ols::http::splitUrl(url, targetUrl, port, path, outWords))
+            // The address is weighed for the road it rides (E2): an ssh ask
+            // belongs to the transport handed here, and splitUrl - which
+            // speaks http only - must not be the last thing it ever says. An
+            // ssh:// form with no path at all still refuses here, in splitUrl's
+            // own words; the scp-like form carries its path with no slash to
+            // miss. Everything else keeps walking the road it walked.
+            if (url.compare(0u, 6u, "ssh://") != 0 || url.find('/', 6u) == std::string::npos)
             {
-                return false; // the words name the refusal, TLS among them
+                std::string targetUrl;
+                std::uint16_t port = 0u;
+                std::string path;
+                if (!ols::http::splitUrl(url, targetUrl, port, path, outWords))
+                {
+                    return false; // the words name the refusal, TLS among them
+                }
             }
             bool v2 = false;
             return fetchAdvertisement(http, url, apiKey, false, v2, refsOut, outWords);
@@ -872,12 +881,18 @@ namespace ols
         {
             movedOut.clear();
             outWords.clear();
-            std::string host;
-            std::uint16_t urlPort = 0u;
-            std::string path;
-            if (!ols::http::splitUrl(url, host, urlPort, path, outWords))
+            // The same road reading lsRemote stands on (E2): ssh asks ride the
+            // handed transport and skip http's weighing; an ssh:// form with no
+            // path at all still refuses here, in splitUrl's own words.
+            if (url.compare(0u, 6u, "ssh://") != 0 || url.find('/', 6u) == std::string::npos)
             {
-                return false; // the words name the refusal, TLS among them
+                std::string host;
+                std::uint16_t urlPort = 0u;
+                std::string path;
+                if (!ols::http::splitUrl(url, host, urlPort, path, outWords))
+                {
+                    return false; // the words name the refusal, TLS among them
+                }
             }
             if (refsToFetch.empty())
             {
