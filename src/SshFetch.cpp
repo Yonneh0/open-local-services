@@ -765,6 +765,292 @@ namespace ols
             addedLine = keys.front();
             return true;
         }
+
+        // The spawn line the transport runs: the argument spine SPIKE_REPORT.md
+        // §4 proved — an empty -F config so no account's own is read, BatchMode
+        // so no prompt can hang the child, IdentitiesOnly so only the -i key is
+        // offered, a bounded ConnectTimeout, accept-new so the studio's own
+        // known_hosts vouches, one -i key, an optional -p, and the upload-pack
+        // word quoted as one piece. An ssh:// target carries its absolute path;
+        // an scp-like one states it host-relative — the readings keep that
+        // difference, and the spawn rides it unchanged.
+        std::string sshSpawnLine(const std::string &sshExe, const SshTarget &target,
+                                 const std::string &emptyConfig, const std::string &knownHosts,
+                                 const std::string &keyPath, unsigned connectTimeoutMs)
+        {
+            std::string line = quoteWindowsArg(sshExe);
+            line += " -F " + quoteWindowsArg(emptyConfig);
+            line += " -o BatchMode=yes";
+            line += " -o IdentitiesOnly=yes";
+            line += " -o ConnectTimeout=" + std::to_string((connectTimeoutMs + 999u) / 1000u);
+            line += " -o StrictHostKeyChecking=accept-new";
+            line += " -o UserKnownHostsFile=" + quoteWindowsArg(knownHosts);
+            line += " -i " + quoteWindowsArg(keyPath);
+            if (target.port != 0u)
+            {
+                line += " -p " + std::to_string(target.port);
+            }
+            const std::string destination =
+                target.user.empty() ? target.host : target.user + "@" + target.host;
+            line += " " + quoteWindowsArg(destination);
+            line += " " + quoteWindowsArg("git-upload-pack '" + target.path + "'");
+            return line;
+        }
+
+        // The child the transport keeps between openChild and request: the
+        // parent's own ends — the write end of stdin (a POST writes its body
+        // through it), and the read ends of stdout and stderr. The child's
+        // copies of the other ends close right away.
+        struct SshFetch::Child
+        {
+            HANDLE stdinWrite = nullptr;
+            HANDLE stdoutRead = nullptr;
+            HANDLE stderrRead = nullptr;
+            HANDLE process = nullptr;
+            std::string stderrText;
+        };
+
+        SshFetch::SshFetch(const SshTarget &target, const SshIdentity &identity,
+                           const std::string &sshExe)
+            : target_(target), identity_(identity), sshExe_(sshExe)
+        {
+        }
+
+        SshFetch::~SshFetch()
+        {
+            closeChild();
+        }
+
+        // Open one child for one ask. The road stands on the studio's known_hosts
+        // and one key it holds — both are required before any spawn, and the
+        // empty -F config is made beside known_hosts so the child reads no
+        // account's own.
+        bool SshFetch::openChild(std::string &error)
+        {
+            error.clear();
+            const std::string knownHosts = identity_.knownHosts;
+            if (knownHosts.empty())
+            {
+                error = "the ssh road needs the studio's known_hosts; none was named, so no host stands vouched";
+                return false;
+            }
+            std::string dir;
+            const std::filesystem::path knownPath(knownHosts);
+            const std::filesystem::path parent = knownPath.parent_path();
+            if (!parent.empty())
+            {
+                dir = parent.string();
+            }
+            else
+            {
+                dir = ".";
+            }
+            std::string emptyConfig;
+            if (!ensureEmptyConfig(dir, emptyConfig, error))
+            {
+                return false;
+            }
+            const std::string keyPath = identity_.keyPath;
+            if (keyPath.empty())
+            {
+                error = "the ssh road needs a key the studio holds; none stands in the key room";
+                return false;
+            }
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(keyPath, ec))
+            {
+                error = "the ssh road needs a key the studio holds; none stands at " + keyPath;
+                return false;
+            }
+            SECURITY_ATTRIBUTES inheritable;
+            inheritable.nLength = sizeof(SECURITY_ATTRIBUTES);
+            inheritable.lpSecurityDescriptor = nullptr;
+            inheritable.bInheritHandle = TRUE;
+            HANDLE stdinRead = nullptr, stdinWrite = nullptr;
+            HANDLE stdoutRead = nullptr, stdoutWrite = nullptr;
+            HANDLE stderrRead = nullptr, stderrWrite = nullptr;
+            if (!CreatePipe(&stdinRead, &stdinWrite, &inheritable))
+            {
+                error = "the pipes for the ssh road could not be opened: win32 code " + std::to_string(GetLastError());
+                return false;
+            }
+            if (!CreatePipe(&stdoutRead, &stdoutWrite, &inheritable))
+            {
+                error = "the pipes for the ssh road could not be opened: win32 code " + std::to_string(GetLastError());
+                CloseHandle(stdinRead);
+                CloseHandle(stdinWrite);
+                return false;
+            }
+            if (!CreatePipe(&stderrRead, &stderrWrite, &inheritable))
+            {
+                error = "the pipes for the ssh road could not be opened: win32 code " + std::to_string(GetLastError());
+                CloseHandle(stdinRead);
+                CloseHandle(stdinWrite);
+                CloseHandle(stdoutRead);
+                CloseHandle(stdoutWrite);
+                return false;
+            }
+            // The parent keeps its own ends — the stdin write end (a POST rides
+            // through it) and the two read ends. The child's copies of the
+            // other ends close right away, so a child that reads stdin sees
+            // EOF: upload-pack ends its answer when stdin ends.
+            SetHandleInformation(stdinRead, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(stdoutRead, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(stderrRead, HANDLE_FLAG_INHERIT, 0);
+            STARTUPINFOA startup{};
+            startup.cb = sizeof(startup);
+            startup.dwFlags = STARTF_USESTDHANDLES;
+            startup.hStdInput = stdinRead;
+            startup.hStdOutput = stdoutWrite;
+            startup.hStdError = stderrWrite;
+            PROCESS_INFORMATION info{};
+            const std::string line = sshSpawnLine(sshExe_, target_, emptyConfig, knownHosts,
+                                                  keyPath, static_cast<unsigned>(identity_.connectTimeoutMs));
+            std::vector<char> cmdBuf(line.begin(), line.end());
+            cmdBuf.push_back('\0');
+            if (CreateProcessA(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+                               nullptr, nullptr, &startup, &info) == 0u)
+            {
+                const DWORD code = GetLastError();
+                error = "the ssh road would not start: win32 code " + std::to_string(code);
+                CloseHandle(stdinRead);
+                CloseHandle(stdinWrite);
+                CloseHandle(stdoutRead);
+                CloseHandle(stdoutWrite);
+                CloseHandle(stderrRead);
+                CloseHandle(stderrWrite);
+                return false;
+            }
+            CloseHandle(stdinRead);
+            CloseHandle(stdoutWrite);
+            CloseHandle(stderrWrite);
+            Child *child = new Child;
+            child->stdinWrite = stdinWrite;
+            child->stdoutRead = stdoutRead;
+            child->stderrRead = stderrRead;
+            child->process = info.hProcess;
+            child_ = child;
+            return true;
+        }
+
+        // The child's end: its handles close, the wait is taken, the child is
+        // deleted. Every ask opens its own child, so every ask ends with this.
+        void SshFetch::closeChild()
+        {
+            if (child_ == nullptr)
+            {
+                return;
+            }
+            WaitForSingleObject(child_->process, INFINITE);
+            CloseHandle(child_->process);
+            CloseHandle(child_->stdinWrite);
+            CloseHandle(child_->stdoutRead);
+            CloseHandle(child_->stderrRead);
+            delete child_;
+            child_ = nullptr;
+        }
+
+        // One ask through the road. A fresh child stands for every ask: the
+        // GET reads the advertisement off its stdout, the POST writes its
+        // request through stdin and reads the pack to EOF. A child that ends
+        // not-zero answers with its stderr words verbatim — the road refuses,
+        // it does not translate.
+        bool SshFetch::request(const std::string &method, const std::string &url,
+                               const ols::http::Headers &headers, const std::string &body,
+                               std::uint64_t maxReplyBytes, ols::http::Reply &replyOut,
+                               std::string &error)
+        {
+            (void)headers;
+            (void)url;
+            replyOut = ols::http::Reply{};
+            error.clear();
+            closeChild();
+            if (!openChild(error))
+            {
+                return false;
+            }
+            const bool isPost = (method == "POST");
+            if (isPost && !body.empty())
+            {
+                std::size_t written = 0u;
+                while (written < body.size())
+                {
+                    const std::size_t chunk = body.size() - written;
+                    const std::size_t take = chunk > 4096u ? 4096u : chunk;
+                    DWORD put = 0u;
+                    if (!WriteFile(child_->stdinWrite, body.data() + written,
+                                   static_cast<DWORD>(take), &put, nullptr) || put == 0u)
+                    {
+                        break;
+                    }
+                    written += static_cast<std::size_t>(put);
+                }
+            }
+            // The stdin end closes either way: a GET has nothing to send, and
+            // upload-pack ends its answer when stdin ends (spike §3).
+            CloseHandle(child_->stdinWrite);
+            child_->stdinWrite = nullptr;
+            std::string out;
+            bool overCap = false;
+            char buf[4096];
+            for (;;)
+            {
+                DWORD got = 0u;
+                if (!ReadFile(child_->stdoutRead, buf, sizeof(buf), &got, nullptr))
+                {
+                    break;
+                }
+                if (got == 0u)
+                {
+                    break;
+                }
+                if (out.size() + got > maxReplyBytes)
+                {
+                    overCap = true;
+                    break;
+                }
+                out.append(buf, buf + got);
+            }
+            for (;;)
+            {
+                DWORD got = 0u;
+                if (!ReadFile(child_->stderrRead, buf, sizeof(buf), &got, nullptr))
+                {
+                    break;
+                }
+                if (got == 0u)
+                {
+                    break;
+                }
+                child_->stderrText.append(buf, buf + got);
+            }
+            if (overCap)
+            {
+                error = "the ssh answer runs past its cap of " + std::to_string(maxReplyBytes) + " bytes";
+                closeChild();
+                return false;
+            }
+            DWORD exitCode = 0u;
+            GetExitCodeProcess(child_->process, &exitCode);
+            if (exitCode != 0u)
+            {
+                const std::string words = trimTail(child_->stderrText);
+                if (!words.empty())
+                {
+                    error = "the ssh road refused: " + words;
+                }
+                else
+                {
+                    error = "ssh ended with code " + std::to_string(exitCode);
+                }
+                closeChild();
+                return false;
+            }
+            replyOut.status = 200;
+            replyOut.body.swap(out);
+            closeChild();
+            return true;
+        }
 #else
         // The other side owes its pinned portable OpenSSH (run.sh names it);
         // until that stands, these three refuse in words.
@@ -798,6 +1084,48 @@ namespace ols
             (void)host;
             addedLine.clear();
             error = "no host trusted here: the Linux side owes its pinned portable OpenSSH (run.sh names it)";
+            return false;
+        }
+        // The transport class keeps its shape here, and every ask refuses in
+        // words: the Linux side owes its pinned portable OpenSSH (run.sh names
+        // it) before any child can stand.
+        struct SshFetch::Child
+        {
+        };
+        SshFetch::SshFetch(const SshTarget &target, const SshIdentity &identity,
+                           const std::string &sshExe)
+            : target_(target), identity_(identity), sshExe_(sshExe)
+        {
+        }
+        SshFetch::~SshFetch()
+        {
+            closeChild();
+        }
+        bool SshFetch::openChild(std::string &error)
+        {
+            error = "no ssh child here: the Linux side owes its pinned portable OpenSSH (run.sh names it)";
+            return false;
+        }
+        void SshFetch::closeChild()
+        {
+            if (child_ != nullptr)
+            {
+                delete child_;
+                child_ = nullptr;
+            }
+        }
+        bool SshFetch::request(const std::string &method, const std::string &url,
+                               const ols::http::Headers &headers, const std::string &body,
+                               std::uint64_t maxReplyBytes, ols::http::Reply &replyOut,
+                               std::string &error)
+        {
+            (void)method;
+            (void)url;
+            (void)headers;
+            (void)body;
+            (void)maxReplyBytes;
+            replyOut = ols::http::Reply{};
+            error = "no ssh ask here: the Linux side owes its pinned portable OpenSSH (run.sh names it)";
             return false;
         }
 #endif
