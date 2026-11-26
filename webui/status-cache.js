@@ -92,7 +92,7 @@
   }
 
   // All readings of one service share a prefix, so a write can clear them
-  // together: /voice/api/... belongs to the family /voice/api/.
+  // together: /project/api/... belongs to the family /project/api/.
   function familyOf(path) {
     if (path.charAt(0) !== '/') return '';
     const parts = path.slice(1).split('/');

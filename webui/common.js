@@ -14,7 +14,6 @@
   // Each engine has its own tint, matching the row tags on the pages.
   const TINT = {
     image: 'var(--accent)',
-    voice: 'var(--accent2)',
   };
 
   // The machine's health, held in one place: the home tab in the nav is
@@ -105,12 +104,12 @@
   // unknown kind, and a guessed label would state a fact that is not true.
   UI.jobEngine = function (job) {
     const engine = String(job.engine || '');
-    if (engine === 'image' || engine === 'voice') return engine;
+    if (engine === 'image') return engine;
     return 'job';
   };
 
   UI.jobLabel = function (job) {
-    return String(job.model || job.voice || job.kind || job.id);
+    return String(job.model || job.kind || job.id);
   };
 
   // How long a stretch of seconds is, in the fewest words that still say it:
@@ -274,7 +273,6 @@
     // stands in memory.
     for (const studio of [
       ['image', 'imagegen.html', 'Picture'],
-      ['voice', 'voice.html', 'Voice'],
     ]) {
       const running = of(studio[0], 'running');
       paintBadge(studio[0] + ':run', studio[1], 'run', running.length,
@@ -294,10 +292,6 @@
     }
     paintBadge('image:loaded', 'imagegen.html', 'loaded', imageNames.length,
       imageNames.length ? 'Picture models standing in memory: ' + imageNames.join(', ') + '.' : '');
-    const standing = Array.isArray((system.voice || {}).open_models)
-      ? system.voice.open_models.map(String) : [];
-    paintBadge('voice:loaded', 'voice.html', 'loaded', standing.length,
-      standing.length ? 'Voice models standing in memory: ' + standing.join(', ') + '.' : '');
   };
 
   // The standard header badges from a merged /api/monitor reading, identical on
@@ -452,14 +446,14 @@
 
   // What the pages say as they work. One page keeps the written record - the
   // home page, whose whole job is what this machine is doing - and every page
-  // writes into the same store, so a line raised on the image studio or the
-  // voice studio is read again there rather than being forgotten when that page
-  // is left. A line that stopped or refused is also put on the notice stack of
-  // the page that raised it, because that is where the hand that caused it was.
+  // writes into the same store, so a line raised on the image studio is read
+  // again there rather than being forgotten when that page is left. A line that
+  // stopped or refused is also put on the notice stack of the page that raised
+  // it, because that is where the hand that caused it was.
   const LOG_STORE = 'ols-log-v1';
   const LOG_KEEP = 200;
   const LOG_PAGE_WORDS = {
-    '': 'status', index: 'status', imagegen: 'image', voice: 'voice',
+    '': 'status', index: 'status', imagegen: 'image',
   };
 
   function logWords() {
@@ -1503,7 +1497,6 @@
   const NAV = [
     ['index.html', 'home', 'This machine: a card for every model with what it uses, and every job the engines have run.'],
     ['imagegen.html', 'image studio', 'Generate images: models, prompts, gallery.'],
-    ['voice.html', 'voice studio', 'Speak text with the audio.cpp engines: voices, models, renders.'],
     ['project.html', 'project studio', 'Browse local git projects: code, issues, pull requests, builds.'],
   ];
   // The header carries only the line naming the work going on. What each

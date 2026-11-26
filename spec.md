@@ -8,7 +8,6 @@ peers, deployment). It says nothing about what the studios do behind their
 doors:
 
 - `spec_image_studio.md` — the image studio: models, jobs, gallery, references, `/api/*` and `/files/*`.
-- `spec_voice_studio.md` — the voice studio: audio.cpp, voices, renders, `/voice/api/*` and `/voice/files/*`.
 - `spec_project_studio.md` — Project Studio: the git ledger, the code doors, `/project/api/*` and `/git/*`. That file is the contract for its studio, including the parts not yet built; where it names a core rule (the key gate, the rate gate, the body caps), this file is the core's own statement of it.
 
 Where code and this file disagree, one of them is wrong.
@@ -17,7 +16,7 @@ Where code and this file disagree, one of them is wrong.
 
 One C++ binary. A hand-written HTTP/1.1 server over the socket layer in
 `src/Platform.h` — no HTTP library, no framework, no build step for the pages.
-The service modules (`ols::imagegen`, `ols::voice`, `ols::project`) own their
+The service modules (`ols::imagegen`, `ols::project`) own their
 state and answer through thin doors in `src/OpenLocalServices.cpp`.
 
 The laws the whole server stands on:
@@ -65,13 +64,12 @@ The laws the whole server stands on:
 | `/<page>.html`, `/webui/*`, `/favicon.ico`, `*.css`, `*.js` | the pages, before any key | — | §8 |
 | `/api/system`, `/api/monitor`, `/api/network`, `/api/network/scan`, `/api/peers`, `/api/peers/hello`, `/api/service`, `/api/config`, `/api/webui/expand` | the machine's own readings | config, service, expand, network actions | this file |
 | `/api/models*`, `/api/jobs*`, `/api/generate`, `/api/gallery*`, `/api/refs*`, `/api/prefs`, `/api/timings`, `/api/unload`, `/files/*` | the image studio | its work | `spec_image_studio.md` |
-| `/voice/api/*`, `/voice/files/*` | the voice studio | its work | `spec_voice_studio.md` |
 | `/project/api/*` | Project Studio | its work | `spec_project_studio.md` |
 | `/git/<slug>/*` | the git smart-HTTP doors | clone/fetch/push | `spec_project_studio.md` §8 |
 
 An address nothing answers gets `404 {"error":"No route"}`. A 502 is kept for a
-module genuinely not wired into the binary ("No image service", "No voice
-service", "No project service").
+module genuinely not wired into the binary ("No image service", "No project
+service").
 
 ## 1. The transport
 
@@ -406,8 +404,8 @@ studios own their records.
 - **Doors that start work open with a POST:** *"That door opens with a post"*.
 - **The card is one:** every hand that stands weights on the working device,
   draws with them, or takes memory back — in any module — waits on the one
-  `deviceCard()` mutex. A voice graph built while a picture draws walks the same
-  device state from two threads, and the file the crash leaves behind names it.
+  `deviceCard()` mutex. Two graphs built at once walk the same device state
+  from two threads, and the file the crash leaves behind names it.
 
 ### 6.1 The event stream
 
@@ -448,7 +446,6 @@ reads the header and re-asks only past the window.
 | `/api/config` | 15 | changes only when a person changes it |
 | `/api/models`, `/api/gallery`, `/api/refs` | 2 | a model table's truth changes when a job changes it |
 | `/api/prefs` | 20 | |
-| `/voice/api/status`, `/health`, `/jobs`, `/models`, `/model-cards`, `/model-stats`, `/voices`, `/library` | 2 | |
 | `/project/api/index`, `/revs`, `/tree`, `/build-status` | 2 | the reads a page asks for most often, held ready by the module |
 | `/project/api/file`, `/file-outline` | −1 → `no-store` | content-addressed bytes belong in the page's own store by oid, not in a cache keyed on an address |
 | everything else | 5 | |
@@ -520,8 +517,7 @@ serving from a folder does not offer a hand that can only refuse.
 
 ## 9. The file doors
 
-`GET|HEAD /files/<kind>/<name>` (image studio) and
-`GET|HEAD /voice/files/<kind>/<name>` (voice studio) resolve the name through
+`GET|HEAD /files/<kind>/<name>` (image studio) resolve the name through
 the owning module — the module decides which kinds exist and what a name may be
 (never a path; a name cannot hold a slash) — and serve the bytes:
 
@@ -577,15 +573,13 @@ One snapshot document, composed fresh each read:
   management library answers (NVIDIA); an AMD core keeps its clocks out of any
   such library and reads as no clocks here — the page says the card states none
   rather than guessing a figure off the product name.
-- `loaded` — the image module's status document; `voice` — the voice module's
-  counts and short list only, so a page polling this snapshot never pays for a
-  table of four hundred.
+- `loaded` — the image module's status document.
 
 ### 10.2 `GET /api/monitor`
 
-The composed home-page document (`src/MonitorService.cpp`): every image and
-voice job in one list, newest first, each tagged with the engine the work
-belongs to, plus the summary counts and the queue estimate. The engines own
+The composed home-page document (`src/MonitorService.cpp`): every image job in
+one list, newest first, each tagged with the engine the work belongs to, plus
+the summary counts and the queue estimate. The engines own
 their jobs; this only reads them. The way to the picture engine's cost ledger
 is passed as a function, so an idle machine never reads the file.
 
@@ -704,9 +698,8 @@ when present, else from the copies inside the binary (§8).
 
 - **The chrome** (`common.js`) is mounted on every page: the header (brand, the
   line naming the work going on, the machine picker) and the nav —
-  `home` (`index.html`), `image studio` (`imagegen.html`), `voice studio`
-  (`voice.html`), `project studio` (`project.html`). The bare address opens the
-  home page.
+  `home` (`index.html`), `image studio` (`imagegen.html`), `project studio`
+  (`project.html`). The bare address opens the home page.
 - **`key-shim.js`** wakes first: a page that woke with `?key=` in its address
   takes the credential up and wipes the address clean; a page whose doors
   refuse asks the person where it stands and hands the answer to `POST /`.

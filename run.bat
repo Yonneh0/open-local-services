@@ -5,8 +5,8 @@ REM Pass "build" to build and install without starting the server.
 REM The shape this run builds follows the box. A CUDA card named - the card in
 REM this box as nvidia-smi names it, an arch=<number> word, or the environment -
 REM builds whole on CUDA: every part, the image engine, the server's own device
-REM probe, and the voice engine's device code, compiled on nvcc, and nothing of
-REM the Vulkan sdk is asked of that machine. A box that names no card builds
+REM probe, compiled on nvcc, and nothing of the Vulkan sdk is asked of that
+REM machine. A box that names no card builds
 REM on the Vulkan sdk it carries, in the plain roots; only a box with no card
 REM and no sdk builds with no device backend at all - the shape build-rel.sh
 REM names with -DOLS_NO_DEVICE=1 - and there the engines work where the threads are.
@@ -194,8 +194,8 @@ rem runtime, and a manifest pointing at nothing is no part of that path. the
 rem search waits for the shape below, which a card-less box may still take.
 set VK_DRIVER_DIR=
 rem ---- the CUDA path, the one this script takes by default ----
-rem a card that speaks CUDA builds whole on it: the image engine, the server's own
-rem device probe, and the voice engine's device code all take the CUDA backend.
+rem a card that speaks CUDA builds whole on it: the image engine and the
+rem server's own device probe both take the CUDA backend.
 rem the project builder a bare Windows shell reaches cannot be handed nvcc at all,
 rem so this path names ninja and the toolkit itself, and takes the compilers
 rem through the studio environment - the same lines a CUDA build on any Windows
@@ -350,7 +350,7 @@ rem for them would not build for reasons of compiler, not of chip.
 set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
 set NOVEC_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
 rem the one word the src build takes for a box with no device backend, the way
-rem build-rel.sh names it: the voice engine then carries the cpu backend alone,
+rem build-rel.sh names it: the image engine then carries the cpu backend alone,
 rem and none of the server's device code is compiled.
 set OLS_NODEVICE=
 if defined NODEVICE set OLS_NODEVICE=-DOLS_NO_DEVICE=1
@@ -360,14 +360,6 @@ rem ---- clone the engine sources when they are missing ----
 if not exist "vendor\stable-diffusion.cpp\CMakeLists.txt" (
   echo Cloning the image engine source, 41 MB
   git clone --depth 1 --single-branch https://github.com/leejet/stable-diffusion.cpp vendor\stable-diffusion.cpp
-  if errorlevel 1 exit /b 1
-)
-rem the voice engine is linked into the server itself, so its source is fetched
-rem like the others; the model set and the phonemizer it needs are named by the
-rem src build below, not by any option here.
-if not exist "vendor\audio.cpp\CMakeLists.txt" (
-  echo Cloning the voice engine source
-  git clone --depth 1 --single-branch https://github.com/0xShug0/audio.cpp vendor\audio.cpp
   if errorlevel 1 exit /b 1
 )
 if not exist "vendor\nlohmann\json.hpp" (
@@ -391,12 +383,6 @@ if errorlevel 1 (
 call :pin_sub "vendor\stable-diffusion.cpp" ggml "!PIN_IMAGE_GGML!"
 if errorlevel 1 (
   echo Could not put the image engine ggml on its pinned commit.
-  exit /b 1
-)
-set PIN_VOICE=41bb3f0ffb6b46b7a3bb3c02fcea52900d88001b
-call :pin "vendor\audio.cpp" "!PIN_VOICE!" 0xShug0/audio.cpp
-if errorlevel 1 (
-  echo Could not put the voice engine on its pinned commit.
   exit /b 1
 )
 
@@ -541,12 +527,6 @@ if errorlevel 1 (
     echo The build did not finish. The tree keeps its shape and its cache.
     exit /b 1
 )
-rem the phonemizer data kokoro reads is built with the voice engine and kept
-rem beside the server binary: the statically linked engine looks under the
-rem executable's own folder for espeak-ng-data.
-if not exist "src\espeak-ng-data\phontab" (
-    xcopy /Y /E /Q "!API_ROOT!\_deps\espeak-static\build\espeak-ng-data" "src\espeak-ng-data\" >nul
-)
 rem the build above succeeded: a fresh binary exists, so stop the running
 rem server now, right before its binary is replaced
 call :stop_process open-local-services.exe
@@ -563,10 +543,10 @@ if errorlevel 1 (
     echo Could not replace src\open-local-services.exe - check the src folder is writable.
     exit /b 1
 )
-rem the server carries its own ggml inside it - the voice engine runs on it and
-rem the device probe answers from it - so nothing is copied beside it for the
-rem server to load as a plugin: a backend already compiled in is registered
-rem twice that way, which is what MSI's cuda build failed on.
+rem the server carries its own ggml inside it - the device probe answers from it
+rem - so nothing is copied beside it for the server to load as a plugin: a
+rem backend already compiled in is registered twice that way, which is what
+rem MSI's cuda build failed on.
 copy /Y "!SD_BIN!\stable-diffusion.dll" "src\" >nul
 
 if /i not "%MODE%"=="build" goto start
@@ -593,11 +573,11 @@ rem reaches the server started below and is handed to nobody else. the Vulkan
 rem shape names its driver manifest, and asks nothing of a toolkit.
 if defined CUDA_ON if defined CUDA_HOME set "PATH=!CUDA_HOME!\bin;!PATH!"
 if defined VK_DRIVER_DIR set "VK_DRIVER_FILES=!VK_DRIVER_DIR!"
-rem two ggml copies share this process: the voice engine's, linked into the
-rem binary, and the one whose plugin libraries sit beside it. ggml stops a
-rem process that installs its crash handler twice - before it could listen - so
-rem no copy here installs one, and the server starts. a crash still prints its
-rem own words, in the same line the failing check names.
+rem two ggml copies share this process: the one linked into the binary, and the
+rem one inside the image library beside it. ggml stops a process that installs
+rem its crash handler twice - before it could listen - so no copy here installs
+rem one, and the server starts. a crash still prints its own words, in the same
+rem line the failing check names.
 set "GGML_NO_BACKTRACE=1"
 echo The server names the address it answers at as it starts - the line that reads
 echo "API server on http://0.0.0.0:[port]". The configured port is !SRV_PORT!; if another
@@ -620,8 +600,7 @@ echo The server stopped here, and handed back %SERVER_EXIT%. Its address was the
 echo line it printed as it started - "API server on http://0.0.0.0:[port]".
 tasklist /FI "IMAGENAME eq open-local-services.exe" | findstr /I "open-local-services.exe" >nul
 if not errorlevel 1 echo An open-local-services.exe is still in the task list: that other one may still be serving.
-echo The page links to the home page, the image studio, and the voice
-echo studio.
+echo The page links to the home page and the image studio.
 echo The server keeps running in this window; close the window to stop it.
 ENDLOCAL
 exit /b 0

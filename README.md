@@ -66,7 +66,7 @@ WIZMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMmmmmmmMMMMMMMMMMMMMMMMMMMMMMMMM*MJJ
 
 # open-local-services
 
-A local server for image generation, video clips, speech synthesis, transcription, and listening tasks. One server process serves the web UI and all API endpoints from one fixed port. The voice engine is linked into the server. The image engine is served through its own library because it has a separate ggml copy.
+A local server for image generation and video clips. One server process serves the web UI and all API endpoints from one fixed port. The image engine is served through its own library because it has a separate ggml copy.
 
 ## Repository
 
@@ -97,7 +97,7 @@ There is no release server here, no pipeline, and no version numbers — that is
 1. **Commit first.** A release build refuses an uncommitted `src/` or `webui/` — a binary stamped with an older commit than the code inside it would lie about what it is.
 2. **Build the shapes.** `build-rel.bat` builds the Windows targets, `build-rel.sh` the Linux ones. Each target is one machine's shape, stated at its configure rather than left to the machine that compiled it: the CPU shapes (up to AVX-512, or plain AVX2 — both carrying the Vulkan backend) and one CUDA binary per card generation (`sm_70`, `sm_75`, `sm_86`). Every finished binary carries the commit inside it, and a CUDA binary's card generation is read back off the artifact rather than trusted from what was asked.
 3. **Each finished folder ships as one archive** — `Release/open-local-services-<commit>-win-<target>.zip`, or `…-linux-<target>.tar.gz` — and its sha256 goes into that platform's manifest, `Release/SHA256SUMS-win.txt` or `SHA256SUMS-linux.txt`: one release is built on the machines whose shapes it ships, and two builders keeping one file would erase each other. `build-info.txt` names the commit, the toolchain, and the pinned engine sources everything was built from. The archives are what carry between machines, and the small ones (the Vulkan and CPU shapes, some 50 MB) are committed — here the repository is the release, and what is committed is what runs. The CUDA archives are the measured exception: cuBLAS, cuBLASLt and cuFFT make them roughly 850 MB compressed, past what any GitHub push admits in one file, so they live beside the tree under their committed sha256 and move box to box over the link. Build scripts never commit anything themselves; they name any archive git has not been shown yet.
-4. **A machine that compiles nothing opens one archive and runs it.** Inside: the server with the voice engine compiled in, the image engine beside it, the phonemizer data, and a `webui/` folder served live the way the development tree's is. CUDA artifacts carry the CUDA runtime their binaries really import, and Windows artifacts the Microsoft C++ runtime, read off their import tables rather than guessed at. A `weights/` folder, a `data/` folder, and a `.env` beside the binary are the same folders and file the development tree uses.
+4. **A machine that compiles nothing opens one archive and runs it.** Inside: the server with its device backend compiled in, the image engine beside it, and a `webui/` folder served live the way the development tree's is. CUDA artifacts carry the CUDA runtime their binaries really import, and Windows artifacts the Microsoft C++ runtime, read off their import tables rather than guessed at. A `weights/` folder, a `data/` folder, and a `.env` beside the binary are the same folders and file the development tree uses.
 5. **Built for one place, run anywhere of its kind.** The CPU part of every binary is baseline-plus-runtime-detection, so an artifact built on an AVX-512 machine runs untouched on one that has never seen it. Linux artifacts state the newest glibc symbol they ask for, and are built on the same Ubuntu release as the machines that will run them.
 
 ## Access
@@ -141,12 +141,11 @@ Pages are embedded in the binary at build time. If a `webui/` folder exists besi
 - Every page's header carries the running-state line and the state-worn home tab; the two studio tabs each wear, across their top-right corner, a badge naming how many jobs that engine has running, how many wait their turn, and how many models stand in memory - the machine's own counts, worn only while something stands, each explaining itself on hover, and never in the way of a click.
 - `/index.html` is the home page: cpu, gpu, and memory levels with their recent history, the hardware each engine stands on, the models open in memory, every job standing or running and what it says about itself, the network panel, local settings, and the service door. The corner clock tells the hour - or, while work stands in the queue, how far the queue is away, counted from the machine's own statements and never guessed by the page.
 - `/imagegen.html` is the image studio: prompt and settings beside the gallery of what this machine drew, reference images for image-to-image, the weights room with its downloads and loads, a queue that answers cancelling and reordering, and preferences the page remembers. Still images and video clips are pressed through the same door.
-- `/voice.html` is the voice studio: speak with any opened model and voice, save, rename, and delete voices, hold a text library, transcribe recordings, and read what the engine keeps open and what it costs.
 - `POST /api/webui/expand` writes the binary's embedded pages out beside it, so a binary install can become an editable tree.
 
 ## API
 
-Job doors answer `202` with a `job_id`; the work is watched at the job doors, and what it made is served from `/files/` and `/voice/files/`. Every door below answers under the same key and rate limit.
+Job doors answer `202` with a `job_id`; the work is watched at the job doors, and what it made is served from `/files/`. Every door below answers under the same key and rate limit.
 
 The machine and the service:
 
@@ -187,21 +186,6 @@ Jobs:
 GET  /api/jobs               every job: queued, running, kept
 GET  /api/jobs/<id>          one job's own record; POST /api/jobs/<id>/cancel stops it
 POST /api/jobs/reorder       move a queued job along the line
-```
-
-Voice:
-
-```text
-GET  /voice/api/status  /voice/api/health   the voice engine's own statement
-GET  /voice/api/models       the voice models; /voice/api/model-cards and
-                             /voice/api/model-stats read their cards and their costs;
-                             /voice/api/models/<name> works one model
-GET  /voice/api/jobs         voice jobs; /voice/api/jobs/<id> for one of them
-POST /voice/api/speak        text to speech, with a named model and voice
-POST /voice/api/listen       a recording to text
-GET  /voice/api/voices       the saved voices; POST voices/save, voices/delete,
-                             voices/rename
-GET  /voice/api/library      the held text library; POST library/delete forgets one
 ```
 
 Project Studio:
@@ -450,19 +434,6 @@ At 124 frames the driver will not hand over the 5.4 GB pinned buffer the
 graph asks for; ggml says so and splits the graph between cpu and card, and
 the clip finishes.
 
-### Speech
-
-| model | task | cpu | vulkan | cuda |
-|---|---|---|---|---|
-| kokoro-82m-q8 (af_heart) | speak, five varied prompts | | first 15.5 s cold, then 1.4-1.9 s | |
-| qwen3-tts-customvoice-1.7b-q8 (serena) | speak, the same five | | first 34.9 s cold, then 9.3-12.0 s | |
-| moonshine-streaming-small-q8 | listen, 8.4 s recording | | 2.2 s | |
-
-The speech rows ran on the same server; the speech engines choose their own
-device, and these three numbers are the same model cold and warm - the cold
-first call carries the engine's own start, the warm ones are what a page
-conversation feels.
-
 ### The columns that stand open
 
 The cpu column carries only what finished on this machine: sdxl-turbo
@@ -480,7 +451,7 @@ power window, shipped at the 28 W cTDP default with room in the bios to 54 W.
 
 How to reproduce: build the wanted shape with `run.bat` (or
 `run.bat nodevice`), start the server, and send each card's defaults through
-`POST /api/generate` / `/voice/api/speak` with the prompt from `GET
+`POST /api/generate` with the prompt from `GET
 /api/models`. `GET /api/timings` keeps what this machine measured - every
 cost row filed under the device that did it, in that device's own name - and
 the job records carry the same numbers the table was cut from.

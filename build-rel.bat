@@ -30,9 +30,8 @@ rem                             network small; the linux side builds the same
 rem                             three, and a card generation outside these is
 rem                             asked for by name rather than assumed.
 rem
-rem each folder holds open-local-services.exe with the voice engine inside it, the image
-rem engine as stable-diffusion.dll next to the server, and the phonemizer data
-rem the voice engine reads.
+rem each folder holds open-local-services.exe with its device probe inside it, and
+rem the image engine as stable-diffusion.dll next to the server.
 rem
 rem this box compiles every one of those targets, and a machine far down the
 rem network never compiles anything: what is sent there is a finished folder,
@@ -117,7 +116,6 @@ if exist "%REL%\SHA256SUMS-win.txt" del "%REL%\SHA256SUMS-win.txt"
 
 rem the exact vendor commits this code is written against - the same names run.bat
 rem carries, so an artifact is the source the running server runs.
-set PIN_VOICE=41bb3f0ffb6b46b7a3bb3c02fcea52900d88001b
 set PIN_IMAGE=b13a48219d5cdf408edcb93da6cd69b612ed03d3
 set PIN_IMAGE_GGML=dc998771e700d49bbdf9a39cede22bb5b3311767
 
@@ -217,14 +215,12 @@ rem the engine sources have to be here, and on the commits this code is written
 rem against: run.bat fetches and pins them, and records each pin in the .pin
 rem file of the tree. this build reads that record rather than taking another
 rem copy of the source - the source it compiles is the source that is here.
-for %%S in (vendor\audio.cpp vendor\stable-diffusion.cpp) do (
+for %%S in (vendor\stable-diffusion.cpp) do (
   if not exist "%%~S\CMakeLists.txt" (
     echo This tree has no engine sources. run.bat fetches and pins them first.
     exit /b 1
   )
 )
-call :check_pin "vendor\audio.cpp" "!PIN_VOICE!"
-if errorlevel 1 exit /b 1
 call :check_pin "vendor\stable-diffusion.cpp" "!PIN_IMAGE!"
 if errorlevel 1 exit /b 1
 call :check_pin "vendor\stable-diffusion.cpp\ggml" "!PIN_IMAGE_GGML!"
@@ -325,11 +321,9 @@ rem what the artifacts carry, in the note the README points at
   echo     card in the laptop down the network - and sm_86 for the compute 8.6 cards.
   echo     one binary answers one card generation, which keeps what gets pushed
   echo     over the network small; the linux side builds the same three.
-  echo inside each folder: open-local-services.exe with the voice engine and its device
-  echo probe inside it, and the image engine as stable-diffusion.dll next to the
-  echo server - it carries its own ggml, and one executable cannot hold two ggmls.
-  echo the phonemizer data the voice engine reads sits under the server's own
-  echo executable.
+  echo inside each folder: open-local-services.exe with its device probe inside it, and
+  echo the image engine as stable-diffusion.dll next to the server - it carries
+  echo its own ggml, and one executable cannot hold two ggmls.
   echo the build roots of every target are kept between runs: a run that changed
   echo no source recompiles nothing but the file that carries the version.
   echo card architectures this CUDA toolkit could not write for: !CUDA_SKIPPED!
@@ -339,7 +333,6 @@ rem what the artifacts carry, in the note the README points at
   echo the engines were compiled in the vendor trees this code keeps, on the
   echo pinned commits its .pin files record - no source was copied for this
   echo build. the sources that built every artifact here:
-  echo     voice engine: vendor\audio.cpp at !PIN_VOICE!, compiled in below
   echo     image engine: vendor\stable-diffusion.cpp at !PIN_IMAGE!
   echo     image ggml: vendor\stable-diffusion.cpp\ggml at !PIN_IMAGE_GGML!
   echo.
@@ -426,7 +419,7 @@ if /I "!TARGET!"=="cpu-avx512" (
 )
 if /I "!TARGET!"=="cpu-plain" (
   set SD_ROOT=vendor\stable-diffusion.cpp\build-p
-  rem the server binary carries the voice engine's ggml inside it, and that ggml
+  rem the server binary carries the image engine's ggml inside it, and that ggml
   rem writes the target's instruction sets into the objects it compiles - so the
   rem plain shape cannot share a build tree with the avx512 one, and its root
   takes the same -p name the image engine's plain root has always carried.
@@ -564,15 +557,8 @@ if not exist "!OUT!\open-local-services.exe" (
   echo open-local-services.exe is not there - the build above did not produce it.
   exit /b 1
 )
-rem the server's own ggml is inside it - the voice engine runs on it and the
-rem device probe answers from it - so no ggml library is laid beside the server.
-rem the phonemizer data the voice engine reads when it is linked in: the
-rem statically built engine looks under the folder of its own executable.
-if not exist "src\espeak-ng-data\phontab" (
-  xcopy /Y /E /Q "!API_ROOT!\_deps\espeak-static\build\espeak-ng-data" "!OUT!\espeak-ng-data\" >nul
-) else (
-  xcopy /Y /E /Q "src\espeak-ng-data" "!OUT!\espeak-ng-data\" >nul
-)
+rem the server's own ggml is inside it - the device probe answers from it - so
+rem no ggml library is laid beside the server.
 copy /Y "!SD_BIN!\stable-diffusion.dll" "!OUT!\" >nul
 if not exist "!OUT!\stable-diffusion.dll" (
   echo stable-diffusion.dll is not there - the image engine build did not produce it.
@@ -679,10 +665,6 @@ if defined CUDA_ON for %%R in ("cudart64_12.dll" "cublas64_12.dll" "cublasLt64_1
     echo the cuda release folder holds no %%~R and would not start away from this box.
     exit /b 1
   )
-)
-if not exist "!OUT!\espeak-ng-data\phontab" (
-  echo the release folder holds no phonemizer data - the voice doors would have no sounds to speak.
-  exit /b 1
 )
 rem what card architecture a cuda binary really holds is read back off it
 rem rather than trusted from what was asked: the tool that reads it sits beside

@@ -20,15 +20,14 @@ const keyStateLine = E('key-state');
 // Whether the press that hands the key has been wired: the door line is
 // redrawn with every reading, and the hand must be hung once.
 let pressWired = false;
-// The two engine marks worn beside the open-models panel's name: each names
-// one engine, and which wear says which engines get model cards here.
+// The mark worn beside the open-models panel's name: it names one engine, and
+// its wear says whether that engine's models get model cards here.
 const modelToggles = [
   { engine: 'image', words: 'picture', node: E('model-toggle-image') },
-  { engine: 'voice', words: 'spoken', node: E('model-toggle-voice') },
 ];
-// Both marks wear at the start: every model gets a card until a person takes
-// one engine off the page.
-const engineShown = { image: true, voice: true };
+// The mark wears at the start: every model gets a card until a person takes
+// the engine off the page.
+const engineShown = { image: true };
 const logPanel = E('log');
 const logLine = E('log-line');
 const logClear = E('log-clear');
@@ -980,7 +979,7 @@ function drawMachine(system, summary, history, jobs) {
 // ---------- every engine at a glance ----------
 
 function engineWords(engine) {
-  if (engine === 'image' || engine === 'voice') return engine;
+  if (engine === 'image') return engine;
   return 'job';
 }
 
@@ -1021,7 +1020,7 @@ function modelUseWords(runs) {
 function drawTotals(summary) {
   if (!summary) return;
   const parts = [];
-  for (const pair of [['image', 'last image'], ['voice', 'last speech']]) {
+  for (const pair of [['image', 'last image']]) {
     const stat = summary[pair[0]] || {};
     if (Number(stat.last_s || 0) > 0) parts.push(pair[1] + ': ' + whole(stat.last_s) + 's');
   }
@@ -1036,7 +1035,7 @@ function drawTotals(summary) {
 // ---------- one model, one card the width of the page ----------
 
 function runText(run, engine, model) {
-  return [run.id, run.kind, run.state, engine, model, run.voice, run.port].join(' ').toLowerCase();
+  return [run.id, run.kind, run.state, engine, model, run.port].join(' ').toLowerCase();
 }
 
 // A row shows when the filter and the search both say so, matched in the words
@@ -1069,7 +1068,6 @@ function cardRowControls(engine, model) {
     ['done', 'Only the jobs that finished.', 'finished'],
     ['error', 'Only the jobs that failed or were stopped.', 'problems'],
     ['image', 'Only picture jobs.', 'image only'],
-    ['voice', 'Only spoken renders.', 'voice only'],
   ]) {
     const node = document.createElement('option');
     node.setAttribute('value', option[0]);
@@ -1080,8 +1078,8 @@ function cardRowControls(engine, model) {
   wrap.appendChild(select);
   const search = document.createElement('input');
   search.setAttribute('aria-label', 'Search this table');
-  search.setAttribute('placeholder', 'model, voice, kind, or job id');
-  search.setAttribute('title', 'Matches the model, voice, kind, or job id in this table.');
+  search.setAttribute('placeholder', 'model, kind, or job id');
+  search.setAttribute('title', 'Matches the model, kind, or job id in this table.');
   wrap.appendChild(search);
   const controls = { wrap: wrap, select: select, search: search };
   tableHands.set(key, controls);
@@ -1104,10 +1102,9 @@ function rowVisible(engine, model, controls) {
 
 // What a model's own engine states about it, read off the model rows this page
 // collected: a name, the weights on disk, the files it names. Each engine
-// names these in its own words — a picture table says bytes and on_disk, the
-// voice catalog says weights_bytes and weights_present — so both spellings are
-// settled here into the one shape a card reads, taken from the words each
-// engine actually uses and never guessed from the model.
+// names these in its own words - a picture table says bytes and on_disk -
+// so the words each engine actually uses are settled here into the one shape
+// a card reads, never guessed from the model.
 function tableRow(model) {
   for (const row of modelRows) {
     if (String(row.id) !== String(model)) continue;
@@ -1134,11 +1131,8 @@ function runMs(run) {
 function runRate(run) {
   const ms = runMs(run);
   if (!(ms > 0)) return null;
-  // a voice run is counted as the real-time factor it made speech at: seconds of
-  // speech per second of work.
-  if (run.kind === 'speak') return perSecond(Number(run.audio_s || 0), ms);
-  // a run that samples pictures is counted in the steps it was asked for; a load,
-  // a download, a listen, a measurement counts something else, so no rate is read
+  // a run that samples pictures is counted in the steps it was asked for; a
+  // load, a download, a measurement counts something else, so no rate is read
   // from it under a unit that does not name that something.
   if (run.kind === 'generate') return perSecond(Number(run.max || run.done || 0), ms);
   return null;
@@ -1336,14 +1330,7 @@ function drawCard(entry, system, history) {
   }
 
   // What this model stands open with, and the pool the number fits in.
-  if (engine === 'voice') {
-    const voiceHeld = document.createElement('span');
-    voiceHeld.className = 'card-extra';
-    voiceHeld.textContent = 'engine memory';
-    voiceHeld.setAttribute('title',
-      'The voice engine lives inside this server; it does not report its own memory.');
-    head.appendChild(voiceHeld);
-  } else if (held > 0) {
+  if (held > 0) {
     const heldWords = document.createElement('span');
     heldWords.className = 'card-extra bar-held';
     const fill = document.createElement('i');
@@ -1396,9 +1383,7 @@ function drawCard(entry, system, history) {
       // not free the memory is named as the refusal it was, never as a hand
       // that succeeded. The answer carries its own status and its own words,
       // whatever else is asking beside it.
-      const put = engine === 'voice'
-        ? await ui.apiR('/voice/api/models/' + encodeURIComponent(model) + '/unload', 'POST', {})
-        : await ui.apiR('/api/unload', 'POST', { model: model });
+      const put = await ui.apiR('/api/unload', 'POST', { model: model });
       if (put.status >= 200 && put.status < 300) {
         ui.log(model + ' put down: its memory is free again', 'ok');
       } else {
@@ -1411,11 +1396,9 @@ function drawCard(entry, system, history) {
     const up = ui.fingerAct('open', async function () {
       // Same as the put-down hand: an opening the engine refused is said as a
       // refusal, with the engine's own words beside the model's name.
-      const stood = engine === 'voice'
-        ? await ui.apiR('/voice/api/models/' + encodeURIComponent(model) + '/load', 'POST', {})
-        : await ui.apiR('/api/models/' + encodeURIComponent(model) + '/load', 'POST', {});
+      const stood = await ui.apiR('/api/models/' + encodeURIComponent(model) + '/load', 'POST', {});
       if (stood.status >= 200 && stood.status < 300) {
-        ui.log('opening ' + model + (engine === 'voice' ? '' : ' - its progress stands on this bar'), 'ok');
+        ui.log('opening ' + model + ' - its progress stands on this bar', 'ok');
       } else {
         ui.log('refused to open ' + model + ': ' + (stood.error || ui.askWhy(stood)), 'err');
       }
@@ -1520,9 +1503,7 @@ function drawCard(entry, system, history) {
     group('memory');
     const heldTile = metric(tiles, 'held in memory', held ? ui.sizeText(held) : 'not reported',
       held ? 'on this machine, right now' : 'from this engine',
-      engine === 'voice'
-        ? ['The voice engine lives inside this server; it does not report its own memory.']
-        : null);
+      null);
     if (engine === 'image') {
       drawPool(heldTile, held, budget, 'held');
       if (Array.isArray(history.models) && Array.isArray(history.samples)) {
@@ -1588,13 +1569,6 @@ function drawCard(entry, system, history) {
         ['The last picture that finished, or the mean over the ones kept here.']);
       drawBars(tiles, steps, 'steps');
       drawBars(tiles, stepRates, 'steps/s');
-    } else if (engine === 'voice') {
-      const speechRate = (lastFinished && lastFinished.kind === 'speak')
-        ? runRate(lastFinished) : meanOf(speechRates);
-      metric(tiles, 'speech speed', rateText(speechRate), speechRate === null ? '' : '× real time',
-        ['How much sound a render made against the wall clock it took; above 1 is faster than real time.']);
-      drawBars(tiles, speech, 's of speech');
-      drawBars(tiles, speechRates, '× real time');
     }
     const useWords = modelUseWords(shown);
     metric(tiles, 'work totals',
@@ -1636,7 +1610,6 @@ function drawCard(entry, system, history) {
   main.appendChild(listing);
   const headers = {
     image: ['when', 'job', 'state', 'steps', 'taken', 'steps/s'],
-    voice: ['when', 'job', 'state', 'speech', 'speech/s'],
   }[engine] || ['when', 'job', 'state'];
   const headRow = document.createElement('div');
   headRow.className = 'table-row table-head';
@@ -1652,20 +1625,10 @@ function drawCard(entry, system, history) {
     const cells = [ui.clock(run.t), run.kind, run.state];
     if (engine === 'image') {
       cells.push(statedCount(run, 'max'), secondsText(runMs(run)), rateText(runRate(run), 'steps/s'));
-    } else if (engine === 'voice') {
-      cells.push(Number(run.audio_s || 0) > 0 ? speechText(run.audio_s) : 'not stated',
-        rateText(runRate(run), '× real time'));
-    }
     for (const cell of cells) {
       const node = document.createElement('span');
       node.textContent = cell;
       row.appendChild(node);
-    }
-    if (run.voice) {
-      const voice = document.createElement('span');
-      voice.className = 'card-extra';
-      voice.textContent = 'voice: ' + String(run.voice);
-      row.appendChild(voice);
     }
     if (run.error) {
       const said = document.createElement('span');
@@ -1779,7 +1742,6 @@ function drawModelCards(snapshot) {
   if (!pool.length && models.length) {
     const hidden = [];
     if (!engineShown.image) hidden.push('picture');
-    if (!engineShown.voice) hidden.push('spoken');
     const none = document.createElement('div');
     none.className = 'meta';
     none.textContent = hidden.length
@@ -1864,7 +1826,6 @@ function jobPanel(engine, model, table, run) {
     ['prompt', chosen.prompt],
     ['asked by', chosen.source],
     ['its form', chosen.quant],
-    ['voice', chosen.voice],
     ['port', Number(chosen.port || 0) > 0 ? chosen.port : ''],
     ['speech made', Number(chosen.audio_s || 0) > 0 ? speechText(chosen.audio_s) : ''],
     ['blocks', Number(chosen.blocks || 0) > 0 ? whole(chosen.blocks) : ''],
@@ -1877,7 +1838,7 @@ function jobPanel(engine, model, table, run) {
 
 // The header of the page, painted from one machine reading: the chips state what
 // the machine holds, and the bar names what runs. The bar reads the same job
-// records the panels do, so a picture's or a voice's work is visible here and not
+// records the panels do, so a picture's work is visible here and not
 // only on the page that started it.
 function paintMachineHeader(snapshot) {
   ui.monitorChrome(snapshot);
@@ -1887,8 +1848,8 @@ function paintMachineHeader(snapshot) {
 // What the pages of this machine have said as they worked. Every page writes
 // into one record (see UI.log) and this is the only page that draws it, because
 // this is where a person comes to read what the machine is doing. A line names
-// the page that wrote it, so a voice studio note is not read as a note about a
-// picture, and nothing is worded here that the writing page did not say.
+// the page that wrote it, so a note from one page is not read as a note about
+// another, and nothing is worded here that the writing page did not say.
 function drawLog() {
   if (!logPanel) return;
   const lines = ui.logLines(logShown);
@@ -2012,11 +1973,8 @@ function quantWords(files) {
   return named.join(', ');
 }
 
-// The model rows a card reads its sizes from. The picture table is small, so it
-// is read whole and kept for as long as the server says it is fresh. The voice
-// catalog is four hundred rows and is never read whole: a card here names one
-// model, and that model is asked for by its own name — one small page per card,
-// replayed from this browser's cache while the server still calls that page fresh.
+// The model rows a card reads its sizes from. The picture table is small, so
+// it is read whole and kept for as long as the server says it is fresh.
 async function readModelRows(snapshot) {
   const rows = [];
   // a table that did not answer is not a table that says nothing: keeping the
@@ -2033,27 +1991,13 @@ async function readModelRows(snapshot) {
     return read.answer;
   };
   const paths = ['/api/models'];
-  const wanted = [];
-  const asked = {};
-  for (const entry of (snapshot && Array.isArray(snapshot.models)) ? snapshot.models : []) {
-    if (entry.engine !== 'voice') continue;
-    const id = String(entry.model || '');
-    if (!id || asked[id]) continue;
-    asked[id] = true;
-    wanted.push('/voice/api/model-cards?q=' + encodeURIComponent(id) + '&limit=4');
-  }
   const answers = [];
-  for (const answer of await Promise.all(paths.concat(wanted).map(askOne))) answers.push(answer);
+  for (const answer of await Promise.all(paths.map(askOne))) answers.push(answer);
   for (let at = 0; at < paths.length; ++at) {
     const table = answers[at];
     if (!table) { complete = false; continue; }
     if (Array.isArray(table)) rows.push.apply(rows, table);
     else if (Array.isArray(table.models)) rows.push.apply(rows, table.models);
-  }
-  for (let at = paths.length; at < answers.length; ++at) {
-    const page = answers[at];
-    if (!page || !Array.isArray(page.rows)) { complete = false; continue; }
-    rows.push.apply(rows, page.rows);
   }
   if (!complete) return;
   modelRows = rows;

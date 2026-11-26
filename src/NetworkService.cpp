@@ -2,8 +2,8 @@
 // that change it. Windows answers through its own tools (iphlpapi calls,
 // netsh, the sharing COM object); Linux answers through the ones that belong
 // to it (sysfs, /proc, netplan, iw and nmcli, hostapd, iptables). The page in
-// front reads one document either way, and every refusal says why in the same
-// voice: this server never pretends a machine can do what it cannot.
+// front reads one document either way, and every refusal says why in plain
+// words: this server never pretends a machine can do what it cannot.
 //
 // The house rules this module keeps:
 //  - Reads are pure where they can be: structs and files first, shells only

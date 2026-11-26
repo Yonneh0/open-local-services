@@ -458,10 +458,6 @@ body {
   content: '🖌';
 }
 
-#nav a[href="voice.html"]::before {
-  content: '🎙';
-}
-
 #nav a[href="index.html"]::before {
   content: '📊';
 }
@@ -742,10 +738,6 @@ main {
 
 #model-toggle-image::before {
   content: '🖌';
-}
-
-#model-toggle-voice::before {
-  content: '🎙';
 }
 
 .model-toggle.on {
@@ -2053,30 +2045,6 @@ input[type="range"] {
 /* The doors a file may be brought through: a file released over any of them is
    taken by the page rather than by the browser, and the door lights while the
    file is over it. Each one takes a recording. */
-#voice-keep-zone,
-#clone-zone,
-#listen-zone {
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  padding: 6px;
-  cursor: copy;
-}
-
-#voice-keep-zone.offering,
-#clone-zone.offering,
-#listen-zone.offering {
-  border-color: var(--accent);
-  background: var(--bg3);
-}
-
-/* The new name typed on a voice card: the field keeps the page's own paper from
-   the rule the fields share, and only its measure is set here, so the card still
-   reads as one line. */
-.voice-rename-field {
-  width: 14rem;
-  padding: 1px 6px;
-}
-
 /* The browser's own file chooser: it is a field like the others, and it is
    wrapped in a form only so the page can hear what a person chose. */
 .picture-form {
@@ -2824,10 +2792,6 @@ main.monitor {
 
 .status-card.image {
   --engine-tint: var(--accent);
-}
-
-.status-card.voice {
-  --engine-tint: var(--accent2);
 }
 
 /* The engine's mark and the model's name, with the state of its engine beside
@@ -4091,201 +4055,4 @@ a:focus-visible {
   height: 14px;
   accent-color: var(--accent);
   padding: 0;
-}
-
-/* ---------- the voice studio: script, cast, say ---------- */
-
-/* The controls above the rows. They are the panel's own hands, so they wear the
-   small voice of a fact row rather than the big buttons of a run: one press each,
-   and the words on them name what they do to the lines below. */
-#script-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-#script-bar .finger {
-  border-radius: 6px;
-}
-
-/* The script: rows, and one rule between them. A row is the line it stands for -
-   who speaks it, what they say, how they say it - so nothing below a row belongs
-   to another row. */
-#script-rows {
-  display: flex;
-  flex-direction: column;
-}
-
-.script-row {
-  display: grid;
-  grid-template-columns: 178px minmax(0, 1fr) 168px auto;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 2px;
-  border-top: 1px solid var(--line);
-}
-
-.script-row:first-child {
-  border-top: none;
-}
-
-/* The line the engine refused, or a cast recording that has no words kept and so
-   cannot be cloned by a model that needs them. It sits under the row it speaks of,
-   in the grid's own left column rather than across the panel. */
-.script-note {
-  grid-column: 2;
-  font-size: 11px;
-  color: var(--warn);
-}
-
-/* The speaker of a line: a cast recording, one of the model's own packaged voices,
-   or no voice at all. It is drawn as a fact row so it reads as a state of the line
-   and takes the same hover as every other control on these pages. */
-.script-voice {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--fg-dim);
-  background: var(--bg3);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 2px 8px;
-}
-
-.script-voice select {
-  flex: 1 1 auto;
-  min-width: 0;
-  font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  cursor: pointer;
-}
-
-.script-voice select:focus {
-  outline: none;
-}
-
-.script-voice option {
-  background: var(--bg2);
-  color: var(--fg);
-}
-
-.script-say {
-  width: 100%;
-  min-height: calc(2 * 1.4em + 8px);
-  line-height: 1.4;
-  resize: vertical;
-}
-
-/* The shaping of a line, folded away until asked for: a line that needs no
-   direction should not carry the weight of five fields claiming it does. */
-.script-shape {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 2px 0 4px;
-}
-
-.script-shape[hidden] {
-  display: none;
-}
-
-.script-shape .opt-row {
-  gap: 5px;
-}
-
-.script-shape input,
-.script-shape select {
-  font-size: 11px;
-  min-height: 24px;
-  padding: 2px 6px;
-}
-
-.script-shape .shape-style {
-  flex: 1 1 260px;
-}
-
-.script-shape .shape-num {
-  width: 62px;
-}
-
-.script-shape .shape-pause {
-  width: 78px;
-}
-
-/* The hands on a line: add one below, take this one off. They are the smallest
-   thing in the row and never the first thing read. */
-.script-hands {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.script-hands .finger {
-  border-radius: 5px;
-  padding: 1px 7px;
-  opacity: .8;
-}
-
-.script-hands .finger:hover {
-  opacity: 1;
-}
-
-/* A row whose line cannot run wears the refusal's colour on its edge, so a script
-   that will not run reads as one thing before any press. */
-.script-row.script-blocked {
-  box-shadow: inset 2px 0 0 var(--warn);
-}
-
-#script-run {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-/* The single line of the say panel: model, voice or description, the words. */
-#voice-say-zone {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: 6px 8px;
-  align-items: start;
-}
-
-#say-field {
-  grid-column: 2;
-  min-height: calc(3 * 1.4em + 8px);
-  line-height: 1.4;
-  resize: vertical;
-}
-
-.say-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.say-line .finger.pick,
-.say-line select,
-.say-line input {
-  font-size: 12px;
-}
-
-.say-line .say-model {
-  width: 200px;
-}
-
-.say-line .say-voice {
-  flex: 1 1 220px;
-}
-
-.say-line .say-describe {
-  flex: 1 1 260px;
 }

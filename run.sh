@@ -2,7 +2,7 @@
 # open-local-services entry point for Linux.
 # One script does the whole onboarding: it discovers the tooling this box has
 # (cmake, the newest CUDA toolkit with an nvcc, this GPU's compute capability),
-# builds whatever is missing - vendor engines, voice models, open-local-services - and
+# builds whatever is missing - vendor engines, open-local-services - and
 # then starts the server in the foreground. Already-built steps are skipped.
 # A tree with no C++ sources (a runtime tree) only starts its server.
 # Set OLS_RUNTIME_DIR when this tree is only build input; the binary and its
@@ -83,11 +83,11 @@ if [ ! -f src/main.cpp ]; then
     kill $(pidof open-local-services)
   fi
   echo "Starting open-local-services. It names the address it answers at as it starts."
-  # two ggml copies share this process: the voice engine's, linked into the
-  # binary, and the one whose plugin libraries sit beside it. ggml stops a
-  # process that installs its crash handler twice - before it could listen - so
-  # no copy here installs one, and the server starts. a crash still prints its
-  # own words, in the same line the failing check names.
+  # two ggml copies share this process: the one linked into the binary, and the
+  # one inside the image library beside it. ggml stops a process that installs
+  # its crash handler twice - before it could listen - so no copy here installs
+  # one, and the server starts. a crash still prints its own words, in the same
+  # line the failing check names.
   export GGML_NO_BACKTRACE=1
   exec src/open-local-services
 fi
@@ -129,8 +129,7 @@ echo "CUDA compiler: $NVCC, compute capability: $CUDA_ARCH, parallel jobs: $JN"
 RUNTIME=${OLS_RUNTIME_DIR:-.}
 # the comparison below is against an absolute path, so settle this one first
 if [ -d "$RUNTIME" ]; then RUNTIME=$(cd "$RUNTIME" && pwd); fi
-mkdir -p vendor "$RUNTIME/weights" "$RUNTIME/data/voices" "$RUNTIME/data/tts/outputs" \
-  "$RUNTIME/data/tts/scripts" "$RUNTIME/data/voice-presets"
+mkdir -p vendor "$RUNTIME/weights" "$RUNTIME/data"
 
 # a current glibc declares rsqrtf for the host before nvcc gets its device
 # intrinsic, and CUDA 12 ships no header that undoes that; declaring the device
@@ -168,7 +167,6 @@ API_BUILD="build$SFX"
 # same test result on both machines, and that only holds while both build the
 # same engine source - so the pins are named here, once, and checked below.
 # a maintainer who moves a pin moves it in run.bat to match.
-PIN_VOICE=41bb3f0ffb6b46b7a3bb3c02fcea52900d88001b        # 0xShug0/audio.cpp (inside the server binary)
 PIN_IMAGE=b13a48219d5cdf408edcb93da6cd69b612ed03d3        # leejet/stable-diffusion.cpp
 PIN_IMAGE_GGML=dc998771e700d49bbdf9a39cede22bb5b3311767   # leejet/ggml (image engine)
 
@@ -211,7 +209,6 @@ check_shape() {
   fi
   return 0
 }
-PIN_VOICE=41bb3f0ffb6b46b7a3bb3c02fcea52900d88001b        # 0xShug0/audio.cpp (inside the server binary)
 PIN_IMAGE=b13a48219d5cdf408edcb93da6cd69b612ed03d3        # leejet/stable-diffusion.cpp
 PIN_IMAGE_GGML=dc998771e700d49bbdf9a39cede22bb5b3311767   # leejet/ggml (image engine)
 
@@ -221,10 +218,6 @@ if [ ! -f vendor/nlohmann/json.hpp ]; then
   mkdir -p vendor/nlohmann
   curl -sSL --fail -o vendor/nlohmann/json.hpp \
     https://raw.githubusercontent.com/nlohmann/json/develop/single_include/nlohmann/json.hpp || exit 1
-fi
-if [ ! -d vendor/audio.cpp ]; then
-  echo "Fetching the voice engine source"
-  git clone --depth 1 https://github.com/0xShug0/audio.cpp vendor/audio.cpp || exit 1
 fi
 if [ ! -d vendor/stable-diffusion.cpp ]; then
   echo "Fetching the image engine source"
@@ -274,21 +267,13 @@ pin() {
   fi
   return 1
 }
-for WHAT in "vendor/audio.cpp $PIN_VOICE 0xShug0/audio.cpp" \
-  "vendor/stable-diffusion.cpp $PIN_IMAGE leejet/stable-diffusion.cpp" \
+for WHAT in "vendor/stable-diffusion.cpp $PIN_IMAGE leejet/stable-diffusion.cpp" \
   "vendor/stable-diffusion.cpp/ggml $PIN_IMAGE_GGML leejet/ggml"; do
   set -- $WHAT
   if [ -d "$1" ]; then
     pin "$1" "$2" "$3" || { echo "Could not put $1 on commit $2 - it is not the source this code expects."; exit 1; }
   fi
 done
-
-# ---- the voice engine has no stage of its own ----
-# it is linked into open-local-services, so the src build below configures and builds it
-# in its own tree beside everything else there: one ggml for it, built with the
-# code that calls it, and nothing beside the server that could be a different
-# build of the same engine. its model files are placed by the pages, not
-# downloaded here - a family this machine has no files for is named as such.
 
 # ---- the one incremental path every entry point shares ----
 # build-rel.sh names these same values for its native target, in the same
@@ -405,23 +390,6 @@ else
   mv -f src/open-local-services.new src/open-local-services
 fi
 
-# The voice engine reads its phoneme tables from a directory beside the server,
-# and on Linux nothing else puts them there. The build makes them under _deps;
-# the run needs them next to the binary it is about to start - the step run.bat
-# does on Windows. Without it a speak job answers "Expected an espeak-ng-data
-# directory containing phontab", which is what a real speak job on UM780 said on
-# 2026-10-28 while the reading engine on the same box worked fine.
-ESPEAK_MADE="$API_BUILD/_deps/espeak-static/build/espeak-ng-data"
-if [ -f "$ESPEAK_MADE/phontab" ]; then
-  for WHERE in "$RUNTIME/src" src; do
-    [ -d "$WHERE" ] || continue
-    [ -f "$WHERE/espeak-ng-data/phontab" ] && continue
-    echo "Placing the phoneme tables where the voice engine looks for them: $WHERE"
-    mkdir -p "$WHERE/espeak-ng-data"
-    cp -a "$ESPEAK_MADE"/. "$WHERE/espeak-ng-data/"
-  done
-fi
-
 if [ "$MODE" = build ]; then
   echo ""
   echo "Built. Start the server with: run.sh"
@@ -445,7 +413,7 @@ echo "Starting open-local-services"
 echo "The server names the address it answers at on the lines below: the port it"
 echo "asks for. If that port is not free, this script reports the refusal; it never"
 echo "rolls the server over to another port."
-echo "It links to the home page, the image studio, and the voice studio. The server"
+echo "It links to the home page and the image studio. The server"
 echo "runs in this terminal; close it to stop."
 echo ""
 echo "The first thing the server does is stand at the level this machine's manager"
@@ -455,10 +423,10 @@ echo "by its own machine. The line it prints names which level it stands at. A"
 echo "machine that cannot reach root this way still runs every door; only the"
 echo "manager asks answer differently, and OLS_ELEVATE=off declines the ask."
 echo ""
-# two ggml copies share this process: the voice engine's, linked into the
-# binary, and the one whose plugin libraries sit beside it. ggml stops a
-# process that installs its crash handler twice - before it could listen - so
-# no copy here installs one, and the server starts. a crash still prints its
-# own words, in the same line the failing check names.
+# two ggml copies share this process: the one linked into the binary, and the
+# one inside the image library beside it. ggml stops a process that installs
+# its crash handler twice - before it could listen - so no copy here installs
+# one, and the server starts. a crash still prints its own words, in the same
+# line the failing check names.
 export GGML_NO_BACKTRACE=1
 exec src/open-local-services

@@ -31,7 +31,7 @@ can do itself; and **TLS is native**, with the OpenSSH transport vendored rather
 | auth | api key via `X-Api-Key` / `Bearer` / `?key=` / cookie `ols-key`; gate runs at top of `route()`; 3 misses → silence 30 s | :486-523, :805-835 |
 | freshness | per-path `Cache-Control: public, max-age=N` from `apiFreshSeconds()` (:581-617); measured live: `/api/monitor`, `/api/system` = 2 s | verified by curl this session |
 | JSON | nlohmann/json 3.12.0 vendored at `vendor/nlohmann/json.hpp` | `src/CMakeLists.txt:229-233` |
-| jobs | in-memory records, 200 kept, SSE events, cancel/reorder; durable state = per-artifact `.json` sidecars + atomic temp+rename writes (`Common.h:167-205`) | ImageService/VoiceService pattern |
+| jobs | in-memory records, 200 kept, SSE events, cancel/reorder; durable state = per-artifact `.json` sidecars + atomic temp+rename writes (`Common.h:167-205`) | ImageService pattern |
 | subprocess | popen precedents (`deploy::ask`, `net::runShell`); refuse-don't-escape quoting (`platform::quotableInShell`, `Platform.h:227-249`) | |
 | tabs | exactly 3, one array: `NAV` at `webui/common.js:1366-1370`; badges fed by `engineBadges` (:268-301) | |
 | caching client | `status-cache.js`: localStorage `ols-api-cache-v1`, server max-age as TTL, POST clears the family (:362-363), no etag for JSON; static files DO have etag+304 (`OpenLocalServices.cpp:1625-1664`) | |

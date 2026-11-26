@@ -148,8 +148,6 @@ namespace ols
       // What the engines' own kept completions say a job of theirs costs.
       long long imageMs = 0;
       int imageDone = 0;
-      long long voiceMs = 0;
-      int voiceDone = 0;
       for (const auto &record : jobs)
       {
         if (ols::jobState(record) != ols::kStateDone)
@@ -157,16 +155,8 @@ namespace ols
         const long long ms = ols::statedCount(record, "elapsed_ms");
         if (ms <= 0)
           continue;
-        if (ols::statedString(record, "engine") == "voice")
-        {
-          voiceMs += ms;
-          ++voiceDone;
-        }
-        else
-        {
-          imageMs += ms;
-          ++imageDone;
-        }
+        imageMs += ms;
+        ++imageDone;
       }
 
       // The picture engine's cost ledger, read only while a queue stands.
@@ -229,11 +219,8 @@ namespace ols
             average = modelMeanSeconds(kind == "load" ? "loads" : "generations", model);
           if (average <= 0)
           {
-            const bool voice = ols::statedString(record, "engine") == "voice";
-            const long long engineMs = voice ? voiceMs : imageMs;
-            const long long engineDone = voice ? voiceDone : imageDone;
-            if (engineDone > 0)
-              average = engineMs / engineDone / 1000;
+            if (imageDone > 0)
+              average = imageMs / imageDone / 1000;
           }
           if (average > 0)
             seconds = running && average > held ? average - held : (running ? 0 : average);
@@ -323,15 +310,11 @@ namespace ols
       const json loaded = system.value("loaded", json::object());
       const long long heldBytes = loaded.is_object() ? ols::statedCount(loaded, "resident_bytes") : 0;
       // How many models the engines hold open at this moment: the picture
-      // engine names its own, and a model loaded in the linked voice engine is
-      // open with no port to name. All of them are open models, and this page's
+      // engine names its own, and all of them are open models; this page's
       // own count is the same sum, so the line and the number describe one set.
       int openModels = 0;
       if (loaded.is_object() && loaded.contains("loaded") && loaded.at("loaded").is_array())
         openModels = static_cast<int>(loaded.at("loaded").size());
-      const json voiceState = system.value("voice", json::object());
-      if (voiceState.is_object() && voiceState.contains("open_models") && voiceState.at("open_models").is_array())
-        openModels += static_cast<int>(voiceState.at("open_models").size());
       // What each model holds of the machine at this moment, in the order its
       // name is stated beside the samples. A model that is not open now holds
       // nothing to say about itself and stays a gap, not a zero.
@@ -467,7 +450,6 @@ namespace ols
         run["max"] = record.at("max");
       for (const char *key : {"audio_s",
                               "blocks",
-                              "voice",
                               "port",
                               "error",
                               "url",
@@ -593,20 +575,6 @@ namespace ols
           }
         }
       }
-      const json voice = system.value("voice", json::object());
-      if (voice.is_object() && voice.contains("open_models") && voice.at("open_models").is_array())
-      {
-        for (const auto &id : voice.at("open_models"))
-        {
-          if (!id.is_string())
-            continue;
-          const std::string model = id.get<std::string>();
-          if (model.empty())
-            continue;
-          ModelRow &row = rowFor("voice", model);
-          row.open = true;
-        }
-      }
       return rows;
     }
 
@@ -664,18 +632,16 @@ namespace ols
     }
 
     std::string snapshot(const std::string &systemJson, const std::string &imageJobsJson,
-                         const std::string &voiceJobsJson,
                          const std::function<std::string()> &timings)
     {
       json system = json::parse(systemJson, nullptr, false);
       if (system.is_discarded())
         system = json::object();
 
-      // The engines keep their own jobs: a picture and a render are the same
-      // kind of work, so both ride in one list.
+      // The engine keeps its own jobs: they ride in one list, newest first,
+      // tagged with the engine the work belongs to.
       json jobs = json::array();
       tagJobs(jobs, parseList(imageJobsJson), "image");
-      tagJobs(jobs, parseList(voiceJobsJson), "voice");
       std::sort(jobs.begin(), jobs.end(), [](const json &a, const json &b)
                 { return a.value("started_at", 0LL) > b.value("started_at", 0LL); });
 
@@ -692,8 +658,7 @@ namespace ols
       json summary = {{"retained", static_cast<int>(jobs.size())},
                       {"at_most", static_cast<int>(ols::kKeptJobs)},
                       {"active", active},
-                      {"image", engineSummary(jobs, "image")},
-                      {"voice", engineSummary(jobs, "voice")}};
+                      {"image", engineSummary(jobs, "image")}};
 
       rememberSample(system, active);
 

@@ -8,8 +8,8 @@ carries the rules for working in this folder. Machines change faster than docs: 
 
 - one local server process (C++, a hand-written HTTP/1.1 server over the socket API in `src/Platform.h` - no
   cpp-httplib; the vendored httplib copies belong to the engines, not the server): one web UI, all API doors,
-  one port, with the image, video, voice, and listening engines running beside it. pages are plain JavaScript
-  in webui/ - no framework, no build step.
+  one port, with the image and video engines running beside it. pages are plain JavaScript in webui/ - no
+  framework, no build step.
 - build and start through the scripts as they stand: run.bat (Windows), run.sh (Linux). do not invent
   new build or deployment machinery.
 - a webui/ folder beside a running server is served from disk: page and style changes are live on

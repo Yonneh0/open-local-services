@@ -4,11 +4,10 @@ project(open-local-services LANGUAGES CXX)
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(SD_VENDOR ${ROOT}/vendor/stable-diffusion.cpp)
 
-# The trees the image engine was built in; the voice engine is audio.cpp - its
-# C API is linked into this binary, so there is no voice engine process and no
-# library to pick.
-# The voice engine's ggml is the machine's device probe: the same static
-# library that runs the voice models enumerates the GPU the pages show.
+# The trees the image engine was built in.
+# The image engine's own ggml is linked into this binary beside the image
+# library: it is the machine's device probe, the same library that runs the
+# pictures enumerating the GPU the pages show.
 # Unless an entry point names the image tree as OLS_SD_BUILD, it is the build
 # subfolder inside the engine source itself - the same place on either
 # platform, never a short alias in an unrelated one.
@@ -20,33 +19,26 @@ foreach(ols_named OLS_SD_BUILD)
   endif()
 endforeach()
 
-# The voice engine, built in the source tree beside everything else here: every
-# model the engine knows is compiled in (full), so the pages carry every family
-# and package its own specs name - a family this machine has no files for is
-# listed as such and offers the hand that opens it once the files come. eSpeak
-# is linked statically (the validated Windows path for Kokoro's phonemizer, no
-# dll needed), and the device backend follows the platform like the other
-# engines.
-set(AUDIOCPP_MODEL_SET "full" CACHE STRING "voice engine: every model the engine knows")
-set(AUDIOCPP_STATIC_ESPEAK ON CACHE BOOL "link eSpeak-ng's code in; keep its data package")
 # The device backend follows the platform - the CUDA device on Linux, the Vulkan
 # device on Windows - unless the build names OLS_CUDA, which asks for the CUDA
 # device on Windows too: a machine whose card is CUDA-first is then built whole
 # on it, the engines with it. The scripts that do this name the build root for
-# the backend, so the two builds of one tree never share a cache.
+# the backend, so the two builds of one tree never share a cache. The choice
+# is kept in locals: only the stated shape below reads it.
+set(ols_cuda OFF)
+set(ols_vulkan OFF)
 if(NOT OLS_NO_DEVICE)
   if(OLS_CUDA)
-    set(ENGINE_ENABLE_CUDA ON CACHE BOOL "voice engine runs on the CUDA device")
+    set(ols_cuda ON)
     message(STATUS "device backend for this build: CUDA, named by -DOLS_CUDA")
   elseif(MSVC)
-    set(ENGINE_ENABLE_VULKAN ON CACHE BOOL "voice engine runs on the Vulkan device")
+    set(ols_vulkan ON)
   else()
-    set(ENGINE_ENABLE_CUDA ON CACHE BOOL "voice engine runs on the CUDA device")
+    set(ols_cuda ON)
   endif()
 else()
-  message(STATUS "no device backend in this target: the voice engine carries the cpu backend only")
+  message(STATUS "no device backend in this target: the image engine carries the cpu backend only")
 endif()
-add_subdirectory("${ROOT}/vendor/audio.cpp" "${CMAKE_BINARY_DIR}/audio-engine")
 
 # The TLS library the wire speaks through, carried inside this binary like the
 # engines above it. It is a static copy - no dll is shipped - and it keeps its
@@ -216,7 +208,6 @@ add_executable(open-local-services
   ImageService.cpp
   VerifiedRoom.cpp
   Deployment.cpp
-  VoiceService.cpp
   NetworkService.cpp
   WebAssets.cpp
   HardwareInfo.cpp
@@ -240,7 +231,7 @@ if(OLS_NO_DEVICE)
     set(ols_cpu_isa "x86_64")
   endif()
   target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="cpu" OLS_CPU_ISA="${ols_cpu_isa}")
-elseif(ENGINE_ENABLE_CUDA)
+elseif(ols_cuda)
   set(ols_cuda_arch "")
   if(CMAKE_CUDA_ARCHITECTURES)
     list(GET CMAKE_CUDA_ARCHITECTURES 0 ols_cuda_arch)
@@ -251,55 +242,34 @@ else()
   target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="vulkan")
 endif()
 
-# A small console entry that starts the linked voice engine and speaks one
-# line, used by the release scripts to prove the engine really runs inside
-# the shipped binary before anything gets deployed.
-add_executable(voice-probe
-  voice-probe.cpp
-  VoiceService.cpp)
-set_property(TARGET voice-probe PROPERTY CXX_STANDARD 17)
-
-# The C ABI facade of the voice engine, compiled here from the vendored tree
-# and linked against the engine's own runtime: this is the whole of the seam,
-# the module above calls the C API directly.
-add_library(ols-voice-capi OBJECT
-  "${ROOT}/vendor/audio.cpp/src/capi/audiocpp.cpp")
-set_property(TARGET ols-voice-capi PROPERTY CXX_STANDARD 17)
-target_link_libraries(ols-voice-capi PRIVATE engine_runtime)
-
 # The server's own sources are compiled at the strictest warning level this
 # compiler has, so the compiler, and not a reader, states what in them is never
 # read or can never be reached. The vendored engines keep their own build and
-# their own flags: nothing here asks a warning of their code. The voice probe is
-# named with the server because it is one of our sources, not an engine's.
+# their own flags: nothing here asks a warning of their code.
 if(MSVC)
   # the level the build system puts in by default is not the one we want, and
   # leaving both on a line makes the compiler report an override for every file;
   # the level is taken out here and named once below.
   string(REGEX REPLACE "/W[0-9]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   target_compile_options(open-local-services PRIVATE /utf-8 /MP /W4)
-  target_compile_options(voice-probe PRIVATE /utf-8 /MP /W4)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
 else()
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
   target_compile_options(open-local-services PRIVATE -O2 -Wall)
-  target_compile_options(voice-probe PRIVATE -O2 -Wall)
 endif()
 
 target_include_directories(open-local-services PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${ROOT}/vendor"
   "${SD_VENDOR}/include"
+  "${SD_VENDOR}/ggml/include"
   "${SD_VENDOR}/thirdparty")
-
-target_include_directories(voice-probe PRIVATE
-  "${ROOT}/vendor")
 
 # The version a build names (-DOLS_VERSION: dev in the development scripts, the
 # commit in the release builders) is turned into that stated version above,
 # where the server's files are gathered; nothing here reads it again.
 
-function(pick_library out base name)
+function(pick_library_if_present out base name)
   set(found "")
   # The find is anchored where the entry points stand - the project root - since
   # that is where they name their build trees from. A relative path handed to the
@@ -329,52 +299,68 @@ function(pick_library out base name)
       endforeach()
     endforeach()
   endif()
-  if(NOT found)
+  set(${out} "${found}" PARENT_SCOPE)
+endfunction()
+
+function(pick_library out base name)
+  # a library the link needs is named where it answers with it: a missing one
+  # stops the build, plainly.
+  pick_library_if_present(_plFound "${base}" "${name}")
+  if(NOT _plFound)
     message(FATAL_ERROR "missing library ${name} under ${base}")
   endif()
-  set(${out} "${found}" PARENT_SCOPE)
+  set(${out} "${_plFound}" PARENT_SCOPE)
 endfunction()
 
 pick_library(SD_LIB "${SD_BUILD}" "stable-diffusion")
 
-# The voice engine links as real targets from the tree added above: its
-# runtime pulls in its ggml, and its ggml pulled in whatever device library
-# that build recorded - the same chain the standalone app linked, now ending
-# inside this binary.
-if(NOT MSVC)
-  # On Windows each engine keeps its own library and the two ggmls cannot see
-  # each other. Here one binary holds the voice engine's ggml and one shared
-  # library carries the image engine's, so the order of the link decides which
-  # copy answers the server's own ggml calls. measured on the linux build with
-  # the image library first: a pocket tts job reached ggml_backend_graph_compute
-  # inside the image library, whose ggml_nrows then read a graph the other
-  # copy had built, and the server stopped on a segmentation fault. So the
-  # voice engine's own archives are named before the image library here - as
-  # link options, which reach the linker before any library does - and their
-  # symbols are kept out of the dynamic table below, so each side answers
-  # itself and neither is handed a tensor it was not built for.
-  # The voice engine's ggml is named here, between its own objects and the
-  # image library: the linker reads a list left to right, so an archive has to
-  # sit after the objects that call it and before any shared library that
-  # exports the same names. Named before every library instead, the archives
-  # answer nothing - nothing was undefined at that point yet - and the voice
-  # engine's calls still fell through to the image library's copy.
-  unset(olsGgmlTargets)
-  foreach(olsGgmlTarget ggml ggml-base ggml-cpu ggml-cuda)
-    if(TARGET ${olsGgmlTarget})
-      list(APPEND olsGgmlTargets ${olsGgmlTarget})
+# The image engine's own ggml is linked in whole, before the image library: the
+# registry names the devices the pages show, and the base and the device
+# libraries its build recorded carry the calls it makes - the probe answers
+# from inside this binary, never from the shared library's copy. The linker
+# reads a list left to right, so the archives sit after the objects that
+# call them and ahead of any library that exports the same names.
+pick_library(GGML_LIB "${SD_BUILD}/ggml/src" "ggml")
+unset(olsGgmlParts)
+unset(olsGgmlCuda)
+foreach(olsGgmlPart ggml-base ggml-cpu ggml-cuda)
+  # a component only where the build recorded one: a cpu shape carries no
+  # cuda library, and asking for one that is not there is not a build error.
+  # where the build kept a component in a folder of its own, its library is
+  # read from there.
+  pick_library_if_present(olsGgmlPartLib "${SD_BUILD}/ggml/src" "${olsGgmlPart}")
+  if(NOT olsGgmlPartLib)
+    pick_library_if_present(olsGgmlPartLib "${SD_BUILD}/ggml/src/${olsGgmlPart}" "${olsGgmlPart}")
+  endif()
+  if(olsGgmlPartLib)
+    list(APPEND olsGgmlParts "${olsGgmlPartLib}")
+    if(olsGgmlPart STREQUAL "ggml-cuda")
+      set(olsGgmlCuda ON)
     endif()
-  endforeach()
-  target_link_libraries(open-local-services PRIVATE
-    ols-voice-capi
-    engine_runtime
-    ${olsGgmlTargets}
-    "${SD_LIB}")
-else()
-  target_link_libraries(open-local-services PRIVATE
-    "${SD_LIB}"
-    ols-voice-capi
-    engine_runtime)
+  endif()
+endforeach()
+target_link_libraries(open-local-services PRIVATE
+  "${GGML_LIB}"
+  ${olsGgmlParts}
+  "${SD_LIB}")
+
+if(olsGgmlCuda)
+  # the device library the build recorded asks of the CUDA runtime and cuBLAS:
+  # the toolkit's import libraries are named where the toolkit stands, whole -
+  # on Windows cuBLASLt keeps its own import library, unlike the linux side's
+  # one shared runtime.
+  if(CMAKE_CUDA_COMPILER)
+    get_filename_component(cuda_bin "${CMAKE_CUDA_COMPILER}" PATH)
+    get_filename_component(cuda_root "${cuda_bin}" PATH)
+    unset(olsCudaRuntimeLibs)
+    foreach(olsCudaRuntime cudart cublas cublasLt cuda)
+      pick_library_if_present(olsCudaRuntimeLib "${cuda_root}/lib/x64" "${olsCudaRuntime}")
+      if(olsCudaRuntimeLib)
+        list(APPEND olsCudaRuntimeLibs "${olsCudaRuntimeLib}")
+      endif()
+    endforeach()
+    target_link_libraries(open-local-services PRIVATE ${olsCudaRuntimeLibs})
+  endif()
 endif()
 
 # The TLS library joins the link as one name: the mbedtls target carries its
@@ -399,35 +385,9 @@ if(MSVC)
   endif()
 endif()
 
-target_link_libraries(voice-probe PRIVATE
-  ols-voice-capi
-  engine_runtime)
-
 if(NOT MSVC)
   find_package(Threads REQUIRED)
   target_link_libraries(open-local-services PRIVATE pthread)
-  # The voice engine's ggml is linked in statically. Its symbols have to stay
-  # out of the dynamic table, or the stable-diffusion library would bind its
-  # own ggml calls to this copy instead of the one already inside it.
-  # The names are kept local and cleared first: a plain GGML_STATIC is also a
-  # cached option's name, and a cache entry left there (GGML_STATIC:BOOL=OFF)
-  # would be joined in front of the archive list and reach the linker as
-  # "--exclude-libs=OFF:libggml.a…", which excludes nothing.
-  unset(olsGgmlHidden)
-  if(NOT OLS_NO_DEVICE)
-    list(APPEND olsGgmlHidden ggml-cuda)
-  endif()
-  unset(olsGgmlArchives)
-  foreach(ggml_archive ggml ggml-base ggml-cpu ${olsGgmlHidden})
-    list(APPEND olsGgmlArchives "lib${ggml_archive}.a")
-  endforeach()
-  string(JOIN ":" olsGgmlList ${olsGgmlArchives})
-  # the same archives, named where the linker reads them before any library: a
-  # link option is put on the command line ahead of the libraries a target names
-  # and ahead of the objects that need them, so the order that works is the one
-  # this target's own libraries are given in - see the block above, which names
-  # the ggml targets between the voice engine and the image library.
-  target_link_options(open-local-services PRIVATE "-Wl,--exclude-libs=${olsGgmlList}")
   if(CMAKE_CUDA_COMPILER)
     get_filename_component(cuda_bin "${CMAKE_CUDA_COMPILER}" PATH)
     get_filename_component(cuda_root "${cuda_bin}" PATH)

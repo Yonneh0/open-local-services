@@ -121,7 +121,6 @@ rm -f Release/SHA256SUMS-linux.txt
 
 # the exact vendor commits this code is written against - the same names run.sh
 # carries, so an artifact is the source the running server runs.
-PIN_VOICE=41bb3f0ffb6b46b7a3bb3c02fcea52900d88001b
 PIN_IMAGE=b13a48219d5cdf408edcb93da6cd69b612ed03d3
 PIN_IMAGE_GGML=dc998771e700d49bbdf9a39cede22bb5b3311767
 
@@ -192,7 +191,7 @@ if ! command -v cmake >/dev/null 2>&1; then
   echo "cmake was not found on this machine. Install it, then run this again."
   exit 1
 fi
-for SUB in vendor/audio.cpp vendor/stable-diffusion.cpp; do
+for SUB in vendor/stable-diffusion.cpp; do
   if [ ! -f "$SUB/CMakeLists.txt" ]; then
     echo "This tree has no engine sources. run.sh fetches and pins them first."
     exit 1
@@ -354,9 +353,7 @@ build_one() {
   # generation - and a release configure asks the same questions every time, so
   # what did not change is not recompiled. a build that rebuilt unchanged code
   # was a defect, and a no-change run of the development path reads 25 seconds
-  # against 482 from a tree thrown away. the source trees are untouched, and the
-  # voice engine has no tree of its own: it is built inside the src build,
-  # beside everything else there.
+  # against 482 from a tree thrown away. the source trees are untouched.
 
   # the cpu backend of every engine is built for the baseline of its
   # architecture and given the run-time feature detection that goes with it:
@@ -380,11 +377,6 @@ build_one() {
   CUDA_FLAG=OFF
   [ "$CUDA" = on ] && CUDA_FLAG=ON
 
-  # the voice engine has no stage of its own: the src build below configures and
-  # builds it inside its own tree, with the release flags handed to that same
-  # configure - one ggml for the voice engine, built beside the code that links
-  # it, and no separate artifact that could disagree with the binary.
-
   # the image engine keeps its own ggml, so it is built as a library.
   # a tree that stands here was configured for one backend and one card
   # generation: this shape is asked of it before cmake is, so a target that
@@ -405,10 +397,10 @@ build_one() {
   # stand in the roots named for its architecture, so it names them here. a
   # target whose engines have no device backend says that too, and the src
   # carries the cpu backend alone.
-  # the src build carries the voice engine inside it, so it takes the same
-  # release flags the other engines do: the cpu backend of that ggml is built
-  # for the baseline of its architecture with the run-time feature detection
-  # that goes with it, and not for the machine doing the building.
+  # the src build carries the image engine's ggml inside it, so it takes the
+  # same release flags the other engines do: the cpu backend of that ggml is
+  # built for the baseline of its architecture with the run-time feature
+  # detection that goes with it, and not for the machine doing the building.
   API_OPTS="-DOLS_VERSION=$CODE_VERSION"
   if [ "$KIND" = cross ]; then
     API_OPTS="$API_OPTS -DOLS_NO_DEVICE=1"
@@ -424,10 +416,10 @@ build_one() {
     check_shape "$API_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH" || return 1
     CACHE_VERSION=$(sed -n 's/^OLS_VERSION[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
     CACHE_SD=$(sed -n 's/^OLS_SD_BUILD[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-    # the instruction sets the binary carries are part of what it is: the voice
-    # engine's ggml is inside this one executable, and a tree the development
-    # path left native must be restated for the release rather than released
-    # under a name it does not hold.
+    # the instruction sets the binary carries are part of what it is: the
+    # image engine's ggml is inside this one executable, and a tree the
+    # development path left native must be restated for the release rather
+    # than released under a name it does not hold.
     CACHE_NATIVE=$(sed -n 's/^GGML_NATIVE:[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
     if [ "$CACHE_VERSION" = "$CODE_VERSION" ] && [ "$CACHE_SD" = "$SD_BUILD" ] &&
        [ "$CACHE_NATIVE" = "OFF" ]; then
@@ -447,11 +439,6 @@ build_one() {
   for SO in "$SD_BUILD"/*.so "$SD_BUILD"/bin/*.so; do
     [ -f "$SO" ] && cp -f "$SO" "$OUT/"
   done
-  # the voice engine's phonemizer reads its data beside the binary - the same
-  # data the tree carries. the windows packager has always copied it; a linux
-  # artifact that arrived without it arrived mute.
-  rm -rf "$OUT/espeak-ng-data"
-  cp -r src/espeak-ng-data "$OUT/espeak-ng-data"
   # the pages travel with the binary: a webui folder beside the server is
   # served from disk, so the release folder holds the live structure the
   # development folder holds, and the copy embedded in the binary answers
@@ -595,8 +582,6 @@ done
   echo ""
   echo "the sources every artifact here was built from, as their .pin files"
   echo "record them in this tree:"
-  echo "  voice engine: vendor/audio.cpp at $PIN_VOICE, built inside the server binary"
-  echo "    (its ggml stands in that same tree, so it carries no .pin of its own)"
   echo "  image engine: vendor/stable-diffusion.cpp at $PIN_IMAGE"
   echo "  image ggml: vendor/stable-diffusion.cpp/ggml at $PIN_IMAGE_GGML"
   echo ""
@@ -604,7 +589,7 @@ done
   echo "the commit its binary carries - open-local-services-$VERSION7-linux-<target>.tar.gz -"
   echo "and the sha256 of every archive stands in SHA256SUMS-linux.txt. inside each:"
   echo "the binary, the image engine beside it, the cuda runtime it really"
-  echo "imports, the phonemizer data, and the webui folder it serves from disk."
+  echo "imports, and the webui folder it serves from disk."
   echo "open such a folder where it stands and run it; nothing is compiled and"
   echo "nothing is fetched on the machine that receives it."
   echo ""

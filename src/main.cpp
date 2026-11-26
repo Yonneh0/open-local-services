@@ -5,7 +5,6 @@
 #include "OpenLocalServices.h"
 #include "Platform.h"
 #include "ImageService.h"
-#include "VoiceService.h"
 #include "Deployment.h"
 #include "NetworkService.h"
 #include "ProjectService.h"
@@ -456,13 +455,6 @@ int main(int argc, char **argv)
       new ols::imagegen::ImageService(weightsDir, dataDir + "/outputs", threads, hfToken,
                                       civitaiKey, keptMax);
 
-  // The voice engine has no process and no port: it is linked into this binary,
-  // and its models answer through handles. It is given the weights room, the
-  // voice room on disk, and the token, so a package a card asks for can have its
-  // own files fetched into place.
-  ols::voice::VoiceService *voices =
-      new ols::voice::VoiceService(weightsDir + "/voice", dataDir + "/voice", threads, hfToken);
-
   // The project studio's ledger: the registry of projects under the data folder
   // and the facts each one states. It owns no engine and opens no port; the
   // doors answer from it, and GitCore joins its folders in a later phase.
@@ -472,7 +464,6 @@ int main(int argc, char **argv)
   api->setBindHost(host);
   api->setStaticDir("webui");
   api->setImage(images);
-  api->setVoice(voices);
   api->setProject(projects);
 
   api->setApiKey(apiKey);
@@ -481,10 +472,10 @@ int main(int argc, char **argv)
   // tls room: auto makes them on first start, on refuses to start without
   // them, and the clear face never looks at the folder at all.
   api->setTls(tlsWord.empty() ? "off" : tlsWord, dataDir + "/tls");
-  // the ggml the voice models run on is asked for the machine's devices before
-  // anything else does; it is linked in, so there is nothing to load here - the
-  // ask only takes the one-time trouble of finding the card out of the first
-  // page read.
+  // the image engine's ggml, linked into this binary, is asked for the
+  // machine's devices before anything else does; there is nothing to load
+  // here - the ask only takes the one-time trouble of finding the card out
+  // of the first page read.
   api->preloadBackends();
   // The network sampler starts before the doors: by the time the first page is
   // read, the bandwidth history behind it already has a few seconds of real

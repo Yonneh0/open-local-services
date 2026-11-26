@@ -43,11 +43,10 @@ namespace ols
 
 } // namespace ols
 
-// Base64 decoding for two paths: the voice module reads audio a page sends as
-// base64, and the image studio reads back a picture the browser kept (a dragged
-// file or a pasted screenshot), which has no path on this machine and arrives
-// as bytes only. Characters outside the alphabet are skipped, so input broken
-// over lines still decodes.
+// Base64 decoding for the image studio: it reads back a picture the browser
+// kept (a dragged file or a pasted screenshot), which has no path on this
+// machine and arrives as bytes only. Characters outside the alphabet are
+// skipped, so input broken over lines still decodes.
 
 #include <string>
 
@@ -294,9 +293,9 @@ namespace ols
 
   // The machine's one working device is one card, whichever engine works with
   // it. Its graph builder is one-thread work, and every engine in this binary
-  // shares the one backend behind it: a voice graph built while a picture is
-  // drawing walks the same device state from two threads at once, and the file
-  // the crash leaves behind names it an access violation in the allocator.
+  // shares the one backend behind it: two graphs built at once walk the same
+  // device state from two threads at once, and the file the crash leaves
+  // behind names it an access violation in the allocator.
   // Every hand that stands weights on the card, draws with them, or takes
   // memory back off it waits here - whatever module the hand belongs to.
   inline std::mutex &deviceCard()

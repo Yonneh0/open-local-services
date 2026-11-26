@@ -12,14 +12,13 @@ namespace ols
     {
 
         // Composes what the engines report into one monitor document: every
-        // image and voice job, in one list newest first, tagged with the engine
-        // the work belongs to, plus the counts the home page shows.
+        // image job, in one list newest first, tagged with the engine the work
+        // belongs to, plus the counts the home page shows.
         // The engines own their jobs; this only reads them.
         // The timings argument is the way to the picture engine's cost ledger,
         // not the ledger itself: the queue estimate asks for it only while jobs
         // actually stand, so an idle machine never reads the file.
         std::string snapshot(const std::string &systemJson, const std::string &imageJobsJson,
-                             const std::string &voiceJobsJson,
                              const std::function<std::string()> &timings);
 
     } // namespace monitor

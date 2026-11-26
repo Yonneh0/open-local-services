@@ -7,9 +7,10 @@
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
-// stb_image's code is not carried here: the voice engine's own part of this
-// executable already implements it, and one definition of it serves both. Only
-// the header's declarations are needed to read pictures here.
+#define STB_IMAGE_IMPLEMENTATION
+// stb_image's reader is carried here, beside the writer: the image engine
+// ships as an import library, so its own copy of the reader is not in sight
+// of this link, and the server's binary holds its own.
 #include <stb_image.h>
 
 #include <algorithm>
@@ -486,9 +487,9 @@ namespace ols
     // card when six runs sampled at once, each reading the others' leftovers
     // as free memory. A run that asks the card while another holds it waits
     // here, job standing, in the order it came. The gate is the machine's own
-    // (see the card in Common.h): the voice engine builds its graphs on the
-    // same device, and a speaking run and a drawing run were measured killing
-    // the process between them - the device does not know which module asked.
+    // (see the card in Common.h): every engine in this binary builds its
+    // graphs on the same device, and the device does not know which module
+    // asked.
     static std::mutex &gCardGate = ols::deviceCard();
     // Resident models are charged with the bytes of weights they hold and stamped
     // with the tick of their last use, so a load can keep room by closing the

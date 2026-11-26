@@ -6,7 +6,7 @@ makes, and every door a page or a program walks through to ask for any of it.
 This file states the image module whole — its tables, its jobs, its files on disk, and its
 doors. The law shared by every module (transport, credential, rate gate, job law, cache
 law, the file doors, the pages) lives in **spec.md** and is not restated here; where this
-file needs it, it points there. The voice side is **spec_voice_studio.md**; the project
+file needs it, it points there. The project
 side is **spec_project_studio.md**. Where code and this file disagree, one of them is
 wrong.
 
@@ -296,8 +296,9 @@ place the engine is asked for a context, and the law it keeps:
 - **The engine's own last complaint** is kept from its log callback; a failed run speaks
   it (§ 8).
 
-Every open, close, and draw stands on `ols::deviceCard()` — the one global mutex the
-voice engine shares (spec.md §12): the device does not know which module asked.
+Every open, close, and draw stands on `ols::deviceCard()` — the one global mutex
+every engine in this binary shares (spec.md §12): the device does not know
+which module asked.
 
 ---
 

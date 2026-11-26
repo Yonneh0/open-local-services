@@ -1,6 +1,6 @@
 // Open-local-services: the HTTP server and route table. Foundational code —
 // service-specific behavior lives in the service modules (ols::imagegen for
-// pictures, ols::voice for speech).
+// pictures, ols::project for the project rooms).
 #ifndef OLS_OPEN_LOCAL_SERVICES_H
 #define OLS_OPEN_LOCAL_SERVICES_H
 
@@ -52,16 +52,11 @@ namespace ols
   };
 
   // The ols root namespace; each service owns its own sub-namespace: imagegen
-  // (image studio) and voice (voice studio, audio.cpp linked in through its
-  // C API).
+  // (image studio) and project (project studio).
   namespace imagegen
   {
     class ImageService;
   } // namespace imagegen
-  namespace voice
-  {
-    class VoiceService;
-  } // namespace voice
   namespace project
   {
     class ProjectService;
@@ -138,7 +133,6 @@ namespace ols
     void setStaticDir(const std::string &dir) { m_staticDir = dir; }
     std::string staticDir() const { return m_staticDir; }
     void setImage(imagegen::ImageService *image);
-    void setVoice(voice::VoiceService *voices);
     void setProject(project::ProjectService *projects);
 
     // Fleet awareness: stand the peer table up beside these doors. The sweep of
@@ -152,11 +146,12 @@ namespace ols
     // copies carried inside this binary, as json text a page can state.
     std::string servedPagesJson() const;
 
-    // Ask the ggml linked into this binary for the machine's devices, now rather
-    // than on the first page read, and on Windows name the live Vulkan driver
-    // manifest so the device report and the engines agree on the gpu. No plugin
-    // library is loaded: the backend this build was asked for is compiled in, and
-    // loading a second copy of it registers the same card twice.
+    // Ask the image engine's ggml, linked into this binary, for the machine's
+    // devices, now rather than on the first page read, and on Windows name the
+    // live Vulkan driver manifest so the device report and the engines agree on
+    // the gpu. No plugin library is loaded: the backend this build was asked
+    // for is compiled in, and loading a second copy of it registers the same
+    // card twice.
     void preloadBackends();
     // The key is written through the config door while every connection thread
     // reads it, so it is never edited in place: a whole immutable copy is
@@ -270,7 +265,7 @@ namespace ols
     // serving those copies; a folder that already holds pages is left as it is
     HttpResponse expandStaticDir();
     HttpResponse serveFile(const std::string &kind, const std::string &name,
-                           const std::string &origin, const HttpRequest &req) const;
+                           const HttpRequest &req) const;
     // The key as it stands at this moment: the copy is a snapshot no writer can
     // move under a reader's feet.
     std::shared_ptr<const std::string> apiKey() const
@@ -306,7 +301,6 @@ namespace ols
     std::mutex m_connMutex;
     std::vector<std::shared_ptr<ConnectionThread>> m_connectionThreads;
     imagegen::ImageService *m_image = nullptr;
-    voice::VoiceService *m_voice = nullptr;
     project::ProjectService *m_projects = nullptr;
     peer::PeerService m_peers;
     mutable std::mutex m_apiKeyMutex;

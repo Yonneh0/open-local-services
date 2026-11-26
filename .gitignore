@@ -65,15 +65,6 @@ Release/*/
 Release/*cuda*.zip
 Release/*cuda*.tar.gz
 
-# the phonemizer package the statically linked voice engine reads: built with
-# the voice engine and placed beside the binary by run.bat, so it is generated
-# data like the other built trees, not part of the source.
-src/espeak-ng-data/
-
-# the same generated phonemizer data beside a release artifact: build-rel.bat
-# copies it next to the binary it builds, and it is built data, not source.
-Release/*/espeak-ng-data/
-
 # the owner's reference manuals: 110 MB of PDFs that reach a machine by copy
 # over the link like the other payload trees, never by clone. what the
 # maintainer tab reads is held under data/maint once a manual is brought in,

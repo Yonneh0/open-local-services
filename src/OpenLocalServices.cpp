@@ -16,7 +16,6 @@
 // that answer with these functions carry the ground in their own objects, and
 // one foldable copy is all a link needs.
 #include "gitcore/wire.cpp"
-#include "VoiceService.h"
 #include "WebAssets.h"
 #include "Common.h"
 
@@ -648,7 +647,7 @@ namespace ols
     // That costs the machine nothing it was not already paying: each service
     // builds its answer once and keeps it until a job marks it stale, so a page
     // reading every couple of seconds is handed an answer already built.
-    // What changes only when a person changes it - a setting, a kept voice's
+    // What changes only when a person changes it - a setting, a kept project's
     // name, the manuals - may still be held.
     int apiFreshSeconds(const std::string &path)
     {
@@ -670,14 +669,6 @@ namespace ols
           {"/api/gallery", 2},
           {"/api/refs", 2},
           {"/api/prefs", 20},
-          {"/voice/api/status", 2},
-          {"/voice/api/health", 2},
-          {"/voice/api/jobs", 2},
-          {"/voice/api/models", 2},
-          {"/voice/api/model-cards", 2},
-          {"/voice/api/model-stats", 2},
-          {"/voice/api/voices", 2},
-          {"/voice/api/library", 2},
           // The studio's dropdown read and its change stamps are the two readings
           // a page asks for most often, and both are documents the module holds
           // ready: two seconds, like the monitor and the queue. The facts of one
@@ -893,8 +884,6 @@ namespace ols
   }
 
   void OpenLocalServices::setImage(imagegen::ImageService *image) { m_image = image; }
-
-  void OpenLocalServices::setVoice(voice::VoiceService *voices) { m_voice = voices; }
 
   void OpenLocalServices::setProject(project::ProjectService *projects) { m_projects = projects; }
 
@@ -2552,15 +2541,12 @@ namespace ols
       // directive falls back to style-src, and the browser that reads this
       // header here is such a reader - asked without it, it refuses the styles
       // the pages stand their parts at, and says so in its console. data:
-      // images are allowed because the webui draws kept files as data URLs. The
-      // voice page hands the player audio it wrote itself - a script joined from
-      // lines this browser spoke - and such bytes have no address of the
-      // machine's to be played from, so media may come from an object of this
-      // page's own making. No page puts a frame of another origin on it now, so
-      // no page asks for frame-src.
+      // images are allowed because the webui draws kept files as data URLs. No
+      // page plays media of its own making or puts a frame of another origin on
+      // it now, so no page asks for media-src or frame-src.
       std::string csp =
           "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-attr "
-          "'unsafe-inline'; img-src 'self' data:; media-src blob:; connect-src "
+          "'unsafe-inline'; img-src 'self' data:; connect-src "
           "'self'; frame-ancestors 'none'";
       r.headers["Content-Security-Policy"] = csp;
     }
@@ -2576,16 +2562,13 @@ namespace ols
   }
 
   HttpResponse OpenLocalServices::serveFile(const std::string &kind, const std::string &name,
-                                            const std::string &origin,
                                             const HttpRequest &req) const
   {
     std::string body;
     std::string contentType;
     {
       std::string path;
-      const bool known = origin == "voice"
-                             ? (m_voice && m_voice->file(kind, name, path, contentType))
-                             : (m_image && m_image->file(kind, name, path, contentType));
+      const bool known = m_image && m_image->file(kind, name, path, contentType);
       if (!known)
         return jsonError(404, "Not found: " + name);
       std::error_code ec;
@@ -2768,9 +2751,9 @@ namespace ols
   }
 #endif
 
-  // The ggml the voice models run on is linked into this binary, and it is the
-  // machine's device probe: the backend this build was asked for is compiled
-  // into it, so the probe only enumerates what this binary already carries.
+  // The ggml the image engine links into this binary is the machine's device
+  // probe: the backend this build was asked for is compiled into it, so the
+  // probe only enumerates what this binary already carries.
   // Plugin ggml libraries must never be read from beside the server: measured
   // on the 2026-10-28 release, a plugin dll the loader picked up registered the
   // same card a second time beside the ggml inside the process, and the process
@@ -3033,10 +3016,10 @@ namespace ols
   {
     nlohmann::json devices = nlohmann::json::array();
     std::vector<std::string> names;
-    // The same ggml the voice engine runs on knows the machine's devices: it is
-    // asked first, so the gpu and its memory are stated with the numbers the
-    // backends themselves see. What it cannot name, the image service may still
-    // list by name, and a device no library names is not drawn.
+    // The ggml the image engine links into this binary knows the machine's
+    // devices: it is asked first, so the gpu and its memory are stated with the
+    // numbers the backends themselves see. What it cannot name, the image
+    // service may still list by name, and a device no library names is not drawn.
     const size_t count = ggml_backend_dev_count();
     for (size_t i = 0; i < count; ++i)
     {
@@ -3222,18 +3205,6 @@ namespace ols
     }
     if (m_image)
       out["loaded"] = nlohmann::json::parse(m_image->statusJson(), nullptr, false);
-    if (m_voice)
-    {
-      // The voice module's own door counts what stands loaded and names the ones
-      // that do, in a short list; the packages themselves, with the words their
-      // own files state, belong to the models door. The system block carries the
-      // counts and that short list only, so a page that polls this snapshot
-      // every few seconds never pays for a table of four hundred.
-      nlohmann::json voiceBlock = nlohmann::json::parse(m_voice->statusJson(), nullptr, false);
-      if (voiceBlock.is_discarded())
-        voiceBlock = nlohmann::json::object();
-      out["voice"] = voiceBlock;
-    }
     return out.dump();
   }
 
@@ -7435,182 +7406,6 @@ namespace ols
       return jsonResponse(202, idJson(job));
     }
 
-    if (get && path == "/voice/api/models")
-      return m_voice ? jsonResponse(200, m_voice->modelsJson())
-                     : jsonError(502, "No voice service");
-    // A page of the cards, and the counts of the whole set: the words of the
-    // question pass through untouched, so the page asks in the same words its
-    // own controls show and pays for one page rather than for the table.
-    if (get && path == "/voice/api/model-cards")
-      return m_voice ? jsonResponse(200, m_voice->modelCardsJson(req.query))
-                     : jsonError(502, "No voice service");
-    if (get && path == "/voice/api/model-stats")
-      return m_voice ? jsonResponse(200, m_voice->modelsSummaryJson())
-                     : jsonError(502, "No voice service");
-    if (get && (path == "/voice/api/status" || path == "/voice/api/health"))
-      return m_voice ? jsonResponse(200, m_voice->statusJson())
-                     : jsonError(502, "No voice service");
-    if (get && path == "/voice/api/jobs")
-      return m_voice ? jsonResponse(200, m_voice->jobsListJson())
-                     : jsonError(502, "No voice service");
-    if (get && path == "/voice/api/library")
-      return m_voice ? jsonResponse(200, m_voice->libraryJson())
-                     : jsonError(502, "No voice service");
-    if (path.rfind("/voice/api/voices/", 0) == 0)
-    {
-      const std::string model = path.substr(18);
-      // save, delete, and rename are doors this server answers below; they are
-      // not model names, and a page that posts to one must not be read as
-      // asking for a model called save.
-      if (model != "save" && model != "delete" && model != "rename")
-      {
-        if (!m_voice)
-          return jsonError(502, "No voice service");
-        if (!model.empty() && !m_voice->known(model))
-          return jsonError(404, "Unknown model: " + model);
-        if (!get)
-          return jsonError(404, "Not found");
-        return jsonResponse(200, m_voice->voicesJson(model));
-      }
-    }
-    if (post && path == "/voice/api/voices/save")
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
-      if (body.is_discarded())
-        return jsonError(400, "Invalid request body");
-      if (!m_voice->saveVoice(body.value("name", std::string()), body.value("audio_b64", std::string()),
-                              body.value("prompt_text", std::string())))
-        return jsonError(400, "The recording was not kept: it is not a plain wav, or the name is not one");
-      return jsonResponse(200, "{}");
-    }
-    if (post && path == "/voice/api/voices/delete")
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
-      const std::string refused =
-          body.is_discarded()
-              ? std::string("Invalid request body")
-              : m_voice->removeVoiceReason(body.value("name", std::string()));
-      if (!refused.empty())
-        return jsonError(400, refused);
-      return jsonResponse(200, "{}");
-    }
-    if (post && path == "/voice/api/voices/rename")
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
-      const std::string refused =
-          body.is_discarded()
-              ? std::string("Invalid request body")
-              : m_voice->renameVoice(body.value("name", std::string()),
-                                     body.value("new_name", std::string()));
-      if (!refused.empty())
-        return jsonError(400, refused);
-      return jsonResponse(200, "{}");
-    }
-    if (post && path == "/voice/api/listen")
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
-      if (body.is_discarded())
-        return jsonError(400, "Invalid request body");
-      const std::string job = m_voice->startJob("listen", body.value("model", std::string()), req.body);
-      if (job.empty())
-        return jsonError(400, "Unknown model for this machine, or no recording given");
-      return jsonResponse(202, idJson(job));
-    }
-    if (post && path == "/voice/api/speak")
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
-      if (body.is_discarded())
-        return jsonError(400, "Invalid request body");
-      const std::string job = m_voice->startJob("speak", body.value("model", std::string()), req.body);
-      if (job.empty())
-        return jsonError(400, "Unknown model for this machine, or nothing to say");
-      return jsonResponse(202, idJson(job));
-    }
-    // A voice model is opened or put down on this door: the engine is this
-    // process, so the answer is the engine's own yes - no port is started and
-    // no child is asked.
-    if (path.rfind("/voice/api/models/", 0) == 0)
-    {
-      const std::string rest = path.substr(18);
-      const size_t slash = rest.find('/');
-      if (slash == std::string::npos)
-        return jsonError(404, "Not found");
-      const std::string model = rest.substr(0, slash);
-      const std::string action = rest.substr(slash + 1);
-      if (!m_voice || !m_voice->known(model))
-        return jsonError(404, "Unknown model: " + model);
-      if (!post)
-        return jsonError(405, postOnlyDoorWords());
-      if (action == "unload")
-      {
-        if (!m_voice->unloadModel(model))
-          return jsonError(404, "That model holds no memory");
-        return jsonResponse(200, "{}");
-      }
-      if (action == "download")
-      {
-        const std::string job = m_voice->startDownload(model);
-        if (job.empty())
-          return jsonError(404, "That package names no files to fetch");
-        return jsonResponse(202, idJson(job));
-      }
-      if (action != "load")
-        return jsonError(404, "Not found");
-      if (!m_voice->loadModel(model))
-      {
-        // the reason belongs to this card: the words another model gave last
-        // would be read as about this one
-        const std::string why = m_voice->loadErrorFor(model);
-        return jsonError(400, why.empty() ? "That model's files are not on this machine" : why);
-      }
-      return jsonResponse(200, "{}");
-    }
-    if (path.rfind("/voice/api/jobs/", 0) == 0)
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const std::string rest = path.substr(16);
-      const size_t slash = rest.find('/');
-      const std::string id = slash == std::string::npos ? rest : rest.substr(0, slash);
-      const std::string action = slash == std::string::npos ? std::string() : rest.substr(slash + 1);
-      nlohmann::json state = nlohmann::json::parse(m_voice->jobStateJson(id), nullptr, false);
-      // this same reading is what the stop ask below answers with, so the record
-      // is read once for both doors.
-      if (action == "cancel" && post)
-      {
-        if (m_voice->cancelJob(id))
-          return jsonResponse(200, "{}");
-        return jsonError(404, cancelRefusalWords(state, id));
-      }
-      if (!get)
-        return jsonError(404, "Not found");
-      if (state.is_discarded() || ols::jobState(state) == ols::kStateUnknown)
-        return jsonError(404, "Unknown job: " + id);
-      return jsonResponse(200, state.dump());
-    }
-    if (post && path == "/voice/api/library/delete")
-    {
-      if (!m_voice)
-        return jsonError(502, "No voice service");
-      const nlohmann::json body = nlohmann::json::parse(req.body, nullptr, false);
-      if (body.is_discarded())
-        return jsonError(400, "Invalid request body");
-      const std::string renderId = body.value("id", std::string());
-      if (!m_voice->removeRender(renderId))
-        return jsonError(404, "Unknown render: " + renderId);
-      return jsonResponse(200, "{}");
-    }
-
     if (path.rfind("/api/models/", 0) == 0)
     {
       const std::string rest = path.substr(12);
@@ -7674,22 +7469,13 @@ namespace ols
       return jsonResponse(200, state.dump());
     }
 
-    if (fetch && path.rfind("/voice/files/", 0) == 0)
-    {
-      const std::string rest = path.substr(13);
-      const size_t slash = rest.find('/');
-      if (slash == std::string::npos)
-        return jsonError(404, "Not found");
-      return serveFile(rest.substr(0, slash), rest.substr(slash + 1), "voice", req);
-    }
-
     if (fetch && path.rfind("/files/", 0) == 0)
     {
       const std::string rest = path.substr(7);
       const size_t slash = rest.find('/');
       if (slash == std::string::npos)
         return jsonError(404, "Not found");
-      return serveFile(rest.substr(0, slash), rest.substr(slash + 1), "image", req);
+      return serveFile(rest.substr(0, slash), rest.substr(slash + 1), req);
     }
 
     if (get && path == "/api/system")
@@ -7698,10 +7484,9 @@ namespace ols
     if (get && path == "/api/monitor")
     {
       const std::string imageJobs = m_image ? m_image->jobsListJson() : std::string("[]");
-      const std::string voiceJobs = m_voice ? m_voice->jobsListJson() : std::string("[]");
       // The queue estimate asks for the picture engine's cost ledger only
       // while jobs stand, so the way to it is passed rather than the answer.
-      return jsonResponse(200, monitor::snapshot(systemJson(), imageJobs, voiceJobs,
+      return jsonResponse(200, monitor::snapshot(systemJson(), imageJobs,
                                                  [this]
                                                  { return m_image ? m_image->timingsJson() : std::string("{}"); }));
     }
