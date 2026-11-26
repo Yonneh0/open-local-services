@@ -15,6 +15,7 @@
 #include "ProjectGit.h"
 #include "ProjectPulls.h"
 #include "GitSmartHttp.h"
+#include "SshFetch.h"
 #include "gitcore/fetch.h"
 #include "gitcore/refs.h"
 
@@ -47,6 +48,10 @@ namespace ols
     // ---------------- the state, all of it file-static ----------------
 
     static std::string gProjectsDir;
+    // The data dir the studio was stood in, kept for the roads that need a
+    // room of their own: the ssh key room (E2) stands under it, and nothing
+    // else may say where the studio's keys live.
+    static std::string gDataRoot;
     static bool gLedgerRead = false;
     static std::vector<std::string> gOrder;
     static std::map<std::string, json> gMeta;
@@ -1141,9 +1146,33 @@ namespace ols
       // The advertisement stands first: its HEAD names the branch the
       // folder's HEAD will wear, and its born branches are what the fetch
       // brings. One transport for both asks - the advertisement and the
-      // fetch it makes - as one conversation with one host.
+      // fetch it makes - as one conversation with one host. The road is
+      // read from the address (E2): an ssh address rides the vendored
+      // ssh.exe on the studio's own key room, and no ambient identity is
+      // ever leaned on; every other address keeps standing where it stood.
       std::vector<ols::gitcore::AdvertisedRef> advertised;
-      ols::http::SocketHttpFetch http;
+      std::unique_ptr<ols::http::HttpFetch> transport;
+      ols::ssh::SshTarget sshTarget;
+      if (ols::ssh::looksSsh(link, sshTarget))
+      {
+        std::string binDir;
+        std::string roadWords;
+        if (!ols::ssh::sshBinDir(gDataRoot, binDir, roadWords))
+        {
+          noteError(roadWords);
+          return false;
+        }
+        ols::ssh::SshIdentity identity;
+        identity.knownHosts = ols::ssh::knownHostsPath(gDataRoot);
+        identity.keyPath = ols::ssh::keysRoom(gDataRoot) + "/id_deploy";
+        transport.reset(new ols::ssh::SshFetch(
+            sshTarget, identity, (binDir + "/ssh.exe")));
+      }
+      else
+      {
+        transport.reset(new ols::http::SocketHttpFetch);
+      }
+      ols::http::HttpFetch &http = *transport;
       if (!ols::gitcore::lsRemote(http, link, apiKey, advertised, words))
       {
         noteError("the address would not state its refs: " + words);
@@ -2536,6 +2565,7 @@ namespace ols
       while (!root.empty() && (root.back() == '/' || root.back() == '\\'))
         root.pop_back();
       gProjectsDir = root + "/projects";
+      gDataRoot = root;
       std::lock_guard<std::mutex> lock(gMutex);
       readLedger();
     }

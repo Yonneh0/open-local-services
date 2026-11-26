@@ -205,6 +205,9 @@ add_executable(open-local-services
   gitcore/fetch.cpp
   gitcore/fetch_wire.cpp
   gitcore/zlibwrap.cpp
+  # The ssh road the clone doors read an address off (E2): plain definitions,
+  # one object, once - the same dress as receive.cpp above.
+  SshFetch.cpp
   ImageService.cpp
   VerifiedRoom.cpp
   Deployment.cpp
