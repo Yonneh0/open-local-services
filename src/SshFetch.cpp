@@ -2,10 +2,19 @@
 // release needs (E2 batch one). The transport itself — pipes, keys, the class
 // — arrives in the next batch; this file stands on its own and compiles
 // without any of it.
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+// The desktop CreatePipe the blueprint calls: the UM flavor of the same name
+// takes two arguments, so the three-argument classic is named here once.
+extern __declspec(dllimport) BOOL CreatePipe(HANDLE *, HANDLE *, LPSECURITY_ATTRIBUTES);
+#endif
 #include "SshFetch.h"
 #include <cstdlib>
+#include <vector>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 namespace ols
@@ -440,5 +449,357 @@ namespace ols
             pathOut = path.string();
             return true;
         }
+
+#ifdef _WIN32
+        namespace
+        {
+            // Words that come off a pipe end in the child's newlines; the
+            // doors read them as one line, so the tail is trimmed once, here.
+            std::string trimTail(const std::string &s)
+            {
+                std::size_t n = s.size();
+                while (n > 0u && (s[n - 1u] == '\r' || s[n - 1u] == '\n' || s[n - 1u] == ' ' || s[n - 1u] == '\t'))
+                {
+                    --n;
+                }
+                return s.substr(0u, n);
+            }
+        } // anonymous
+
+        // The vendored hands: three pipes, a child that never sees a console,
+        // stdout and stderr read apart to EOF, the exit code kept. The
+        // transport rides this; so do keygen and keyscan; the tests pin it
+        // against any exe. Words when the child would not start.
+        bool runVendored(const std::string &exePath, const std::vector<std::string> &args,
+                         std::string &stdoutOut, std::string &stderrOut,
+                         unsigned long &exitCodeOut, std::string &error)
+        {
+            stdoutOut.clear();
+            stderrOut.clear();
+            exitCodeOut = 0u;
+            error.clear();
+            if (exePath.empty())
+            {
+                error = "no binary was named to run";
+                return false;
+            }
+            std::string line = quoteWindowsArg(exePath);
+            for (const std::string &arg : args)
+            {
+                line += " " + quoteWindowsArg(arg);
+            }
+            SECURITY_ATTRIBUTES inheritable;
+            inheritable.nLength = sizeof(SECURITY_ATTRIBUTES);
+            inheritable.lpSecurityDescriptor = nullptr;
+            inheritable.bInheritHandle = TRUE;
+            HANDLE inRead = nullptr, inWrite = nullptr;
+            HANDLE outRead = nullptr, outWrite = nullptr;
+            HANDLE errRead = nullptr, errWrite = nullptr;
+            if (!CreatePipe(&inRead, &inWrite, &inheritable))
+            {
+                error = "the pipes for " + exePath + " could not be opened: win32 code " + std::to_string(GetLastError());
+                return false;
+            }
+            if (!CreatePipe(&outRead, &outWrite, &inheritable))
+            {
+                error = "the pipes for " + exePath + " could not be opened: win32 code " + std::to_string(GetLastError());
+                CloseHandle(inRead);
+                CloseHandle(inWrite);
+                return false;
+            }
+            if (!CreatePipe(&errRead, &errWrite, &inheritable))
+            {
+                error = "the pipes for " + exePath + " could not be opened: win32 code " + std::to_string(GetLastError());
+                CloseHandle(inRead);
+                CloseHandle(inWrite);
+                CloseHandle(outRead);
+                CloseHandle(outWrite);
+                return false;
+            }
+            // The parent's own read ends must not ride into the child: two
+            // readers on one pipe is the hang shape the probe measured.
+            SetHandleInformation(inRead, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0);
+            STARTUPINFOA startup{};
+            startup.cb = sizeof(startup);
+            startup.dwFlags = STARTF_USESTDHANDLES;
+            startup.hStdInput = inWrite;
+            startup.hStdOutput = outWrite;
+            startup.hStdError = errWrite;
+            PROCESS_INFORMATION info{};
+            std::vector<char> cmdBuf(line.begin(), line.end());
+            cmdBuf.push_back('\0');
+            if (CreateProcessA(nullptr, cmdBuf.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+                               nullptr, nullptr, &startup, &info) == 0u)
+            {
+                const DWORD code = GetLastError();
+                error = exePath + " would not start: win32 code " + std::to_string(code);
+                CloseHandle(inRead);
+                CloseHandle(inWrite);
+                CloseHandle(outRead);
+                CloseHandle(outWrite);
+                CloseHandle(errRead);
+                CloseHandle(errWrite);
+                return false;
+            }
+            // The child's copies close right away: a child that reads stdin
+            // sees EOF, which is what keeps a bounded run bounded.
+            CloseHandle(inWrite);
+            CloseHandle(outWrite);
+            CloseHandle(errWrite);
+            char buf[4096];
+            for (;;)
+            {
+                DWORD got = 0u;
+                if (!ReadFile(outRead, buf, sizeof(buf), &got, nullptr))
+                {
+                    break;
+                }
+                if (got == 0u)
+                {
+                    break;
+                }
+                stdoutOut.append(buf, buf + got);
+            }
+            for (;;)
+            {
+                DWORD got = 0u;
+                if (!ReadFile(errRead, buf, sizeof(buf), &got, nullptr))
+                {
+                    break;
+                }
+                if (got == 0u)
+                {
+                    break;
+                }
+                stderrOut.append(buf, buf + got);
+            }
+            WaitForSingleObject(info.hProcess, INFINITE);
+            DWORD exitCode = 0u;
+            GetExitCodeProcess(info.hProcess, &exitCode);
+            exitCodeOut = static_cast<unsigned long>(exitCode);
+            CloseHandle(info.hProcess);
+            CloseHandle(inRead);
+            CloseHandle(outRead);
+            CloseHandle(errRead);
+            return true;
+        }
+
+        // One ed25519 pair, made once in the key room. The studio never
+        // replaces a standing key — the name is the door's, and a second
+        // ask over it is a human's decision.
+        bool generateDeployKey(const std::string &dataDir, const std::string &name,
+                               std::string &outPublic, std::string &outFingerprint,
+                               std::string &error)
+        {
+            outPublic.clear();
+            outFingerprint.clear();
+            error.clear();
+            if (dataDir.empty())
+            {
+                error = "no data dir was named to make the key in";
+                return false;
+            }
+            if (name.empty())
+            {
+                error = "no key name was named";
+                return false;
+            }
+            for (unsigned char c : name)
+            {
+                if (!nameChar(c))
+                {
+                    error = "the key name " + name + " wears a character outside the small alphabet";
+                    return false;
+                }
+            }
+            const std::string room = keysRoom(dataDir);
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(room), ec);
+            const std::string keyPath = room + "/" + name;
+            if (std::filesystem::is_regular_file(keyPath, ec))
+            {
+                error = "a key already stands named " + name + "; the studio never replaces one";
+                return false;
+            }
+            std::string keygen;
+            if (!sshKeygenFor(std::string(), keygen, error))
+            {
+                return false;
+            }
+            const std::vector<std::string> args{
+                "-q", "-t", "ed25519", "-N", "", "-C", "open-local-services:" + name, "-f", keyPath};
+            std::string out;
+            std::string errWords;
+            unsigned long code = 0u;
+            if (!runVendored(keygen, args, out, errWords, code, error))
+            {
+                return false;
+            }
+            if (code != 0u)
+            {
+                error = "the key " + name + " was not made: " + trimTail(errWords);
+                return false;
+            }
+            const std::string pubPath = keyPath + ".pub";
+            std::ifstream pub(pubPath, std::ios::binary);
+            if (!pub)
+            {
+                error = "the public half of " + name + " did not come back";
+                return false;
+            }
+            pub.seekg(0, std::ios::end);
+            const std::streampos n = pub.tellg();
+            outPublic.assign(static_cast<std::size_t>(n < 0 ? 0 : static_cast<std::streamoff>(n)), '\0');
+            pub.seekg(0, std::ios::beg);
+            if (!outPublic.empty())
+            {
+                pub.read(&outPublic[0], static_cast<std::streamsize>(outPublic.size()));
+            }
+            pub.close();
+            // The fingerprint is a courtesy: keygen's -lf ask failing leaves
+            // the key made, not refused.
+            const std::vector<std::string> fpArgs{"-lf", pubPath};
+            std::string fpOut;
+            std::string fpErr;
+            unsigned long fpCode = 0u;
+            std::string fpError;
+            if (runVendored(keygen, fpArgs, fpOut, fpErr, fpCode, fpError) && fpCode == 0u)
+            {
+                outFingerprint = trimTail(fpOut);
+            }
+            return true;
+        }
+
+        // One host trusted. known_hosts is read first and never touched: a
+        // standing entry stays standing for a human, not for this door.
+        bool trustHost(const std::string &dataDir, const std::string &host,
+                       std::string &addedLine, std::string &error)
+        {
+            addedLine.clear();
+            error.clear();
+            if (dataDir.empty())
+            {
+                error = "no data dir was named to trust the host in";
+                return false;
+            }
+            if (host.empty())
+            {
+                error = "no host was named to trust";
+                return false;
+            }
+            const std::string knownHosts = knownHostsPath(dataDir);
+            std::ifstream in(knownHosts);
+            std::string line;
+            while (std::getline(in, line))
+            {
+                std::string first;
+                for (char c : line)
+                {
+                    if (c == ' ' || c == '\t')
+                    {
+                        break;
+                    }
+                    first.push_back(c);
+                }
+                if (first == host)
+                {
+                    return true;
+                }
+                if (first.size() > host.size() + 2u && first[0] == '[' &&
+                    first.compare(1u, host.size(), host) == 0 && first[1u + host.size()] == ':')
+                {
+                    return true;
+                }
+            }
+            in.close();
+            std::string keyscan;
+            if (!sshKeyscanFor(std::string(), keyscan, error))
+            {
+                return false;
+            }
+            const std::vector<std::string> args{host};
+            std::string out;
+            std::string errWords;
+            unsigned long code = 0u;
+            if (!runVendored(keyscan, args, out, errWords, code, error))
+            {
+                return false;
+            }
+            std::vector<std::string> keys;
+            std::istringstream lines(out);
+            std::string candidate;
+            while (std::getline(lines, candidate))
+            {
+                if (candidate.empty() || candidate[0] == '#')
+                {
+                    continue;
+                }
+                keys.push_back(candidate);
+            }
+            if (keys.empty())
+            {
+                error = "the host " + host + " answered no key to scan";
+                return false;
+            }
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(keysRoom(dataDir)), ec);
+            std::ofstream app(knownHosts, std::ios::app);
+            if (!app)
+            {
+                error = "the known_hosts at " + knownHosts + " cannot be written to";
+                return false;
+            }
+            for (const std::string &key : keys)
+            {
+                app << key << "\n";
+            }
+            app << std::flush;
+            if (!app)
+            {
+                error = "the known_hosts at " + knownHosts + " could not be appended to";
+                return false;
+            }
+            app.close();
+            addedLine = keys.front();
+            return true;
+        }
+#else
+        // The other side owes its pinned portable OpenSSH (run.sh names it);
+        // until that stands, these three refuse in words.
+        bool runVendored(const std::string &exePath, const std::vector<std::string> &args,
+                         std::string &stdoutOut, std::string &stderrOut,
+                         unsigned long &exitCodeOut, std::string &error)
+        {
+            (void)exePath;
+            (void)args;
+            stdoutOut.clear();
+            stderrOut.clear();
+            exitCodeOut = 0u;
+            error = "no vendored run here: the Linux side owes its pinned portable OpenSSH (run.sh names it)";
+            return false;
+        }
+        bool generateDeployKey(const std::string &dataDir, const std::string &name,
+                               std::string &outPublic, std::string &outFingerprint,
+                               std::string &error)
+        {
+            (void)dataDir;
+            (void)name;
+            outPublic.clear();
+            outFingerprint.clear();
+            error = "no key made here: the Linux side owes its pinned portable OpenSSH (run.sh names it)";
+            return false;
+        }
+        bool trustHost(const std::string &dataDir, const std::string &host,
+                       std::string &addedLine, std::string &error)
+        {
+            (void)dataDir;
+            (void)host;
+            addedLine.clear();
+            error = "no host trusted here: the Linux side owes its pinned portable OpenSSH (run.sh names it)";
+            return false;
+        }
+#endif
     } // namespace ssh
 } // namespace ols
