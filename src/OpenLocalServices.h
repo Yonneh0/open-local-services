@@ -260,6 +260,12 @@ namespace ols
     bool openListener(uint16_t preferredPort, void *&outHandle, uint16_t &outPort);
     void closeListener(void *handle);
     HttpResponse route(const HttpRequest &req);
+    // The Project Studio doors, as a member: the cert panel reads the very
+    // material this server stands on, and everything else the block answers
+    // rides the arguments it always did.
+    bool routeProject(ols::project::ProjectService *projects,
+                      const std::shared_ptr<const std::string> &key, const HttpRequest &req,
+                      HttpResponse &res);
     HttpResponse serveStatic(const std::string &path, const HttpRequest &req);
     // write the pages this binary carries into its static dir, and start
     // serving those copies; a folder that already holds pages is left as it is

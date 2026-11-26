@@ -226,8 +226,9 @@ namespace ols
         // Which face these doors answer with: blank or off is the clear one
         // they have always had; auto answers plain and sealed alike on the
         // one port, making the certificates under data/tls on first start;
-        // on answers sealed connections only. Read at the next start - the
-        // cert panel and the redirect door come with a later batch.
+        // on answers sealed connections only - a credential-free GET gets
+        // one https redirect there, everything else stands. Read at the next
+        // start; the cert panel stands at /project/api/cert beside it.
         {"OLS_TLS", false, false},
     };
 
@@ -513,6 +514,139 @@ namespace ols
       return child.size() > parent.size() + 1 &&
              child.compare(0, parent.size(), parent) == 0 &&
              child[parent.size()] == '/';
+    }
+
+    // The sealed face's own two rules about a plain visitor (spec §10.3). A
+    // redirect moves one GET - no method that could carry a body is ever
+    // moved - to the https shape of its own address. An ask wearing a
+    // credential in its query or headers stands exactly where it is: moving
+    // it would send what it carries over the clear again. The bytes are read
+    // with MSG_PEEK only, so the visitor's real request line survives for
+    // whatever road follows; nothing here answers before a whole first line
+    // stands, so a probe of two bytes learns nothing about this door.
+    bool sealedRedirectOk(const HttpRequest &req)
+    {
+      if (req.method != "GET")
+        return false;
+      // A credential in the query never travels: the ?key= form is spelled
+      // with its own name, read straight off the query string here rather
+      // than through the map helper that lives further down this block.
+      for (size_t at = req.query.find("key="); at != std::string::npos;
+           at = req.query.find("key=", at + 1))
+      {
+        if (at == 0u || req.query[at - 1u] == '&')
+          return false;
+      }
+      for (const auto &entry : req.headers)
+      {
+        if ((entry.first == "authorization" || entry.first == "cookie") && !entry.second.empty())
+          return false;
+      }
+      return true;
+    }
+
+    bool blockHasHeaderEnd(const std::string &block)
+    {
+      return block.find("\r\n\r\n") != std::string::npos;
+    }
+
+    // The request line, read the way the transport reads it - verb and target,
+    // split at the query mark - into the parts the redirect decision asks
+    // about. normalPath belongs to the class itself (below this block), so
+    // only the raw target is kept here; the path never leaves this decision.
+    void parseRequestLine(const std::string &line, HttpRequest &into)
+    {
+      std::istringstream rl(line);
+      std::string httpVersion;
+      rl >> into.method >> into.path >> httpVersion;
+      const size_t q = into.path.find('?');
+      if (q != std::string::npos)
+      {
+        into.query = into.path.substr(q + 1);
+        into.path.resize(q);
+      }
+    }
+
+    // The Host line of a header block, in its own trimmed words. Case does not
+    // matter; a later Host replaces an earlier one, exactly as the transport's
+    // own header map would leave it standing last.
+    void readHostHeader(const std::string &headerBlock, std::string &hostOut)
+    {
+      hostOut.clear();
+      std::istringstream hs(headerBlock);
+      std::string line;
+      std::getline(hs, line); // the request line itself is not a header
+      while (std::getline(hs, line))
+      {
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
+        const size_t colon = line.find(':');
+        if (colon == std::string::npos)
+          continue;
+        if (lowerText(line.substr(0, colon)) == "host")
+          hostOut = configTrim(line.substr(colon + 1));
+      }
+    }
+
+    // Where a plain visitor is pointed, in the browser's own words: the Host
+    // header carries the address that visitor asked for - which may name its
+    // port and may not - so an absent port comes back as the port this
+    // server actually stands at. A host no machine can dress in https (no
+    // letters, or characters outside the address alphabet) is refused here:
+    // those bytes never enter a Location header.
+    bool sealedRedirectTarget(const std::string &hostHeader, uint16_t port,
+                              const std::string &pathAndQuery, std::string &urlOut)
+    {
+      urlOut.clear();
+      std::string host = configTrim(hostHeader);
+      if (host.size() >= 2u && host[0] == '[')
+      {
+        // A bracketed literal address keeps its brackets through the port.
+        const size_t close = host.find(']');
+        if (close == std::string::npos)
+          return false;
+        std::string tailHost = host.substr(0, close + 1);
+        if (host.size() > close + 1u && host[close + 1u] == ':')
+        {
+          const std::string digits = host.substr(close + 2u);
+          if (!digits.empty())
+            tailHost += ":" + digits;
+        }
+        host = tailHost;
+      }
+      else
+      {
+        const size_t colon = host.rfind(':');
+        if (colon != std::string::npos)
+        {
+          // The last colon splits a port from the name only when digits
+          // follow it all the way down; a bare IPv6 address carries colons
+          // with no port and keeps them whole.
+          const std::string digits = host.substr(colon + 1u);
+          bool allDigits = !digits.empty();
+          for (char c : digits)
+            if (c < '0' || c > '9')
+              allDigits = false;
+          if (allDigits)
+            host = host.substr(0, colon);
+        }
+      }
+      if (host.empty() || host.size() > 253u)
+        return false;
+      for (char c : host)
+      {
+        const unsigned char u = static_cast<unsigned char>(c);
+        const bool ok = (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') ||
+                        (u >= '0' && u <= '9') || c == '.' || c == '-' || c == ':' ||
+                        c == '[' || c == ']';
+        if (!ok)
+          return false;
+      }
+      std::string target = host;
+      if (port != 443u)
+        target += ":" + std::to_string(port);
+      urlOut = "https://" + target + (pathAndQuery.empty() ? "/" : pathAndQuery);
+      return true;
     }
 
     std::string queryValue(const std::string &query, const std::string &key)
@@ -1540,7 +1674,67 @@ namespace ols
         }
       }
       else if (m_tlsMode == "on")
+      {
+        // Sealed answers only. A plain visitor is refused the way it can be
+        // acted on: with one https answer, pointed at the sealed shape of
+        // its own address - but only once its first line has been read whole
+        // and weighed (sealedRedirectOk). Until that line stands, no byte
+        // crosses: a probe of two bytes never learns what lives behind this
+        // door. Everything is read with MSG_PEEK, so an ask that decides to
+        // stay plain still finds every one of its own bytes waiting for the
+        // road below it. The Host header names where a redirect points;
+        // without it there is no honest address to point at.
+        std::string firstBlock;
+        bool blockFull = false;
+        for (int guard = 0; guard < 64; ++guard)
+        {
+          char buf[2048];
+          const int got = platform::receiveBytes(sock, buf, static_cast<int>(sizeof(buf)), MSG_PEEK);
+          if (got <= 0)
+            break;
+          firstBlock.assign(buf, static_cast<size_t>(got)); // peek sees from the front every time
+          if (static_cast<size_t>(got) < sizeof(buf))
+          {
+            blockFull = true; // the stream has nothing more for now
+            break;
+          }
+          if (blockHasHeaderEnd(firstBlock))
+          {
+            blockFull = true;
+            break;
+          }
+        }
+        const size_t lineEnd = firstBlock.find("\r\n");
+        if (lineEnd != std::string::npos)
+        {
+          HttpRequest probe;
+          parseRequestLine(firstBlock.substr(0, lineEnd), probe);
+          std::string url;
+          // Only a block read whole answers yes or no - a block cut at the
+          // cap never redirects, because its Host may still stand unread.
+          if (blockFull && sealedRedirectOk(probe))
+          {
+            std::string hostHeader;
+            readHostHeader(firstBlock.substr(0, firstBlock.find("\r\n\r\n")), hostHeader);
+            if (!hostHeader.empty())
+              sealedRedirectTarget(hostHeader, m_port.load(),
+                                   probe.path + (probe.query.empty() ? "" : "?" + probe.query),
+                                   url);
+          }
+          if (!url.empty())
+          {
+            const std::string body = "This address answers sealed only - open it over https.";
+            const std::string answer = "HTTP/1.1 301 Moved Permanently\r\n"
+                                       "Location: " + url + "\r\n" +
+                                       "Content-Type: text/plain; charset=utf-8\r\n"
+                                       "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                                       "Connection: close\r\n\r\n" +
+                                       body;
+            platform::sendBytes(sock, answer.data(), static_cast<int>(answer.size()), 0);
+          }
+        }
         return;
+      }
     }
 
     // The connection's own deadline, taken once: every read that waits on this
@@ -2099,6 +2293,13 @@ namespace ols
               resp.headers["Cache-Control"] =
                   fresh < 0 ? "no-store" : "public, max-age=" + std::to_string(fresh);
             }
+            // A sealed conversation says so for a year after this one ends
+            // (spec §10.3): a browser that came here once over https keeps
+            // coming back sealed even if the address is typed plain again.
+            // Only the connections that truly rode TLS wear it - a plain
+            // answer on an auto port never speaks of a seal it did not keep.
+            if (sink.tls)
+              resp.headers["Strict-Transport-Security"] = "max-age=31536000";
           }
         }
         catch (const nlohmann::json::exception &exc)
@@ -3557,6 +3758,12 @@ namespace ols
                            {"methods", nlohmann::json::array({"GET"})},
                            {"params", nlohmann::json::array()}},
             nlohmann::json{{"path", "/project/api/doors"},
+                           {"methods", nlohmann::json::array({"GET"})},
+                           {"params", nlohmann::json::array()}},
+            nlohmann::json{{"path", "/project/api/cert"},
+                           {"methods", nlohmann::json::array({"GET"})},
+                           {"params", nlohmann::json::array()}},
+            nlohmann::json{{"path", "/project/api/cert/ca.der"},
                            {"methods", nlohmann::json::array({"GET"})},
                            {"params", nlohmann::json::array()}},
             nlohmann::json{{"path", "/project/api/meta"},
@@ -6135,9 +6342,12 @@ namespace ols
     return true;
   }
 
-  bool routeProject(ols::project::ProjectService *projects,
-                    const std::shared_ptr<const std::string> &key, const HttpRequest &req,
-                    HttpResponse &res)
+  // The project block's doors, as a member: the cert panel reads the very
+  // material this server stands on (m_tlsMode, m_tlsMaterial), and everything
+  // else the block answers rides the same arguments it always did.
+  bool OpenLocalServices::routeProject(ols::project::ProjectService *projects,
+                                       const std::shared_ptr<const std::string> &key,
+                                       const HttpRequest &req, HttpResponse &res)
   {
     if (req.path.size() <= kProjectApiPrefixLen ||
         req.path.compare(0, kProjectApiPrefixLen, "/project/api/") != 0)
@@ -6196,6 +6406,75 @@ namespace ols
         return true;
       }
       res = jsonResponse(200, projectDoorsTable().dump());
+      return true;
+    }
+
+    // The cert panel's two readings (spec §10.3). The facts are the same ones
+    // the start-up line prints, read off the material this process stands on
+    // - never re-derived from the files, so the page and the log cannot
+    // disagree. No certificates standing is answered as it is: mode, and the
+    // words saying there is nothing to show.
+    if (door == "cert")
+    {
+      if (!get)
+      {
+        res = projectDoorRefusal(405, "The certificate facts are read with a GET");
+        return true;
+      }
+      nlohmann::json body;
+      body["mode"] = m_tlsMode.empty() ? std::string("off") : m_tlsMode;
+      if (m_tlsMaterial)
+      {
+        body["sealed"] = true;
+        body["ca_fingerprint"] = m_tlsMaterial->caFingerprint();
+        body["leaf_expiry"] = m_tlsMaterial->leafExpiry();
+        body["cert_dir"] = m_tlsCertDir;
+      }
+      else
+      {
+        body["sealed"] = false;
+        body["words"] = "this port answers in the clear - no certificate stands";
+      }
+      res = jsonResponse(200, body.dump());
+      return true;
+    }
+
+    if (door == "cert/ca.der")
+    {
+      // The CA in the dress a browser or another box imports: DER is what
+      // Windows' own certificate prompt takes. Bytes straight from the file
+      // that stands - the fingerprint above names exactly this material.
+      if (!get)
+      {
+        res = projectDoorRefusal(405, "The CA is downloaded with a GET");
+        return true;
+      }
+      if (!m_tlsMaterial)
+      {
+        res = projectDoorRefusal(404, "No certificate stands to download - this port answers in the clear");
+        return true;
+      }
+      const std::string caPath = m_tlsCertDir + "/ca.der";
+      std::error_code ec;
+      if (!std::filesystem::is_regular_file(caPath, ec))
+      {
+        res = projectDoorRefusal(404, "No ca.der stands under the cert room");
+        return true;
+      }
+      std::ifstream in(caPath, std::ios::binary);
+      if (!in.good())
+      {
+        res = projectDoorRefusal(404, "The ca.der standing could not be read");
+        return true;
+      }
+      std::ostringstream ss;
+      ss << in.rdbuf();
+      HttpResponse fileAnswer;
+      fileAnswer.status = 200;
+      fileAnswer.setPlain(ss.str(), "application/x-x509-ca-cert");
+      fileAnswer.headers["Content-Disposition"] = "attachment; filename=\"ols-ca.der\"";
+      fileAnswer.headers["Cache-Control"] = "no-store";
+      res = fileAnswer;
       return true;
     }
 
