@@ -24,6 +24,9 @@ src/.build/
 # folder per card generation, generated like every other build root.
 src/.build-p/
 src/.build-c*/
+# the harness's own scratch root, shallow like the rest of the dot roots: a
+# fresh configure here is the only honest reading of PASS/FAIL.
+src/.build-git-tests/
 Release/.build/
 *.exe
 # the object library the visual studio builder lays under a bin folder is
