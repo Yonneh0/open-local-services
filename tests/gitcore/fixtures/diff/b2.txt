@@ -1,0 +1,6 @@
+top of file
+unchanged heading
+the line edited in place instead
+a line kept
+tail of file
+a line appended

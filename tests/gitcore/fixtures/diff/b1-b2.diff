@@ -1,0 +1,12 @@
+diff --git a/a.txt b/a.txt
+index 41a586c..6dd1ac6 100644
+--- a/a.txt
++++ b/a.txt
+@@ -1,5 +1,6 @@
+ top of file
+ unchanged heading
+-the line that gets edited in place
++the line edited in place instead
+ a line kept
+ tail of file
++a line appended

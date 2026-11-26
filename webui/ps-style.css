@@ -1,0 +1,1871 @@
+/* Project Studio: the fourth tab. Every style this page adds lives here, and
+   every class this file defines is prefixed ps-, so nothing in it can meet a
+   rule of style.css by accident. What this page shares with the rest of the
+   house it shares by using the house's own classes - .panel, .status-line, the
+   :root tokens - rather than by copying their paint.
+
+   The order of the sheet, in words: the config panel the header carries stands
+   at z-index 60. A sheet that opens over the page must sit above that, or a
+   person adding a project with the config panel open would be writing into a
+   panel the sheet covers. So the backdrop takes 64 and the sheet 68, one step
+   apart so the backdrop can never be read over the sheet it dims. */
+
+/* The page's own frame. The studio bar is a second row under the nav and
+   belongs to the page rather than to the header, so it lives inside the body's
+   area at its top; the rooms stack under it. The bar never folds: a dropdown,
+   an adding hand, the quick facts, and the tab strip are one row a person reads
+   across, and on a narrow screen the facts are the part that gives way. */
+main#ps-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding-top: 6px;
+}
+
+#proj-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 14px;
+  background: var(--bg2);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  /* The bar stays put while a person walks down a room: it is the page's own
+     question, and a page whose question has moved off the top of the screen is
+     a page answering about a project nobody is looking at. */
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+/* The dropdown: the same paper as every other field on a page of this machine,
+   kept a thumb wide so six names stay legible. Its words are never hand-written
+   here: the options are what the machine listed. */
+.ps-dropdown {
+  appearance: none;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  caret-color: var(--accent);
+  width: min(320px, 42vw);
+  min-height: 30px;
+  padding: 4px 8px;
+}
+
+.ps-dropdown:disabled {
+  color: var(--fg-dim);
+}
+
+/* The quick facts beside it: the branch of the project in use and the counts the
+   machine keeps. These state the machine's facts, so they wear the same quiet
+   body a chip wears on the status wall: small, one line, dimmed until the
+   machine says something stronger. */
+.ps-quick-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  /* The facts are the part that gives way first on a narrow screen: the
+     dropdown and the strip of rooms must stay reachable. */
+  max-width: 46vw;
+}
+
+.ps-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg3);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.ps-chip-name {
+  color: var(--fg-dim);
+  letter-spacing: 0.12em;
+}
+
+.ps-chip-said {
+  color: var(--fg);
+  font-family: var(--mono);
+}
+
+/* A state nothing stated is never drawn as a bad one: the machine's own orange,
+   the one the house uses for an unknown. */
+.ps-chip-warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  color: var(--warn);
+}
+
+.ps-fact-quiet-line {
+  color: var(--unknown);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+/* The strip of rooms: one control read as a row of segments, edge to edge with
+   one line between them, the way the run bar of the image studio is one
+   control. The room in use wears the page's accent; the others keep the dim
+   words of a room that is not open. */
+.ps-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+}
+
+.ps-tab {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.ps-tab:not(:first-child) {
+  margin-left: -1px;
+}
+
+.ps-tab:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.ps-tab:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.ps-tab:hover {
+  color: var(--fg);
+}
+
+.ps-tab.ps-tab-on {
+  position: relative;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg2));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.ps-tab.ps-tab-on::after {
+  /* The room in use is the one drawn below: a mark under its words points at
+     the panel it stands over, so the answer to "which room is this page in" is
+     read from the page as well as from the strip. */
+  content: "";
+  position: absolute;
+  left: 25%;
+  right: 25%;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* The rooms. A room not in use is taken off the page, which is why only one
+   panel describes a project at a time; the paint of the room itself is the
+   house's own panel, reached by using the house's own class. */
+.ps-panel[hidden] {
+  display: none;
+}
+
+.ps-panel {
+  /* A room carries its rows itself; the house panel already holds the flex
+     column and the plate of its name. What is added here is only the room's
+     own headroom, so a room that holds nothing still shows its name plate. */
+  min-height: 92px;
+}
+
+/* The one line this page speaks with: the house's own status line, given here
+   only the room it needs at the end of the bar. */
+#proj-bar>.status-line {
+  margin-left: auto;
+  max-width: 40vw;
+  flex: 0 1 auto;
+}
+
+/* A room's rows: one line per thing the machine named, and a name that never
+   wraps, because a path read across is the fact here. */
+.ps-tree,
+.ps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.ps-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ps-row-name {
+  color: var(--fg);
+}
+
+.ps-row-dir {
+  color: var(--fg-dim);
+}
+
+.ps-row-dir>.ps-row-name {
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+
+.ps-row-size {
+  color: var(--fg-dim);
+  margin-left: auto;
+  text-align: right;
+}
+
+/* A room that has no reading says so, in the middle of the room, in the
+   machine's orange for a state nothing stated. It is never left blank: a blank
+   room would read as an empty project. */
+.ps-quiet {
+  color: var(--unknown);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+}
+
+/* A line beside a room that states a fact about the room itself: when it was
+   read, or why it holds nothing. The room's own voice, one size smaller. */
+.ps-note {
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.ps-note.unknown {
+  color: var(--unknown);
+}
+
+/* The facts the machine stated about a project: one labelled line per fact, and
+   a fact the machine never stated names itself as such rather than being
+   invented. */
+.ps-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-fact-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.ps-fact-name {
+  color: var(--fg-dim);
+  letter-spacing: 0.12em;
+  min-width: 9ch;
+}
+
+.ps-fact-said {
+  color: var(--fg);
+}
+
+.ps-fact-quiet {
+  color: var(--unknown);
+}
+
+/* The fields these rooms write: the page's own paper, a well set into the panel
+   the house already gives every input, kept to one label and one field a line
+   so a person reads what they are changing before they change it. */
+.ps-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.ps-field-row>label {
+  color: var(--fg-dim);
+  letter-spacing: 0.06em;
+  min-width: 8ch;
+}
+
+.ps-field-row>input,
+.ps-field-row>select {
+  width: 260px;
+  max-width: 100%;
+  min-height: 0;
+}
+
+.ps-field-row>input[type=checkbox] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+/* The checklist of planned features: rows exist only when the machine named them,
+   so an empty checklist is a room saying that, and not a row of boxes waiting
+   for work that was never recorded. */
+.ps-planned {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-plan-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ps-plan-row>input[type=checkbox] {
+  width: 15px;
+  min-height: 15px;
+  accent-color: var(--accent);
+}
+
+.ps-plan-row>input[type=checkbox]:checked {
+  accent-color: var(--ok);
+}
+
+.ps-plan-text {
+  color: var(--fg);
+}
+
+.ps-plan-text.done {
+  color: var(--fg-dim);
+}
+
+/* The sheet. It stands at the right edge of the page over whatever the page is
+   showing, on the page's own panel paper, and it slides in from where it already
+   is - the right edge - rather than appearing from nowhere. */
+.ps-sheet {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 420px;
+  max-width: 92vw;
+  z-index: 68;
+  display: none;
+  overflow: auto;
+  padding: 14px 16px;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--bg2);
+  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.5);
+  transform: translateX(430px);
+  transition: transform 0.18s ease-out;
+}
+
+.ps-sheet.ps-open {
+  display: block;
+  transform: translateX(0);
+}
+
+/* The page dimmed behind it: nothing on the page is meant to be read while a
+   project is being added, so the page is put out of the way rather than asked
+   to move. Releasing it is the hand that closes the sheet. */
+.ps-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 64;
+  background: rgba(6, 8, 11, 0.62);
+}
+
+.ps-backdrop[hidden] {
+  display: none;
+}
+
+.ps-sheet-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: var(--fg-dim);
+}
+
+/* The two modes are segments of one control: the mode in use is the one whose
+   fields are on the page, and the fields of the other are taken off rather than
+   left to answer to nothing. */
+.ps-modes {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+}
+
+.ps-mode {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.ps-mode:not(:first-child) {
+  margin-left: -1px;
+}
+
+.ps-mode:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.ps-mode:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.ps-mode:hover {
+  color: var(--fg);
+}
+
+.ps-mode.ps-mode-on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg2));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.ps-fields-new[hidden],
+.ps-fields-link[hidden] {
+  display: none;
+}
+
+/* What the page read out of the words just typed, shown before anything is sent:
+   a name the machine would keep, or a host and a repository. This is the page's
+   own reading of what a person wrote, and it is painted in a voice that is not
+   the voice the machine answers in. */
+.ps-slug-preview,
+.ps-link-echo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--bg);
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.ps-echo-said {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.ps-echo-note {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+/* A refusal, kept where the fields are: the sheet stays open so the words the
+   machine gave can be read against what was written. The reason is the machine's
+   and is never restated. */
+.ps-sheet-error {
+  margin-top: 6px;
+}
+
+.ps-refusal {
+  color: var(--err);
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line));
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.ps-sheet-error[hidden] {
+  display: none;
+}
+
+/* The fourth tab's mark on the nav bar. The house draws a mark per tab read
+   from the address the tab points at; this page adds its own address here
+   rather than asking style.css for a new line. */
+#nav a[href="project.html"]::before {
+  content: '📁';
+}
+
+/* Without the movement the sheet still arrives at the same place and the room
+   still answers the same way: the slide is the only motion on this page, so
+   taking it away leaves the whole page intact. The colour that marks the room
+   in use is not motion and stays. */
+@media (prefers-reduced-motion: reduce) {
+
+  .ps-sheet,
+  .ps-sheet.ps-open {
+    transition: none;
+    animation: none;
+  }
+
+  .ps-tab,
+  .ps-mode {
+    transition: none;
+  }
+}
+
+/* The three columns of the code room: files | viewer | outline, as the spec
+   draws them. A grid rather than floats, because the room is read across: the
+   files column names what exists, the viewer holds the words of one of them,
+   and the outline names what is inside those words. The middle column is the
+   widest because it carries lines of code at their own length; the outer two
+   carry paths and names, which are bounded. Below a width where all three can
+   hold their own words, they fold into one column in reading order - files,
+   then the file open, then the outline - and nothing is hidden away. */
+.ps-code-columns {
+  display: grid;
+  grid-template-columns: minmax(18ch, 1fr) min(58vw, 96ch) minmax(16ch, 0.8fr);
+  column-gap: 10px;
+  row-gap: 8px;
+  align-items: start;
+}
+
+.ps-code-files {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-code-viewer {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ps-code-outline {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+@media (max-width: 1100px) {
+
+  .ps-code-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .ps-code-files,
+  .ps-code-viewer,
+  .ps-code-outline {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+/* The tree is one flat list with an indent per level: the rows of a folder sit
+   in order after the row that opened it, so the keyboard, the filter, and a
+   screen reader all walk the tree the machine listed. The depth is the row's
+   own, set from the listing that made it. */
+.ps-code-files .ps-row {
+  padding-left: calc(var(--depth, 0) * 11px);
+}
+
+/* A folder whose contents are on the screen wears that fact; the hand that
+   offered to list it is taken away, so a row cannot ask twice for what it
+   already holds. */
+.ps-code-files>.ps-tree>.ps-row.ps-row-open>.ps-row-hand {
+  display: none;
+}
+
+.ps-row>.ps-row-hand {
+  color: var(--fg-dim);
+  opacity: 0.55;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.ps-row>.ps-row-open {
+  color: var(--accent2);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+/* A path the filter set aside is taken off the row rather than dimmed: words
+   that cannot be read are not words a person can select. */
+.ps-row.ps-row-out {
+  display: none;
+}
+
+/* The keyboard's selection: a row stands chosen without a pointer, so a room
+   walked by arrows looks the same as one walked by hand. */
+.ps-row.ps-row-sel {
+  color: var(--accent);
+  outline: 1px dotted var(--accent);
+  outline-offset: 2px;
+}
+
+/* The dot is a fact the machine stated about a file: how many issues touch it.
+   The count itself is in the mark's words, which is where the machine stated it. */
+.ps-issue-dot {
+  color: var(--accent2);
+  font-size: 9px;
+}
+
+/* The viewer's head: what file, at what ref, with the hands that open its other
+   readings. The head is one line, and the ref chip wears the house chip. */
+.ps-code-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ps-code-path {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.ps-code-file {
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.ps-code-at {
+  color: var(--fg-dim);
+}
+
+.ps-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ps-code-hand {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.ps-code-hand:hover {
+  color: var(--fg);
+}
+
+.ps-code-hand.ps-code-hand-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+/* The body is a window: a file longer than the screen scrolls rather than
+   pushing the room out, and an anchor is reached by scrolling to it. The rows
+   are the machine's lines, one row each, with the number a press copies. */
+.ps-code-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 24vh;
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.ps-code-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.ps-code-no {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  cursor: pointer;
+  min-width: 5ch;
+  text-align: right;
+}
+
+.ps-code-no:hover {
+  color: var(--accent);
+}
+
+.ps-code-text,
+.ps-code-raw {
+  margin: 0;
+  padding: 0;
+  color: var(--fg);
+  white-space: pre;
+}
+
+/* The anchored line: the place the address names, lit rather than moved, so the
+   page still says where it stands. */
+.ps-code-line.ps-code-here {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.ps-code-line.ps-code-here>.ps-code-no {
+  color: var(--accent);
+}
+
+/* What a door cut off is stated where the cut is, in the machine's orange for a
+   reading that stopped short. */
+.ps-code-cut {
+  color: var(--unknown);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+/* A commit mark: the short name the machine gave a commit, and nothing else. Its
+   author and moment are in the mark's own words. */
+.ps-code-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.ps-code-chip:hover {
+  color: var(--fg);
+}
+
+.ps-code-chip-none {
+  color: var(--unknown);
+  font-size: 11px;
+}
+
+.ps-code-commit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.ps-code-when {
+  color: var(--fg-dim);
+  min-width: 17ch;
+}
+
+.ps-code-author {
+  color: var(--fg-dim);
+  min-width: 12ch;
+}
+
+.ps-code-message {
+  color: var(--fg);
+}
+
+/* history surface */
+
+/* The dense log the widened door answers: day groups of DOM rows — identity,
+   hands, moments, refs, counts, and the message with its body opened in place —
+   with the walk lane on canvas behind a spacer column every row keeps for it.
+   One canvas per day block, by a deliberate call: the block scrolls with its
+   rows so no scroll offset is ever kept in step, a long load-more walk never
+   grows one canvas past what a browser will hold, and a block off-screen costs
+   nothing until the observer brings it back — the same saving the rows get
+   under content-visibility, and the reason project.js releases a leaving
+   block's store while it keeps the box it was sized to: what a walk costs is
+   the screen, not its length. Every colour is a house token; none is invented. */
+.ps-code-body.ps-code-body-hist {
+  overflow: hidden;
+}
+
+.ps-hist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.ps-hist-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ps-hist-scope {
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-hist-field {
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  caret-color: var(--accent);
+  min-height: 26px;
+  padding: 2px 8px;
+  width: 140px;
+}
+
+.ps-hist-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ps-hist-toggle input {
+  accent-color: var(--accent);
+}
+
+.ps-hist-main {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.ps-hist-list {
+  flex: 1 1 62%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ps-hist-detail {
+  flex: 0 1 38%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
+}
+
+/* A column this narrow would squeeze the rows past reading: the pane drops
+   under the list instead, the way the three columns fold elsewhere. */
+@media (max-width: 900px) {
+  .ps-hist-main {
+    flex-direction: column;
+  }
+
+  .ps-hist-detail {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+    flex: 0 0 auto;
+  }
+}
+
+/* The day header rides the top of the window while its rows scroll under it,
+   the way the studio bar rides the page. */
+.ps-hist-dayhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  color: var(--fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 8px 0 4px;
+}
+
+.ps-hist-rows {
+  position: relative;
+}
+
+.ps-hist-lane {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.ps-hist-row {
+  display: flex;
+  align-items: center;
+  /* The row wraps for one thing only: an opened body, which gets a line of its
+     own. The fields stand inside .ps-hist-fields, which never wraps - see
+     below. */
+  flex-wrap: wrap;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  /* The row is the unit the lane measures against and the unit rendering skips
+     off-screen, so it is one 30 px line by construction: every field is kept
+     on that one line and squeezed rather than wrapped. That is what makes the
+     intrinsic size below honest - a row this window never laid out answers
+     with the height it would have occupied, which is the height the canvas
+     running sum in project.js adds for it. The auto keyword keeps the last
+     measured height, so an opened body neither lies about its size nor makes
+     the list jump. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 30px;
+}
+
+.ps-hist-row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.ps-hist-row.ps-hist-sel {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* The one line a row's fields stand in, and the only thing in the row that may
+   be squeezed. Nothing in it wraps: a row that broke onto a second line would
+   stand twice as tall as every lane canvas drawn over it, and a row never laid
+   out would still answer 30 px. The lane spacer keeps its exact width, because
+   the canvas under it is drawn at that width; the message gives way first, and
+   the short facts - the moment, a ref - ellipsise after it. What will not fit
+   at all is clipped here, with the words of it still in the field's own tip. */
+.ps-hist-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Every field keeps the one 30 px line the lane is drawn against; an opened
+   body is the only thing that grows the row, and it wraps whole to its own
+   line so the fields above never shift. */
+.ps-hist-fields>* {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+}
+
+.ps-hist-row>.ps-hist-bodywrap {
+  width: 100%;
+  display: block;
+  min-height: 0;
+}
+
+.ps-hist-lanespace {
+  flex: 0 0 var(--hist-lane-w, 122px);
+}
+
+.ps-hist-oid {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.ps-hist-oid:hover {
+  color: var(--accent);
+}
+
+.ps-hist-when {
+  color: var(--fg-dim);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ps-hist-author {
+  color: var(--fg-dim);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ps-hist-msg {
+  color: var(--fg);
+  flex: 1 1 40%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ps-hist-merge {
+  color: var(--accent2);
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.ps-hist-ref {
+  font-size: 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 14ch;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ps-hist-ref-branch {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.ps-hist-ref-head {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.ps-hist-ref-tag {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.ps-hist-ref-detached {
+  color: var(--fg-dim);
+}
+
+.ps-hist-stat {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ps-hist-add {
+  color: var(--ok);
+}
+
+.ps-hist-del {
+  color: var(--err);
+  margin-left: 3px;
+}
+
+.ps-hist-files {
+  color: var(--fg-dim);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.ps-hist-expand {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--fg-dim);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.ps-hist-expand:hover {
+  color: var(--fg);
+}
+
+.ps-hist-body {
+  /* Clear of the lane column: the lane's vertical runs carry straight down
+     past an opened body, and the body's words start after the lane's width,
+     the way they do beside every row. */
+  margin: 2px 0 6px var(--hist-lane-w, 122px);
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24vh;
+  overflow: auto;
+}
+
+.ps-hist-tail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* The detail pane: one commit told completely, at the same hand paint the
+   rest of the room wears. Its fields stack; only the head keeps a row. */
+.ps-hist-det-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ps-hist-det-oid {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.ps-hist-det-oid:hover {
+  color: var(--accent);
+}
+
+.ps-hist-det-hands {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.ps-hist-det-msg {
+  margin: 6px 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.ps-hist-det-par {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.ps-hist-det-name {
+  color: var(--fg-dim);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.ps-hist-det-parent {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.ps-hist-det-parent:hover {
+  color: var(--fg);
+}
+
+.ps-hist-det-sum {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.ps-hist-change {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: none;
+  border: 0;
+  padding: 1px 4px;
+  cursor: pointer;
+}
+
+.ps-hist-change:hover {
+  color: var(--accent);
+}
+
+.ps-hist-change-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ps-hist-change-mark {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
+.ps-hist-stat-ok {
+  color: color-mix(in srgb, var(--fg-dim) 60%, var(--ok));
+}
+
+.ps-hist-det-open {
+  margin-top: 10px;
+}
+
+/* The outline rows are the machine's reading of one blob: a name, its kind, and
+   the line it starts on. The row standing on the visible line is lit, because
+   that is the one the reader is inside. */
+.ps-outline-row {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: none;
+  border: 0;
+  padding: 1px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ps-outline-row:hover {
+  color: var(--fg);
+}
+
+.ps-outline-here {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* editor */
+
+/* The editor pane: the same window the reading is a window in, at the same
+   height bound, so entering the editor does not move the room. The pane holds
+   the words this browser typed; the machine is only asked again by a save. The
+   rules under it are read only inside #ps-editor because the vendored editor
+   names its own parts (cm-*): this sheet sizes them and takes nothing from the
+   editor's own sheet, which is what carries the colours. */
+#ps-editor {
+  min-height: 24vh;
+  max-height: 72vh;
+  overflow: hidden;
+}
+
+#ps-editor .cm-editor {
+  min-height: 0;
+  height: 100%;
+}
+
+#ps-editor .cm-scroller {
+  align-items: start;
+  overflow: auto;
+}
+
+#ps-editor .cm-editor,
+.ps-editor-pane {
+  border: 0;
+  background: none;
+}
+
+/* The row beside the pane: what the buffer holds, and the hands that act on it.
+   One line, wrapped when the column is narrow; the hands wear the reading's own
+   hand paint, so a hand that commits looks like a hand that reads. */
+#ps-editor-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+#ps-editor-status>.ps-field-row {
+  padding: 0;
+  background: none;
+}
+
+/* gutter */
+
+/* The marks the editor keeps beside the buffer. The pending truth wears the
+   green the house keeps for states that hold, for lines the buffer adds, and
+   the orange it keeps for a half-state, for lines the buffer changed against
+   the base it was given; a run that left with no replacement wears a soft
+   band on the line that stands where it left. The previous truth — a line the
+   shown commit wrote, as the blame door names it — keeps the page's own
+   blue, dimmed to a whisper. The marks stand in a column of their own, read
+   before the line numbers, so a bar and a number never lean on each other. */
+#ps-editor .cm-gutters>.cm-gutter.ps-gutter-marks {
+  /* In the row of gutters, this column comes first: the marks are read
+     before the numbers. */
+  order: -1;
+  padding: 0 6px 0 10px;
+}
+
+#ps-editor .ps-gutter-added {
+  display: inline-block;
+  width: 4px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ok);
+}
+
+#ps-editor .ps-gutter-modified {
+  display: inline-block;
+  width: 4px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--warn);
+}
+
+#ps-editor .ps-gutter-prev {
+  display: inline-block;
+  width: 4px;
+  height: 100%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+/* The band of a line where words left with no replacement: a soft amber
+   inside the line's own left edge, so the reading stays whole and the leaving
+   stays visible. */
+#ps-editor .cm-line.ps-gutter-deleted-line {
+  box-shadow: inset 5px 0 0 0 color-mix(in srgb, var(--warn) 26%, transparent);
+}
+
+/* run strip */
+
+/* The strip under the viewer's head: the hand that presses the build door, and
+   the state the status door last answered. It is one line of the room's own
+   hands - the button wears the reading's hand paint - and the state beside it
+   says in the machine's colours what the machine stated: a build standing waits
+   in the page's own dim, one that came out with zero wears the house green, one
+   that did not wears its red, and a cancelled or unanswered one the orange of a
+   state nothing stated well. */
+.ps-run-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ps-run-state {
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ps-run-wait {
+  color: var(--fg-dim);
+}
+
+.ps-run-ok {
+  color: var(--ok);
+}
+
+.ps-run-err {
+  color: var(--err);
+}
+
+.ps-run-warn {
+  color: var(--unknown);
+}
+
+/* The results block: the build's streams as they came, one under the other in
+   reading order, each named by which it is. The words are the machine's and are
+   never re-flowed here - a pre like the raw reading's, at the same window bound
+   as the file body so a long log scrolls without pushing the room out. */
+.ps-run-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ps-run-results[hidden] {
+  display: none;
+}
+
+.ps-run-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 6px 10px;
+}
+
+.ps-run-stream-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--fg-dim);
+}
+
+.ps-run-stream-body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 36vh;
+  overflow: auto;
+}
+
+/* problems */
+
+/* The problems region: one row per line the door read out of the compiler's
+   words, in the machine's own mono. A row is a press that opens the file it
+   names at the line it names, so it wears the outline row's hand - and the row
+   chosen by the last press stands lit the way an anchored line does. A warning
+   wears the house orange rather than its red: the severity is the compiler's
+   word, not this page's judgement. */
+.ps-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-problems[hidden] {
+  display: none;
+}
+
+.ps-problems-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ps-problems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 24vh;
+  overflow: auto;
+}
+
+.ps-problem-row {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: none;
+  border: 0;
+  padding: 1px 4px;
+  cursor: pointer;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ps-problem-row:hover {
+  color: var(--fg);
+}
+
+.ps-problem-warn {
+  color: color-mix(in srgb, var(--unknown) 80%, var(--fg-dim));
+}
+
+.ps-problem-row.ps-problem-sel {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* The squiggle: a diagnostic's whole line under the editor's caret, wavy and
+   red for an error, orange for a warning. The mark is the bundle's own
+   Decoration.mark wearing these classes; the wave sits under the text so the
+   words stay readable above it. */
+.ps-run-squiggle {
+  text-decoration: underline wavy var(--err);
+  text-decoration-skip-ink: none;
+}
+
+.ps-run-squiggle-warn {
+  text-decoration: underline wavy var(--unknown);
+}
+
+/* ---------- the two record rooms: pulls and issues ----------
+   Both rooms are the same shape, because both are the same act: a bar of the
+   filters this page stands on, the rows the machine listed, and - when a row is
+   read - one record filling the room. Nothing here is decoration: a chip holds
+   one number or word a door stated, and a pane holds text a door sent. */
+
+/* The bar above the rows: the filter segments, the chips the door's own numbers
+   wear, and the hands that ask the machine for something new. It wraps rather
+   than scrolls - a filter that had to be scrolled to would be a filter nobody
+   sees standing. */
+.ps-room-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 0 0 8px;
+}
+
+.ps-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* A room whose rows are put away for one record keeps its own headroom: the
+   panel is still the panel, and the record is drawn inside it. */
+.ps-list[hidden],
+.ps-detail[hidden],
+.ps-ask[hidden] {
+  display: none;
+}
+
+.ps-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+/* The record's own head: back, its number, its name, and the state word the
+   machine keeps for it, on one line. */
+.ps-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.ps-detail-part {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 3px;
+  margin-top: 4px;
+}
+
+.ps-detail-hands {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A working part of a record: the fields a press sends, kept under the record
+   they belong to rather than in a sheet over the page. */
+.ps-detail-work {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.ps-field-top {
+  align-items: flex-start;
+}
+
+.ps-field-top>label {
+  padding-top: 7px;
+}
+
+.ps-room-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 6px 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  resize: vertical;
+}
+
+/* A row of a record room: one button the whole way across, because reading a
+   record is one act, and the row is the whole record as the list door stated it.
+   The name is the part a person looks for, so it is the part that keeps its
+   width; the refs and the when give way first. */
+.ps-rec {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.ps-rec:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg2));
+}
+
+.ps-rec-no {
+  color: var(--accent);
+  min-width: 6ch;
+}
+
+.ps-rec-name {
+  color: var(--fg);
+  flex: 1 1 22ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-rec-refs,
+.ps-rec-files,
+.ps-rec-when {
+  color: var(--fg-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ps-rec-files {
+  flex: 0 1 40ch;
+}
+
+/* The state a record wears. The word is the machine's; the colour only tells the
+   three states apart, and a state the door did not name is said in words rather
+   than coloured in. */
+.ps-state {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+  background: var(--bg3);
+  white-space: nowrap;
+}
+
+.ps-state-open {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.ps-state-merged {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.ps-state-closed {
+  color: var(--fg-dim);
+}
+
+.ps-state-unknown {
+  color: var(--unknown);
+  border-color: color-mix(in srgb, var(--unknown) 45%, var(--line));
+}
+
+/* A thread: the reviews, comments, and anchors a record carries. Each row is the
+   record's own words, the who and the when beside them, and the body unbroken -
+   words a person wrote are not re-flowed into a single line. */
+.ps-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.ps-thread-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.ps-thread-who {
+  color: var(--fg);
+}
+
+.ps-thread-verdict {
+  color: var(--accent);
+}
+
+.ps-thread-when,
+.ps-thread-anchor {
+  color: var(--fg-dim);
+}
+
+.ps-thread-body {
+  flex: 1 1 100%;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A record's body, and a pull's conflicts: text the machine sent, shown as it
+   was sent. The three sides of a conflict stand beside each other while the page
+   is wide, and one under the other when it is not - never side by side so
+   narrow that a line wraps into noise. */
+.ps-record-body {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.ps-conflicts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ps-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-left: 2px solid color-mix(in srgb, var(--err) 55%, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 0;
+}
+
+.ps-conflict-head {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--err);
+  overflow-wrap: anywhere;
+}
+
+.ps-conflict-sides {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ps-conflict-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 7px;
+}
+
+.ps-conflict-side {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+
+.ps-conflict-text {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+/* Where the paths an issue wears stand at the head now. A path whose bytes still
+   stand where they were read is the only one offering to open, and it is the only
+   one drawn in the colour of a thing that stands. */
+.ps-anchor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.ps-anchor-path {
+  color: var(--ok);
+}
+
+.ps-anchor-quiet {
+  color: var(--fg-dim);
+}
+
+.ps-anchor-moved {
+  color: var(--unknown);
+}
+
+.ps-link-row {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 980px) {
+  .ps-conflict-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ps-pills {
+    margin-left: 0;
+  }
+}

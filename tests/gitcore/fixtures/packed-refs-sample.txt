@@ -1,0 +1,6 @@
+# pack-refs with: peeled fully-peeled sorted 
+a867ef798b215db19eaf0c7b615c789792fe62b9 refs/heads/master
+
+# --- what the same repo carries besides the packed refs, for the record ---
+# .git/HEAD: ref: refs/heads/master 
+# .git/refs/heads/master: not there, pack-refs --all --no-prune moved the ref into packed-refs

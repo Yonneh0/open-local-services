@@ -1,0 +1,41 @@
+the release artifacts of open-local-services, built by build-rel.bat
+version: the code of every artifact here is the commit 5884a7f08b3195c669c255fce20d88b2f02a3e7a
+with cmake and the msvc cl.exe at C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64, and the vulkan sdk at C:\VulkanSDK\1.4.363.1
+
+each folder below is one machine shape, built here and started as it arrived:
+  x64-windows: the cpu backend built up to avx512 with vbmi, vnni and bf16,
+    and the Vulkan backend - for a cpu that reports those instruction sets.
+  x64-windows-plain: the same server with the cpu backend kept at the x64
+    baseline of avx2 and the Vulkan backend - for a cpu with no avx512 at all.
+  x64-cuda-70, x64-cuda-75, x64-cuda-86: the same server whose engines
+    take the CUDA backend, one folder and one binary per card generation -
+    sm_70 for the compute 7.0 cards, sm_75 for the compute 7.5 cards - the
+    card in the laptop down the network - and sm_86 for the compute 8.6 cards.
+    one binary answers one card generation, which keeps what gets pushed
+    over the network small; the linux side builds the same three.
+inside each folder: open-local-services.exe with the voice engine and its device
+probe inside it, and the image engine as stable-diffusion.dll next to the
+server - it carries its own ggml, and one executable cannot hold two ggmls.
+the phonemizer data the voice engine reads sits under the server's own
+executable.
+the build roots of every target are kept between runs: a run that changed
+no source recompiles nothing but the file that carries the version.
+card architectures this CUDA toolkit could not write for: 
+the card architecture inside each cuda binary is read off the artifact,
+not trusted from what was asked, and the run that writes this file prints
+what it reads beside the names of the folders it built.
+the engines were compiled in the vendor trees this code keeps, on the
+pinned commits its .pin files record - no source was copied for this
+build. the sources that built every artifact here:
+    voice engine: api\vendor\audio.cpp at 41bb3f0ffb6b46b7a3bb3c02fcea52900d88001b, compiled in below
+    image engine: api\vendor\stable-diffusion.cpp at b13a48219d5cdf408edcb93da6cd69b612ed03d3
+    image ggml: api\vendor\stable-diffusion.cpp\ggml at dc998771e700d49bbdf9a39cede22bb5b3311767
+
+the release of each target is one zip beside this file, named for the
+commit its binary carries - open-local-services-5884a7f-win-<folder>.zip -
+and the sha256 of every zip stands in Release\SHA256SUMS-win.txt. inside
+each folder: the cuda runtime the binaries really import and the
+microsoft c++ runtime, carried beside the server rather than left to
+the machine that receives it, and a webui folder served live the way
+the development tree's is. open such a folder where it stands and run
+it; nothing is compiled and nothing is fetched on that machine.

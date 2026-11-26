@@ -1,0 +1,37 @@
+{
+  "generated_by": "git.exe, see oracle-commands.md beside this file; never hand-edited",
+  "object_format": "sha1",
+  "meaning": "size is the size of the raw bytes the object decompresses to, which carry the header "type size NUL" before the content; content_sha256 is the SHA-256 of those same raw bytes; every object of this sample is of the sha1 format, and its SHA-1 is the oid it stands under",
+  "objects": [
+    {
+      "oid": "77626866b9dc450241b7ee8de07a25a327480109",
+      "type": "tree",
+      "size": 35,
+      "content_sha256": "7b0214eb812ab35ce4b3bb4f42a426f75e8e4a381e53a48b9ac714a0de48d374"
+    },
+    {
+      "oid": "a867ef798b215db19eaf0c7b615c789792fe62b9",
+      "type": "commit",
+      "size": 232,
+      "content_sha256": "e2ad9b17648bffe14901903e475e39d57af63e967d71b3899e8b0619ce652e19"
+    },
+    {
+      "oid": "d25250f5f7f874caffa476f3a69161b879d2cbc6",
+      "type": "tree",
+      "size": 67,
+      "content_sha256": "d5089126177f6f4502486f568b4ac1aacc646abf72d1f60d211c8a225c340f1b"
+    },
+    {
+      "oid": "e0396ffc6284bb3b460e027c49d05bbb31b273e1",
+      "type": "blob",
+      "size": 50,
+      "content_sha256": "9b30f1ed016f06fc9ed633b24454859952fdb38b4d191621f686d9e3ac09df51"
+    },
+    {
+      "oid": "f63ac6b34ade6c27cb84d19886049042a8bc2ce4",
+      "type": "blob",
+      "size": 67,
+      "content_sha256": "fca6e9c3c83a9e81593c2a9ebfba04ad6dcce1e2c8fd3fb6ff6496b00df9d855"
+    }
+  ]
+}

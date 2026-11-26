@@ -1,0 +1,4291 @@
+:root {
+  /* The near-black paper the status wall is read on: the page itself is the
+     darkest thing on the screen, a panel sits one step above it, and a figure's
+     chips sit one step above that. Nothing is separated by a bright rule; the
+     borders are a few shades above the panel behind them. */
+  --bg: #0c0f13;
+  --bg2: #14181e;
+  --bg3: #1a2027;
+  --chip: #262d37;
+  --line: #262e38;
+  --grid: rgba(163, 178, 197, 0.07);
+  --fg: #dde3ea;
+  --fg-dim: #8a95a5;
+  --accent: #4e97dd;
+  --accent2: #d95eb5;
+  --ok: #4fc08d;
+  --warn: #d9a83f;
+  --err: #e2564f;
+  /* A state nothing stated is not a failure: the machine that was never read
+     wears its own orange, so an unknown is never drawn as a bad one. */
+  --unknown: #e08a3f;
+  --accent3: #4fc08d;
+  --accent4: #2ecfbb;
+  /* What a figure on the home page is drawn in: a card names its engine's
+     colour, anything outside a card — the machine's own panels — is drawn in the
+     page's blue, so a line is always the engine's or the machine's, never a
+     colour with nothing to name it. */
+  --engine-tint: var(--accent);
+  --radius: 9px;
+  --gap: 12px;
+  --field-h: 28px;
+  --sans: "Segoe UI", "Segoe UI Variable", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: 50px 32px 1fr;
+  grid-template-columns: 100%;
+  grid-template-areas: "top" "nav" "body";
+}
+
+#topbar {
+  grid-area: top;
+  display: flex;
+  /* The bar is one row of chips that never fold: nothing in it is squeezed, so
+     a reading that needs more room keeps its own width and a window too narrow
+     for the bar gets a sideways scrollbar instead of a bar over the tabs. */
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 4px 14px;
+  /* Tall enough that the brand's mark stays inside the bar at its full
+     size, so it never spills over the nav under it. */
+  min-height: 50px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+  /* The bar below paints behind the words, so the header needs its own
+     stacking context and a place in the page's order. */
+  position: relative;
+  z-index: 0;
+}
+
+/* Nothing in the bar is squeezed to fit the window: a chip keeps the width its
+   own words need, so a long reading stays whole and a window narrower than the
+   bar scrolls sideways instead of one chip standing on another. */
+#topbar>* {
+  flex-shrink: 0;
+}
+
+/* While a job runs, the whole header is its progress bar: the fill grows behind
+   the words from the left, so how far the run got is read where you already
+   look instead of in a strip you have to hunt for. Pages set --job-progress as
+   a percentage on the header, and --job-tint to the colour of that engine. */
+#topbar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--job-progress, 0%);
+  background: linear-gradient(90deg, transparent, var(--job-tint, var(--accent)));
+  opacity: 0.22;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* The one line every page carries: which engine is working and how far it got.
+   a running one is lit, nothing running stays dim, so a quiet page reads quiet. */
+.head-status {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: pre;
+}
+
+.head-status.run {
+  color: var(--fg);
+}
+
+.head-status.idle {
+  color: var(--fg-dim);
+}
+
+/* A page that could not reach the server says so rather than claiming the
+   machine is quiet, so the line reads as what is known and not as a fact. */
+.head-status.err {
+  color: var(--err);
+}
+
+/* A job whose end is not known: a fill would say how far the run got, and there
+   is no such thing here, so the header keeps stripes instead and they drift. The
+   words stay as a running line; only the bar changes. */
+#topbar.indeterminate::before {
+  background: repeating-linear-gradient(135deg, transparent 0 10px,
+      var(--job-tint, var(--accent)) 10px 20px);
+  opacity: 0.18;
+  animation: indeterminate-drift 2.4s linear infinite;
+}
+
+@keyframes indeterminate-drift {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 40px 0;
+  }
+}
+
+.brand {
+  position: relative;
+  z-index: 0;
+  white-space: nowrap;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-size: 15px;
+}
+
+/* The machine's own mark behind the brand words: the real mark in its own
+   colours, with only a uniform alpha applied. */
+.brand::before {
+  content: '';
+  position: absolute;
+  left: 2.75em;
+  top: 1.75em;
+  translate: -50% -50%;
+  width: 5em;
+  height: 5em;
+  background: url(/favicon.ico) center/contain no-repeat;
+  image-rendering: auto;
+  opacity: 0.25;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Chips carry machine facts: the CPU chip and the GPU chip each show two
+   rows, the others one sentence; no bubble ever grows past two lines. The
+   CPU and GPU bubbles also fill from their bottom to the percent of the
+   pool they state — the page sets --fill with the reading, a bubble
+   without one is simply empty. */
+.chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(0deg,
+      var(--fill-tint, rgba(255, 255, 255, 0.16)) var(--fill, 0%),
+      transparent var(--fill, 0%)),
+    var(--bg3);
+  font-size: 12px;
+  opacity: 0.75;
+  text-align: center;
+  /* A chip's words stay on their line: the bar is read across, never stacked. */
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+/* A row takes one line; a lone row takes the same one line, and whatever does
+   not fit ends with dots rather than a further line. */
+.chip>.cr {
+  display: -webkit-inline-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.chip.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.chip.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.chip.err {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+/* ---------- the timed stack ----------
+   A thing worth one look lives here for a moment: short plain words, a bar that
+   empties as the time runs out (a running job's bar is its estimated time left),
+   and two hands of its own. the stack hangs under the header, at the right, over
+   whatever the page is doing; colours are the app's own state colours. */
+#toasts {
+  position: fixed;
+  top: 88px;
+  right: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  pointer-events: none;
+}
+
+#toasts>* {
+  pointer-events: auto;
+}
+
+#toasts .toast-close-all {
+  order: 9;
+  align-self: flex-end;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--fg-dim);
+  background: var(--chip);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.toast {
+  --toast-tint: var(--warn);
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas:
+    "bar   bar   bar"
+    "words words words"
+    "left  pause close";
+  gap: 3px 6px;
+  padding: 6px 9px 6px 9px;
+  width: 244px;
+  border: 1px solid color-mix(in srgb, var(--toast-tint) 40%, var(--line));
+  background: color-mix(in srgb, var(--toast-tint) 7%, var(--chip));
+  border-radius: var(--radius);
+  transition: opacity 260ms ease, transform 260ms ease;
+  animation: toast-in 200ms cubic-bezier(.22, .68, .28, 1) both;
+  pointer-events: auto;
+}
+
+.toast.ok {
+  --toast-tint: var(--ok);
+}
+
+.toast.warn {
+  --toast-tint: var(--warn);
+}
+
+.toast.err {
+  --toast-tint: var(--err);
+}
+
+.toast.wait {
+  --toast-tint: var(--accent);
+}
+
+.toast-bar {
+  grid-area: bar;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--toast-tint) 22%, var(--chip));
+}
+
+.toast-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--toast-tint) 82%, var(--chip));
+  transition: width 320ms linear;
+}
+
+/* work that states no scale yet - queued, opening - keeps the moving bar the
+   app already draws for uncounted work */
+.toast-open .toast-fill {
+  width: 42%;
+  background: repeating-linear-gradient(120deg,
+      color-mix(in srgb, var(--toast-tint) 70%, transparent) 0 6px,
+      transparent 6px 12px);
+  animation: indeterminate-drift 1.1s linear infinite;
+}
+
+/* A notice that describes a piece of work reads like the card of the thing it
+   works with: the toast line of it stands under the bar. */
+.toast-words {
+  grid-area: words;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--fg);
+}
+
+.toast-left {
+  grid-area: left;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.toast-pause,
+.toast-close {
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--chip) 70%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.toast-pause {
+  grid-area: pause;
+}
+
+.toast-close {
+  grid-area: close;
+}
+
+.toast:hover .toast-pause,
+.toast:hover .toast-close {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--toast-tint) 16%, var(--chip));
+}
+
+.toast.paused {
+  --toast-tint: var(--fg-dim);
+}
+
+.toast.paused .toast-fill {
+  transition: none;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.toast.closing {
+  animation: toast-out 460ms cubic-bezier(.4, 0, .7, .4) both;
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(.94);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .toast,
+  .toast.closing {
+    animation: none;
+    transition: none;
+  }
+
+  .toast-open .toast-fill {
+    animation: none;
+  }
+}
+
+#nav {
+  grid-area: nav;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* The left pad stands the row 100px off the edge, so home sits under the
+     brand words; the 14px base is the old edge gap. This one number is the
+     whole row's place - the others follow it at their gaps. */
+  padding: 0 14px 0 114px;
+  background: var(--bg2);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+/* The mark is drawn inside the tab's own box, so it sits behind the words and
+   above the tab, not behind the bar the tabs stand on. */
+#nav a {
+  position: relative;
+  z-index: 0;
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 6px 22px;
+  border-radius: 6px;
+}
+
+/* Every tab carries its own mark under the words, the same way the brand
+   carries the machine's mark: behind the words, dimmed, and kept in the mark's
+   own colours. These are watermarks rather than icons: large enough that a
+   person reads the page they belong to at a glance, faint enough that the
+   words stay the loudest thing on the bar. Which mark belongs to which tab is
+   read from the address the tab points at, so no page needs to say anything
+   about it — and a tab that names no mark carries no mark. The mark asks for
+   an emoji face first, because the page's own faces carry none of these. */
+#nav a::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  font-family: "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", var(--sans);
+  font-size: 36px;
+  opacity: 0.22;
+  z-index: -1;
+  pointer-events: none;
+}
+
+#nav a[href="imagegen.html"]::before {
+  content: '🖌';
+}
+
+#nav a[href="voice.html"]::before {
+  content: '🎙';
+}
+
+#nav a[href="index.html"]::before {
+  content: '📊';
+}
+
+#nav a.on {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border: 1px solid var(--line);
+}
+
+#nav a:hover {
+  color: var(--fg);
+}
+
+/* The studios' badges: what an engine runs and holds, worn across the
+   top-right corner of the studio's tab like unread marks. Each kind keeps the
+   colour the page already gives that fact: running work wears the clock's
+   amber, waiting work green, models standing in memory red - an amber wash
+   for the face, black for the number, and the panel titles' faint white
+   stroke under the fill so the mark stays legible on any page the tab stands
+   over. Nothing to count, nothing worn; and no badge is there to be pressed,
+   so a click on one is a click on the tab it stands on. */
+#nav a .tab-badges {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 1;
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
+}
+
+#nav a .tab-bubble {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  min-width: 22px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #000;
+  font-size: 12px;
+  text-align: center;
+  -webkit-text-stroke: 0.6px rgba(255, 255, 255, 0.5);
+  paint-order: stroke fill;
+  pointer-events: none;
+}
+
+#nav a .tab-bubble[hidden] {
+  display: none;
+}
+
+#nav a .tab-bubble.run {
+  background: rgba(255, 158, 46, 0.55);
+}
+
+#nav a .tab-bubble.queue {
+  background: rgba(79, 192, 141, 0.55);
+}
+
+#nav a .tab-bubble.loaded {
+  background: rgba(226, 86, 79, 0.55);
+}
+
+/* The machine's health is shown rather than written anywhere: the home tab
+   carries a glow behind its words, mostly transparent, that breathes slowly so
+   it reads as a state being held now rather than one painted and left standing.
+   The colour is the state, read from the class the pages set on that tab; a
+   tab with no state class is a machine nothing read, and it glows the unknown
+   colour rather than claiming quiet. The wash lives inside the tab's own box,
+   behind the words and above the bar the tabs stand on, the same way the tab's
+   mark does; the halo outside is what lets the colour be felt past the words. */
+#nav a[href="index.html"] {
+  --state-glow: var(--unknown);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--state-glow) 35%, transparent);
+  transition: box-shadow .8s ease;
+}
+
+#nav a[href="index.html"].state-bad {
+  --state-glow: var(--err);
+}
+
+#nav a[href="index.html"].state-loading {
+  --state-glow: var(--warn);
+}
+
+#nav a[href="index.html"].state-running {
+  --state-glow: var(--accent);
+}
+
+#nav a[href="index.html"].state-idle {
+  --state-glow: var(--ok);
+}
+
+#nav a[href="index.html"]::after {
+  content: '';
+  position: absolute;
+  left: -12px;
+  right: -12px;
+  top: -8px;
+  bottom: -8px;
+  background: radial-gradient(closest-side, var(--state-glow), transparent 70%);
+  filter: blur(5px);
+  opacity: 0.16;
+  z-index: -1;
+  pointer-events: none;
+  animation: status-glow-breathe 3.6s ease-in-out infinite;
+}
+
+@keyframes status-glow-breathe {
+
+  0%,
+  100% {
+    opacity: 0.1;
+    transform: scale(.9);
+  }
+
+  50% {
+    opacity: 0.26;
+    transform: scale(1.08);
+  }
+}
+
+main {
+  grid-area: body;
+  display: grid;
+  grid-template-columns: 340px minmax(560px, 1fr);
+  /* The two columns are separated by the page's own gutter, the same width as
+     the space between panels down a column, so a panel in one column never
+     stands against a panel in another and the spacing reads the same in both
+     directions. */
+  gap: var(--gap);
+  min-height: 100%;
+  /* Air at the top, so the plate of the first panel's name - half of which
+     rides over the panel's edge - is never cut by the bar above. */
+  padding-top: 6px;
+}
+
+#left {
+  background: var(--bg2);
+  overflow-y: auto;
+  /* The column stacks as a column of its own, and keeps a thumb's width of air
+     at the top, so the plate of the first panel's name - which rides half over
+     its panel's edge - is never cut by the column's own top. */
+  display: flex;
+  flex-direction: column;
+  padding-top: 6px;
+}
+
+#studio {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  /* Half the gutter on the top and bottom, so the space between panels reads
+     the same up the page as it does across it. */
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* The panel is what its name plate stands on: the title is set on the panel's
+     own top edge, so the panel holds that place. */
+  position: relative;
+}
+
+/* A panel with a name keeps room under the edge for the half of the plate that
+   hangs in. A panel without one keeps its old top. */
+.panel:has(> .panel-title) {
+  padding-top: 36px;
+}
+
+/* The name of a panel is no longer whispered inside its top: the first name of
+   a panel is set as a plate on the panel's edge itself. The text is centred on
+   the rule, so the edge is struck straight through the word - nothing masks
+   that rule, it is the strike of the strike-through. The letters themselves are
+   darkened toward the panel and kept readable by a sharp bright outline,
+   fuller and twice the size they were; and one small drop of the page's colour
+   stands centred on the panel's own top-left corner, so a panel is found by
+   colour before it is read. A second name standing further inside the same
+   panel is not the panel's edge's to hold, and keeps the small inline voice it
+   always had. */
+.panel>.panel-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--fg-dim);
+}
+
+.panel>.panel-title:first-child {
+  position: absolute;
+  top: -2px;
+  left: 32px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 0 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0.3em;
+  white-space: nowrap;
+  color: var(--bg2);
+  -webkit-text-stroke: 1.25px var(--fg);
+  paint-order: stroke fill;
+}
+
+/* The mark is the panel's, not the name's: set at the panel's own corner the
+   title stands on, the whole width of the plate's inset back and one dot's
+   half, so the drop sits centred where the panel's two edges meet. */
+.panel>.panel-title:first-child::before {
+  content: "";
+  position: absolute;
+  left: -34px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent),
+    0 0 6px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* A hand set in a panel's own title line: the title's voice and size, so it
+   reads as part of the panel's name and not as another control among the panel's
+   own. It takes the line's own border until the pointer is on it, then the
+   accent, which is how every other hand on these pages answers. */
+.title-hand {
+  /* The title line's own gap spaces it from the words; no margin of its own. */
+  margin-left: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--fg);
+  background: transparent;
+  border-radius: 7px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.title-hand:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The engine marks worn beside the open-models panel's name: title hands each,
+   wearing its engine's own mark behind the word the way the nav tabs wear
+   theirs - faintly, in the mark's own colours, asking nothing of a click. A
+   mark worn down (its engine's cards off the page) dims to the line's colour;
+   a mark worn on keeps the accent's edge. */
+.model-toggle {
+  position: relative;
+  z-index: 0;
+  color: var(--fg-dim);
+}
+
+.model-toggle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  font-family: "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", var(--sans);
+  font-size: 19px;
+  opacity: 0.16;
+  z-index: -1;
+  pointer-events: none;
+}
+
+#model-toggle-image::before {
+  content: '🖌';
+}
+
+#model-toggle-voice::before {
+  content: '🎙';
+}
+
+.model-toggle.on {
+  color: var(--accent);
+}
+
+.model-toggle.on::before {
+  opacity: 0.3;
+}
+
+.panel-foot {
+  font-size: 11px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg3);
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 160px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+}
+
+.step b {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+/* A package whose files are not here is a card like any other, in muted paint:
+   it names what it is, what its package declares, where its files come from, and
+   the one hand it has. Same layout, quieter colour, so a machine without those
+   weights still reads as a set of cards rather than as lines among them. */
+.model-card.model-rest {
+  background: var(--bg2);
+  border-color: var(--line);
+  opacity: .78;
+}
+
+/* A family's packages stand together under this mark: it names the family and
+   says how many of its packages are here, so a long list stays readable. The
+   space above it is what keeps a new family apart from the cards of the one
+   before. */
+.family-mark {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  border-left: 3px solid var(--accent);
+  padding: 2px 8px;
+  margin: 6px 0;
+}
+
+/* The room's own counts: the numbers the machine answered, drawn as fact rows,
+   so the set reads as a whole before any card of it is drawn. */
+.model-stats {
+  font-size: 11px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  margin: 0 0 6px;
+}
+
+/* The narrowings a person may ask of the set. The controls are a row of small
+   fields in the room, and the words they offer are the machine's own. */
+.model-filter {
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.model-filter label {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.model-filter select,
+.model-filter input {
+  width: 100%;
+  max-width: 220px;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+/* Where this page stands in the set it matched: the count, the window drawn,
+   and the hands that move through it. */
+.model-cursor {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin: 0 0 6px;
+}
+
+/* A file door: the browser's own chooser, kept in a form so its answer can be
+   heard and the page is never navigated to the file. The form adds no space of
+   its own; the field keeps the look of the other fields on the page. */
+form.file-door {
+  display: contents;
+}
+
+.model-card {
+  --card-side: 9px;
+  --card-top: 7px;
+  padding: var(--card-top) var(--card-side);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg3);
+  transition: border-color .2s ease, background-color .2s ease, box-shadow .2s ease;
+}
+
+.model-card.model-on {
+  border-color: var(--accent);
+  background: var(--bg3);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 40%, transparent);
+  animation: model-live 2.6s ease-in-out infinite;
+}
+
+@keyframes model-live {
+
+  0%,
+  100% {
+    box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+}
+
+/* The model a run would draw with: a heavier border in the colour a selection
+   is drawn in, so which model is picked reads off the cards with nothing opened.
+   a card can be in memory and picked at once, and the picking mark is the
+   heavier one, so it is the one that shows. */
+.model-card.model-chosen {
+  border-width: 2px;
+  border-style: solid;
+  border-color: var(--accent2);
+  background: var(--bg2);
+  box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent2) 30%, transparent);
+}
+
+/* The word line of a played render: one cell per word the model stated a
+   position for, in reading order. The line fills as the sound runs: the word the
+   audio is saying now wears the full tint, the words already said keep a lesser
+   one, and the words not reached yet stay plain - so the line reads along with
+   the sound rather than as a list of timings, and a short word can never be
+   missed because the drawing only samples the clock a few times a second. */
+.word-cell {
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 2px 5px;
+  margin: 0 2px;
+  display: inline-block;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease,
+    box-shadow .16s ease;
+}
+
+.word-cell.word-said {
+  color: var(--fg-dim);
+  background: color-mix(in srgb, var(--accent2) 12%, var(--bg2));
+  border-color: color-mix(in srgb, var(--accent2) 45%, var(--line));
+}
+
+.word-cell.word-on {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent2) 32%, var(--bg2));
+  border-color: var(--accent2);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent2) 45%, transparent);
+}
+
+#word-track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+}
+
+/* The card layout: words on the left, facts as fingers on the right. The finger
+   column takes everything the words do not and runs flush to the card's own
+   border on the right and its full height, so no gutter of card padding sits
+   beside a fact; the words column gives up its own room rather than pushing the
+   card wider than its place, and a finger whose words do not fit wraps them
+   instead of losing them. */
+.model-card {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.model-main {
+  flex: 1 1 55%;
+  min-width: 140px;
+}
+
+.model-fingers {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 45%;
+  min-width: 140px;
+  gap: 0;
+  margin: calc(-1 * var(--card-top, 0px)) calc(-1 * var(--card-side, 0px));
+  border-radius: 0 var(--radius) var(--radius) 0;
+  overflow: hidden;
+  background: var(--bg3);
+}
+
+.finger {
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 2px 8px;
+  white-space: normal;
+  position: relative;
+}
+
+/* Stacked rows share their border line, so the divider between two fingers
+   stays a single hairline rather than two drawn lines. */
+.finger+.finger {
+  margin-top: -1px;
+}
+
+.finger:hover {
+  background: var(--bg2);
+  color: var(--fg);
+}
+
+button.finger {
+  font-family: inherit;
+  font-weight: 400;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.finger.loaded {
+  color: var(--accent);
+}
+
+.finger.ok {
+  color: var(--ok);
+}
+
+.finger.gate {
+  color: var(--accent2);
+}
+
+/* A fact that warns or refuses reads as such rather than as a plain line, so a
+   card that is missing something says so at a glance. */
+.finger.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.finger.err {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, var(--line));
+}
+
+/* Numbers a reader compares - weights, files, the bytes of work - sit brighter
+   than plain words, so a fact can be read without leaning in. */
+.finger.size {
+  color: var(--fg);
+}
+
+/* A fact chosen rather than pressed. One of these stands in the fact row where
+   each of a model's other precisions used to take a row of its own: the field
+   carries the words and the mark at its edge says the row opens. */
+.finger.pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.finger.pick select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.finger.pick select:focus {
+  outline: none;
+}
+
+.finger.pick option {
+  background: var(--bg2);
+  color: var(--fg);
+}
+
+.finger.pick .pick-mark {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--fg-dim);
+}
+
+/* The mark under a control's words: a shape at low contrast, left-justified so
+   the first letters of the words sit over it, in the row's own colour and
+   brought down to a watermark. It is there so a control can be recognised by
+   its shape as well as by its text, and it carries no meaning of its own. */
+.finger[data-icon]::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: calc(50% - 9px);
+  width: 18px;
+  height: 18px;
+  z-index: -1;
+  opacity: 0.16;
+  pointer-events: none;
+  background: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.finger[data-icon="search"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Ccircle%20cx='10'%20cy='10'%20r='6.4'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M14.5%2014.5L20.5%2020.5'%20stroke='black'%20stroke-width='2.6'%20stroke-linecap='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Ccircle%20cx='10'%20cy='10'%20r='6.4'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M14.5%2014.5L20.5%2020.5'%20stroke='black'%20stroke-width='2.6'%20stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="play"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M6%204.5L18%2012%206%2019.5Z'%20fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M6%204.5L18%2012%206%2019.5Z'%20fill='black'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="state"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M4%207H20M4%2012H20M4%2017H20'%20stroke='black'%20stroke-width='1.5'/%3E%3Ccircle%20cx='9'%20cy='7'%20r='2.4'%20fill='black'/%3E%3Ccircle%20cx='15'%20cy='12'%20r='2.4'%20fill='black'/%3E%3Ccircle%20cx='7.5'%20cy='17'%20r='2.4'%20fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M4%207H20M4%2012H20M4%2017H20'%20stroke='black'%20stroke-width='1.5'/%3E%3Ccircle%20cx='9'%20cy='7'%20r='2.4'%20fill='black'/%3E%3Ccircle%20cx='15'%20cy='12'%20r='2.4'%20fill='black'/%3E%3Ccircle%20cx='7.5'%20cy='17'%20r='2.4'%20fill='black'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="use"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Ccircle%20cx='12'%20cy='12'%20r='7'%20fill='none'%20stroke='black'%20stroke-width='1.8'/%3E%3Ccircle%20cx='12'%20cy='12'%20r='2.6'%20fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Ccircle%20cx='12'%20cy='12'%20r='7'%20fill='none'%20stroke='black'%20stroke-width='1.8'/%3E%3Ccircle%20cx='12'%20cy='12'%20r='2.6'%20fill='black'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="size"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M4%209V4H9M15%204H20V9M20%2015V20H15M9%2020H4V15'%20fill='none'%20stroke='black'%20stroke-width='2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M4%209V4H9M15%204H20V9M20%2015V20H15M9%2020H4V15'%20fill='none'%20stroke='black'%20stroke-width='2'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="cap"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203.5L14.6%209.4%2020.5%2012%2014.6%2014.6%2012%2020.5%209.4%2014.6%203.5%2012%209.4%209.4Z'%20fill='black'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203.5L14.6%209.4%2020.5%2012%2014.6%2014.6%2012%2020.5%209.4%2014.6%203.5%2012%209.4%209.4Z'%20fill='black'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="download"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203.5V14'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M7%209L12%2014%2017%209'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M4.5%2020H19.5'%20stroke='black'%20stroke-width='2.2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203.5V14'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M7%209L12%2014%2017%209'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M4.5%2020H19.5'%20stroke='black'%20stroke-width='2.2'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="load"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M3.5%2012H13'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M8.5%207.5L13%2012%208.5%2016.5'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M18%204V20'%20stroke='black'%20stroke-width='2.4'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M3.5%2012H13'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M8.5%207.5L13%2012%208.5%2016.5'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M18%204V20'%20stroke='black'%20stroke-width='2.4'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="unload"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M20.5%2012H11'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M15.5%207.5L11%2012%2015.5%2016.5'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M6%204V20'%20stroke='black'%20stroke-width='2.4'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M20.5%2012H11'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M15.5%207.5L11%2012%2015.5%2016.5'%20fill='none'%20stroke='black'%20stroke-width='2.2'/%3E%3Cpath%20d='M6%204V20'%20stroke='black'%20stroke-width='2.4'/%3E%3C/svg%3E");
+}
+
+.finger[data-icon="words"]::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M5%207H19M5%2012H19M5%2017H13'%20stroke='black'%20stroke-width='2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M5%207H19M5%2012H19M5%2017H13'%20stroke='black'%20stroke-width='2'/%3E%3C/svg%3E");
+}
+
+.model-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-width: 100%;
+}
+
+.lib-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-width: 100%;
+}
+
+/* What a model stated about one recording is a list of lines, not a set of
+   boxes: a row wears a left mark in the engine's colour so the lines can be
+   scanned, and nothing around a line that already sits inside a card's frame. */
+.lib-row {
+  display: block;
+  border: none;
+  background: none;
+  box-shadow: none;
+  padding: 2px 8px;
+  border-left: 2px solid var(--engine-tint, var(--accent));
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+button,
+.pill {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+
+button:hover,
+.pill:hover {
+  border-color: var(--accent);
+  background: var(--bg2);
+}
+
+button:disabled {
+  color: var(--fg-dim);
+  background: var(--bg2);
+}
+
+/* A hand that asks for more than one run says so before it is pressed: the page's
+   warn colour rather than the accent a normal hand takes, and a smaller body so
+   it sits beside the one hand without standing over it. */
+button.caution {
+  font-size: 12px;
+  padding: 6px 9px;
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+button.caution:hover {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* The three generate hands are one bar read as a single control: they stand
+   edge to edge rather than apart, and only the outer ends keep the corners a
+   hand has. */
+.run-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+}
+
+.run-bar>button {
+  border-radius: 0;
+  white-space: nowrap;
+}
+
+/* The hands share the line between them rather than drawing two of their own
+   back to back, which is a break in the bar. */
+.run-bar>button:not(:first-child) {
+  margin-left: -1px;
+}
+
+.run-bar>button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.run-bar>button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+/* The plain hand keeps the room, so the bar reads as one control and the
+   generate stays the obvious first press. */
+.run-bar>button:not(.caution) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A batch hand is asked never to grow or squeeze: its mark sets its width, and
+   that is the least it can be and still say what it asks for. Its vertical
+   padding is the plain hand's so the marks sit on the bar rather than riding
+   above or below the other hand's words. */
+.run-bar>button.caution {
+  flex: 0 0 auto;
+  padding: 8px 9px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pill.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pill-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* The fields the pages ask you to type in: they take the page's own paper,
+   not the browser's white — a darker well set into the panel, the corner
+   round of the bubble scale, and the caret rides the accent. */
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  caret-color: var(--accent);
+}
+
+select {
+  appearance: none;
+}
+
+input::placeholder {
+  color: var(--fg-dim);
+}
+
+/* A slider is turned, not typed in: it keeps the panel behind it and shows
+   only its own track and knob. */
+input[type="range"] {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+/* A control the current model has no use for is taken out of the page, not
+   left in it greyed out: a field that changes nothing is not a control. */
+.row[hidden] {
+  display: none;
+}
+
+.row label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.row input,
+.row select,
+.row textarea {
+  width: 100%;
+  min-height: var(--field-h);
+}
+
+.opt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* A control the current model has no use for is taken out of the page, not
+   left in it greyed out: a field that changes nothing is not a control. */
+.opt-row[hidden] {
+  display: none;
+}
+
+.opt-row label {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.opt-row select {
+  width: 132px;
+  min-height: var(--field-h);
+}
+
+.opt-row input {
+  width: 72px;
+  min-height: var(--field-h);
+}
+
+.opt-row input[type="number"] {
+  width: 64px;
+}
+
+.viewer {
+  display: none;
+}
+
+.viewer.on {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: fixed;
+  left: 8%;
+  right: 8%;
+  top: 8%;
+  bottom: 6%;
+  z-index: 5;
+  overflow: hidden;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+/* The frame is three parts of one column: the words about the picture, the
+   picture itself, and the buttons. Only the picture is clipped, and only by its
+   own part, so a picture shown larger than the frame cannot push the buttons -
+   the way back out - off the screen. The picture is moved by hand instead; see
+   the viewer's own note. */
+.viewer-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 auto;
+}
+
+.viewer-cap {
+  font-size: 12px;
+  color: var(--fg);
+}
+
+/* What the machine recorded about this picture: its prompt and the settings that
+   made it. Long words are kept and scrolled, never cut off silently, and the
+   box is bounded in the window's own units — a bound read as a share of the
+   frame would answer differently on every window, and an unbounded box of long
+   words would grow the frame down past the buttons, which are the way back out
+   of it. This part gives way; the buttons never do. */
+.viewer-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 auto;
+  max-height: 26vh;
+  overflow: auto;
+}
+
+/* The lines of a facts list are one shape, read in either place: what the
+   machine recorded about a render on its frame, and what a model's own card
+   states about the numbers the dials above answer for. */
+.facts .fact {
+  font-size: 11px;
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+
+.facts .fact-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* A facts list stands as one labelled line per fact and nothing else. */
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* This part is asked for the rest of the frame after the words and the buttons,
+   so the picture at its largest honest size is as big as the frame can be. The
+   three parts of that request are written apart rather than in a shorthand, so
+   no part of it can be read as a length or as a default of another property; a
+   part grown this way has an own box whatever its picture's size is, which is
+   what lets the page measure the frame it drew into (see paintZoom in app.js).
+   The floor below is only a floor: it is kept small on purpose, because a floor
+   large enough to stand on its own would push the buttons off the frame. */
+.viewer-stage {
+  position: relative;
+  overflow: hidden;
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: 0;
+  min-height: 200px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: grab;
+}
+
+.viewer-stage.grabbing {
+  cursor: grabbing;
+}
+
+/* The picture is drawn at the middle of its own frame, and the frame clips it
+   and nothing else — the words above and the buttons below stay on the screen
+   whatever the step the picture stands at. */
+.viewer-stage img {
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  /* The whole picture in this frame, for the moment the page has not measured
+     either yet. Every zoom step is drawn from a size the page worked out and
+     states on the picture itself (see drawPictureAt in app.js), which clears
+     these two limits along with it: a step is never left to how a browser
+     resolves a percentage against a part that has no size of its own. */
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.viewer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  /* The buttons keep their own room: they are the way out of the frame, so the
+     words above give way long before these are pushed off the screen. */
+  flex-shrink: 0;
+}
+
+/* The runs of the ask a picture belongs to, in a row under the frame: pressing
+   one puts it in the frame, and the ring moves with it - the same row the gallery
+   card carries, asked of a picture already open. It keeps its own room and takes
+   the worst of a squeeze (the words above it give way first, and the buttons
+   below it never move), and a picture that is the only one of its ask is not
+   given a row at all. */
+.viewer-runs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 128px;
+  overflow-y: auto;
+}
+
+.viewer-runs[hidden] {
+  display: none;
+}
+
+.viewer-runs img {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  opacity: 0.72;
+  cursor: pointer;
+  transition: transform 0.16s ease-out, opacity 0.16s ease-out, box-shadow 0.16s ease-out;
+}
+
+.viewer-runs img:hover {
+  opacity: 1;
+  transform: translateY(-2px);
+}
+
+.viewer-runs img.on {
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.viewer-runs .runs-count {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+/* The words under a scrolling frame wear the accent, so the clock on the frame
+   says in colour that it is running as well as in words. */
+.viewer-runs .runs-count.scrolling {
+  color: var(--accent);
+}
+
+/* The scroll's part of the bar: the hand and the three dropdowns that name the
+   clock, the move, and how fast that move is made. It stands at the start of
+   the bar and keeps its own room; a squeeze wraps it onto a line of its own
+   rather than pushing the hands at its right - the way out of the frame, and
+   the way through the list - off the screen. The dropdowns are the page's own
+   fields; they are kept narrow because each holds two words. */
+.viewer-scroll {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-right: 10px;
+  margin-right: 4px;
+  border-right: 1px solid var(--line);
+}
+
+.viewer-scroll select {
+  min-width: 60px;
+  min-height: var(--field-h);
+}
+
+#viewer-play {
+  min-width: 58px;
+}
+
+/* A scroll that is running is drawn as a switch that is on, the same way the
+   page's other standing switches are: the hand says what it is doing, not only
+   what pressing it would do. */
+#viewer-play.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* The clock the scroll runs on, drawn along the bottom of the frame the picture
+   stands in: the line fills over the time that picture is kept on the frame, so
+   the time left is read off the line rather than counted, and the next picture
+   is moved to as the line reaches the frame's own edge. It is a mark on the
+   frame and takes no part in it: a picture at rest carries no line, and holding
+   a picture to move it never catches this. */
+.viewer-tick {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+  transform-origin: left center;
+  transform: scaleX(0);
+  pointer-events: none;
+}
+
+.viewer-tick[hidden] {
+  display: none;
+}
+
+.viewer-tick.on {
+  animation-name: viewer-tick-run;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+
+@keyframes viewer-tick-run {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* The moves a scroll makes between two pictures, played on the incoming picture
+   as its bytes land, for the speed the dropdown names. None of them touches the
+   picture's own transform: the page writes the zoom step and the place a held
+   picture was moved into there (see applyPan in app.js), and a move that
+   overwrote it would snap the picture back to the middle of the frame and take
+   the reader's place in a zoomed picture away. These four properties - opacity,
+   translate, scale, clip-path - compose with a transform the page stated, so a
+   picture moves to the next exactly as it stands, at whatever step it was zoomed
+   to and moved to. The frame clips it, so a move that comes in from outside
+   arrives from outside and nothing else moves. */
+@keyframes viewer-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes viewer-slide-in {
+  from {
+    opacity: 0;
+    translate: 100% 0;
+  }
+
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes viewer-zoom-in {
+  from {
+    opacity: 0;
+    scale: 1.06;
+  }
+
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes viewer-wipe-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* A standing picture in the gallery: the shape the render will come back at,
+   the words it is drawing with, its state as one line, its bar, and its own
+   stop hand. While its steps have not been counted the frame sways slowly -
+   work, unknown how far - and the bar at its foot fills as the machine states
+   steps. A queued card sways; a drawing card with steps is still. */
+.pending-shot {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.pending-box {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(-45deg,
+      rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.028) 12px,
+      transparent 12px, transparent 24px),
+    var(--bg2);
+  overflow: hidden;
+}
+
+.pending-shot:not(.measured) .pending-box {
+  animation: pending-sway 3s linear infinite;
+}
+
+.pending-shot.queued .pending-box {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  animation: pending-sway 5s linear infinite;
+}
+
+@keyframes pending-sway {
+  from {
+    background-position: 0 0, 0 0;
+  }
+
+  to {
+    background-position: 48px 0, 0 0;
+  }
+}
+
+.pending-shape {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 8px;
+  text-align: center;
+}
+
+.pending-box .prog-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.pending-box .prog-bar i {
+  position: absolute;
+  inset: 0;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s linear;
+}
+
+.shot-queue {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
+.shot-backs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shot-backs img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .pending-shot:not(.measured) .pending-box,
+  .pending-shot.queued .pending-box {
+    animation: none;
+  }
+}
+
+#gallery {
+  display: grid;
+  /* A column is as wide as the room allows, never as wide as the picture it is
+     asked to hold. A card is then given the width it has, and the picture fills
+     that width, so a row of cards always stays inside the panel it sits in: the
+     renders are shown whole, and what is given is not cut off at the panel edge. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gallery-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.gallery-controls select,
+.gallery-controls input {
+  min-width: 150px;
+}
+
+/* The pager hands take only the width their words need, so they read as the pair
+   that moves the window rather than as another field the row fills. */
+.gallery-controls button {
+  min-width: 0;
+}
+
+/* The bulk actions sit beside the filters and work on what is on the screen. */
+.gallery-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.gallery-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.shot {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* A grid item is as wide as its widest word unless it is told otherwise, and a
+     prompt of one long unbroken token made the card wider than the column it
+     stands in - the overlap a row of cards reads as cards stacked on each other.
+     The card takes the width it is given, and nothing inside it is allowed to
+     claim more. */
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* A card shows the whole render: the picture is given the card's width and keeps
+   its own proportions, so nothing that fell outside a box is cut away, and the
+   shape on screen is the shape the model was asked for. */
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.shot-prompt {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  /* A prompt with one long word in it is broken inside the card rather than
+     pushing the card past its column. */
+  overflow-wrap: anywhere;
+}
+
+/* The pictures the bulk buttons marked: a ring outside the card, so marking is
+   read whether or not the card is being pointed at. */
+.shot.sel {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.shot-meta {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.shot-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shot-save {
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.shot-save:hover {
+  border-color: var(--accent);
+}
+
+.shot a {
+  text-decoration: none;
+}
+
+/* A run that repeats - the same prompt asked with the same settings - is one
+   card holding every picture that ask made. The row under the picture names them
+   in the order they were made, and pressing one puts that render in the picture
+   above and rings the thumbnail that was pressed.
+   The row sits inside the card rather than leaning out of its corner. A stack
+   hung outside was clicked straight through (nothing under it took the press),
+   and in the first column of the grid it hung over the panel and over the window
+   with nothing to hold it back: the overflow was the position, not the pictures.
+   The sway went with it: an animation that ran for ever on every card was
+   repaint the page did not need, and it stopped dead the moment the card was
+   pointed at, which is the jump that made the whole thing read as broken. */
+.shot-stack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stack-count {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.shot-stack img {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  opacity: 0.72;
+  cursor: pointer;
+  /* What a press answers with is said over a short transition, so the ring and
+     the lean read as the row moving rather than as a picture redrawn. */
+  transition: transform 0.16s ease-out, opacity 0.16s ease-out, box-shadow 0.16s ease-out;
+}
+
+.shot-stack img:hover {
+  opacity: 1;
+  transform: translateY(-2px);
+}
+
+/* Which of this ask's pictures the card is showing: the ring is on one thumb
+   alone, so what is on the screen is read off the card rather than remembered. */
+.shot-stack img.on {
+  opacity: 1;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* The picture a press swapped in settles once, from the press that asked for it.
+   The viewer's own picture is not settled the same way: its size and place are
+   stated by the page on the picture itself, and an animation holding the same
+   property would fight that for its 180 ms. */
+.shot img.swap {
+  animation: ols-shot-swap 0.18s ease-out;
+}
+
+@keyframes ols-shot-swap {
+  from {
+    opacity: 0.3;
+    transform: scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.refs-panel {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.refs-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.ref-shot {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ref-shot img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 6px;
+  transition: transform .2s ease;
+}
+
+.ref-shot img:hover {
+  transform: scale(1.02);
+}
+
+.ref-from {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* The prompt panel is the target for a picture: anything released over it is
+   taken, and the panel says so while a file is held over it. */
+/* The ask and the settings for it are one decision read together, so they share
+   a row: the words take three parts of the width and the settings the fourth,
+   each in its own panel. Below a width where the settings column is narrower
+   than its own fields, the row becomes a stack again rather than squeeze a
+   control past what it needs. */
+.studio-top {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+
+/* In the narrow part of that row a field label is given less room, so the field
+   keeps more, and a row of two settings wraps to two lines instead of overflowing
+   its panel. */
+.studio-top .settings-panel .row {
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+
+.studio-top .settings-panel .opt-row {
+  gap: 4px 8px;
+}
+
+/* A window under this width leaves the middle column too narrow for both: the
+   settings panel would be handed a field a few dozen pixels wide, which is a
+   control nobody can read. The row then becomes a stack again. */
+@media (max-width: 1500px) {
+  .studio-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.prompt-panel {
+  cursor: copy;
+}
+
+.prompt-panel.offering {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
+/* What to draw, and what to leave out, are written over more than one line
+   almost always, so both fields open five lines deep and stay that deep: a box
+   the height of one line hides the ask a person is reading, and a field that
+   grew and shrank with every word moved the rest of the panel under it. They
+   still stretch by hand for a longer ask. */
+#prompt-field,
+#negative-field {
+  line-height: 1.45;
+  min-height: calc(5 * 1.45em + 10px);
+  resize: vertical;
+}
+
+/* The doors a file may be brought through: a file released over any of them is
+   taken by the page rather than by the browser, and the door lights while the
+   file is over it. Each one takes a recording. */
+#voice-keep-zone,
+#clone-zone,
+#listen-zone {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: copy;
+}
+
+#voice-keep-zone.offering,
+#clone-zone.offering,
+#listen-zone.offering {
+  border-color: var(--accent);
+  background: var(--bg3);
+}
+
+/* The new name typed on a voice card: the field keeps the page's own paper from
+   the rule the fields share, and only its measure is set here, so the card still
+   reads as one line. */
+.voice-rename-field {
+  width: 14rem;
+  padding: 1px 6px;
+}
+
+/* The browser's own file chooser: it is a field like the others, and it is
+   wrapped in a form only so the page can hear what a person chose. */
+.picture-form {
+  min-height: var(--field-h);
+}
+
+/* The pictures this run starts from, in the order the model reads them. Each
+   card shows the picture itself, its position, and what it is called. */
+.ref-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap);
+  align-items: start;
+}
+
+.strip-shot {
+  position: relative;
+  width: 132px;
+  min-height: 96px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg3);
+}
+
+.strip-shot img {
+  width: 116px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.strip-position {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.strip-name {
+  font-size: 11px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+.drop-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+#progress-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prog-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.prog-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg3);
+  overflow: hidden;
+}
+
+.prog-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width .3s linear;
+}
+
+/* A load has no honest percentage — the work is one opaque engine start -
+   so its bar is a striping that never stops: the words count the real
+   seconds it has taken, and the striping says "working, unknown how far".
+   the width is only time against the page's own cap, a simulation. */
+.prog-fill.loading {
+  background: repeating-linear-gradient(-45deg,
+      rgba(116, 201, 164, 0.5), rgba(116, 201, 164, 0.5) 8px,
+      rgba(116, 201, 164, 0.12) 8px, rgba(116, 201, 164, 0.12) 16px);
+  transition: width .8s linear;
+  animation: load-stripes 1.2s linear infinite;
+}
+
+@keyframes load-stripes {
+  to {
+    background-position: 22.6px 0;
+  }
+}
+
+.prog-text {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.log {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+}
+
+.log.ok {
+  color: var(--ok);
+}
+
+.log.warn {
+  color: var(--warn);
+}
+
+.log.err {
+  color: var(--err);
+}
+
+/* the two words the pages write when work starts or is stopped by hand: a
+   running line wears the page's own action colour, a stopped one wears the
+   colour that says the machine was told to do something. */
+.log.go {
+  color: var(--accent);
+}
+
+.log.stop {
+  color: var(--warn);
+}
+
+/* The one record every page writes to, drawn on the page that watches the
+   machine: a well holding its newest lines that scrolls, rather than a rail
+   each page carried beside its own work. */
+.log-panel {
+  font-family: var(--mono);
+  font-size: 11px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.log-line {
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+}
+
+.log-line.ok {
+  color: var(--ok);
+}
+
+.log-line.warn {
+  color: var(--warn);
+}
+
+.log-line.err {
+  color: var(--err);
+}
+
+.log-line.go {
+  color: var(--accent);
+}
+
+.log-line.stop {
+  color: var(--warn);
+}
+
+/* The one line a page without the whole log speaks with: it says the newest
+   line in the log's own colour language, in place of a toast stack over the
+   work it describes. */
+.status-line {
+  min-height: 1.3em;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+}
+
+.status-line.ok {
+  color: var(--ok);
+}
+
+.status-line.warn {
+  color: var(--warn);
+}
+
+.status-line.err {
+  color: var(--err);
+}
+
+#eq-canvas {
+  display: block;
+  width: 100%;
+  height: 180px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.meta-ok {
+  font-size: 11px;
+  color: var(--ok);
+}
+
+/* A door line a person can act on: while the visit stands at the doors without
+   a credential, this line is the hand that hands the key. */
+.meta-press {
+  font-size: 11px;
+  color: var(--warn);
+  cursor: pointer;
+}
+
+main.monitor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: 12px;
+}
+
+/* A table carries its own hands over its rows, set down above it, and the words
+   for a job a reader pressed open directly under that row inside the same table.
+   The hands stay small so they read as part of the table, and the words for the
+   job are drawn in the same row shape the detail used to be drawn in. */
+.status-card .card-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  margin: 0 0 6px;
+}
+
+.status-card .card-controls-words {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+
+.status-card .card-controls select,
+.status-card .card-controls input {
+  font-family: var(--mono);
+  font-size: 11px;
+  max-width: 150px;
+  color: var(--fg);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+/* A job the reader asked about is one card, drawn under the rows it belongs to:
+   the model it works with at the top left in the loudest type, the job it is
+   named by across the middle of that line in italic, and the seconds it has
+   stood here in the right hand. What the machine stated about that job is drawn
+   under that line as labelled fields, and the pair of hands on the line opens or
+   closes them - the card stays named either way, so a reader can keep track of
+   the work while deciding how much of it to read. */
+.job-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.job-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin-bottom: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+}
+
+.job-card-head .job-card-model {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.job-card-head .job-card-id {
+  font-style: italic;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.job-card-head .job-card-time {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  margin-left: auto;
+}
+
+.job-card-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.job-card-fields[hidden] {
+  display: none;
+}
+
+.job-card-field {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.job-card-field-label {
+  font-size: 10.5px;
+  color: var(--fg-dim);
+}
+
+.job-card-field-value {
+  font-size: 11.5px;
+  color: var(--fg);
+  overflow-x: hidden;
+  overflow-y: hidden;
+  max-height: 40px;
+}
+
+.job-card-hand {
+  font-size: 11px;
+  padding: 1px 7px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.job-card-hand+.job-card-hand {
+  margin-left: 6px;
+}
+
+/* The machine's badges stand in a row across the top of its panel, kept as
+   separate badges rather than merged into one figure: each keeps its own border,
+   its own fill from the bottom, and the words it states, and the row only
+   spaces them. Each badge is asked for the width its own words need, so a
+   window too narrow for the row scrolls instead of one badge standing on
+   another - the same rule the header reads its badges by. */
+.machine-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.machine-chips>* {
+  flex-shrink: 0;
+}
+
+/* The machine's numbers are read as a wall of panels in rows of one height.
+   Each panel names itself at its left, states the numbers it holds beside that
+   name in chips, and draws the line of where those numbers have been across the
+   rest of its own box. The rows are even, so a level in one panel reads against
+   a level in the next, and every line on the wall scrolls through the same fixed
+   window at the same pace. */
+#machine-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+/* The words that name a part of a model card, and the words that name an
+   absence in the machine's wall, stand across their grid rather than in one of
+   its panels. */
+.status-card .card-group,
+#machine-metrics>.log {
+  grid-column: 1 / -1;
+  width: 100%;
+  font-size: 11px;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--line);
+  padding: 6px 0;
+}
+
+#machine-metrics>.log {
+  border-bottom: none;
+  padding: 0;
+}
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 9px 8px;
+  min-height: 138px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.gauge-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A panel names itself in the same letters its numbers are written in, kept dim
+   so the reading next to it stays the loudest thing in the row. */
+.gauge-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gauge-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* A chip is the reading a panel holds now, set in its own well so the numbers
+   can be read off the wall without a rule or a column standing between them. */
+.gauge-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--chip);
+  border-radius: 5px;
+  padding: 1px 6px;
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+.gauge-chip.ok {
+  color: var(--ok);
+}
+
+.gauge-chip.warn {
+  color: var(--warn);
+}
+
+.gauge-chip.err {
+  color: var(--err);
+}
+
+/* A number this machine does not state keeps its place in the row and stays
+   dim, so it reads as an absence and never as a reading. */
+.gauge-chip.none {
+  color: var(--fg-dim);
+}
+
+.gauge-value {
+  font-weight: 600;
+  color: inherit;
+}
+
+.gauge-unit {
+  font-weight: 400;
+  color: var(--fg-dim);
+}
+
+/* The rest of the panel is the drawing. It keeps its own box whatever the panel
+   is given, so every line on the wall is drawn at the same height. */
+.gauge-plot {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 72px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.gauge-plot>.trace {
+  position: absolute;
+  inset: 0;
+}
+
+.gauge-plot .graph {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The words that name a figure's scale stand inside the drawing it names, at its
+   bottom edge, rather than under the panel. */
+.gauge-plot>.graph-scale {
+  position: absolute;
+  left: 6px;
+  bottom: 3px;
+  max-width: calc(100% - 12px);
+}
+
+/* The foot of a panel is the hardware's own sentence - what the thing under the
+   numbers states that it is - not a reading to watch, so it stands dimmer than
+   any chip, on the line the plot's flex leaves it at the foot of the panel. */
+.gauge-foot {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
+/* The lines. The line the panel is about is drawn filled under itself, the
+   colour of the panel: the machine's own lines are the page's blue, and the
+   pair of lines in the open panel is drawn in the two colours the panel names
+   its chips in. */
+.trace-area {
+  fill: var(--tint-a, var(--engine-tint));
+  fill-opacity: 0.18;
+  stroke: none;
+}
+
+.trace-line-a {
+  stroke: var(--tint-a, var(--engine-tint));
+  stroke-width: 1.4px;
+  fill: none;
+}
+
+.trace-line-b {
+  stroke: var(--tint-b, var(--accent2));
+  stroke-width: 1.2px;
+  fill: none;
+}
+
+/* A figure that draws many lines at once - every thread of a processor, every
+   engine - draws them thin, in the panel's own colour and unfilled, so what reads
+   is the band they make together rather than one line over another. */
+.trace-line-c {
+  stroke: var(--tint-a, var(--engine-tint));
+  stroke-width: 1px;
+  fill: none;
+  opacity: 0.8;
+}
+
+.trace-avg {
+  stroke: var(--tint-a, var(--engine-tint));
+  stroke-width: 1px;
+  stroke-dasharray: 3 4;
+  opacity: 0.55;
+}
+
+/* The three numbers a figure states, set beside the places they were read. */
+.trace-tag {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.2;
+  white-space: nowrap;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.trace-tag.max {
+  color: var(--tint-a, var(--engine-tint));
+  transform: translate(-50%, -100%);
+}
+
+.trace-tag.min {
+  color: var(--fg-dim);
+  transform: translate(-50%, 25%);
+}
+
+.trace-tag.avg {
+  color: var(--fg-dim);
+  transform: translate(-100%, -30%);
+}
+
+/* The volumes this server stands on are read as storage cards: their name, what
+   they state about themselves now, and a rule along their bottom grown to the
+   share of their room that is used - the share a pool is running out of. */
+#machine-metrics>.gauge-strip {
+  grid-column: 1 / -1;
+  display: grid;
+  /* The cards keep a measure of their own, so one volume is one card and not a
+     banner across the wall. */
+  grid-template-columns: repeat(auto-fit, 250px);
+  justify-content: start;
+  gap: 10px;
+}
+
+.storage-card {
+  position: relative;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px 7px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.storage-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ok);
+}
+
+.storage-card.warn .storage-dot {
+  background: var(--warn);
+}
+
+.storage-card.err .storage-dot {
+  background: var(--err);
+}
+
+/* What of this volume has been in use, drawn behind the card's own words: the
+   same figure the rest of the wall draws, kept at low contrast so it reads as the
+   shape of what grew and shrank rather than as another chart. */
+.volume-figure {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--radius);
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.volume-figure>.trace {
+  width: 100%;
+  height: 100%;
+}
+
+.volume-figure .graph {
+  width: 100%;
+  height: 100%;
+}
+
+/* The card's own words sit over the figure behind them. */
+.storage-dot,
+.storage-name,
+.storage-state,
+.storage-detail,
+.storage-bar {
+  position: relative;
+}
+
+.storage-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.storage-state {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
+.storage-card.ok .storage-state {
+  color: var(--ok);
+}
+
+.storage-card.warn .storage-state {
+  color: var(--warn);
+}
+
+.storage-card.err .storage-state {
+  color: var(--err);
+}
+
+.storage-detail {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
+.storage-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  margin-top: 3px;
+}
+
+.storage-bar>i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok);
+}
+
+.storage-card.warn .storage-bar>i {
+  background: var(--warn);
+}
+
+.storage-card.err .storage-bar>i {
+  background: var(--err);
+}
+
+/* The home page, at large: every model gets a card the width of the page, and
+   every number this machine states gets a tile with the line of where it has
+   been under it. The card carries only what its own engine states — a number no
+   engine states keeps its tile and says so, rather than standing in as a zero. */
+#model-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.status-card {
+  --engine-tint: var(--accent);
+  --card-side: 10px;
+  --card-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--card-top) var(--card-side);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+/* The home page draws its model cards in the same shell every other page uses,
+   so the card keeps its parts stacked. Its words column is the whole card: a card
+   here states every value once, in its head, its tiles, and its foot, and repeats
+   none of them down an edge - see the note where the card is drawn. A row wider
+   than the room the panel gives is cut there, and its full words live in that
+   row's own tooltip. */
+.status-card .model-main {
+  min-width: 220px;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.status-card.image {
+  --engine-tint: var(--accent);
+}
+
+.status-card.voice {
+  --engine-tint: var(--accent2);
+}
+
+/* The engine's mark and the model's name, with the state of its engine beside
+   them in a well of the same one the machine's panels state their readings in. */
+.status-card .card-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  background: var(--chip);
+  border-radius: 4px;
+  color: var(--engine-tint);
+  padding: 1px 6px;
+}
+
+.status-card .card-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.status-card .card-state {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--chip);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  padding: 1px 6px;
+}
+
+.status-card .card-state.open {
+  color: var(--ok);
+}
+
+.status-card .card-state.running,
+.status-card .card-extra.running {
+  color: var(--warn);
+}
+
+.status-card .card-extra {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.status-card .card-error {
+  font-size: 11px;
+  color: var(--err);
+}
+
+.status-card .card-file {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+}
+
+/* A row's extra words, an error, or a made file never stretch the row: what
+   does not fit is cut, and its full words live in its own tooltip. */
+.status-card .card-extra,
+.status-card .card-error,
+.status-card .card-file {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.status-card .card-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+  /* A tile is as tall as its own words and its own figure, never as tall as the
+     tallest tile in its row, so a card states its numbers in a close block. */
+  align-items: start;
+}
+
+.status-card .metric {
+  min-width: 0;
+}
+
+.status-card .prog-row {
+  margin-top: 4px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 9px 7px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-width: 140px;
+}
+
+.metric-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+
+.metric-value {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  /* A reading is written in full: words that do not fit one line take the next
+     one, and only something taller than the tile itself is cut, where the
+     tooltip still holds every word. */
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+.metric-unit {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  font-weight: 400;
+}
+
+/* A figure is a reading of numbers, so it is drawn in the engine's colour and
+   nothing else: the shape carries the value, and the words beside it name the
+   scale it was drawn on — the picture never stands in for a number. */
+.graph {
+  width: 100%;
+  overflow: visible;
+}
+
+/* A line is drawn inside its own box, on the same faint grid every figure on
+   the page is drawn across, so the drawing and the words set beside it share one
+   measure. */
+.trace {
+  position: relative;
+  background:
+    repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(0deg, var(--grid) 0 1px, transparent 1px 24px);
+}
+
+.metric>.trace>.graph {
+  display: block;
+  width: 100%;
+  height: 46px;
+}
+
+.graph-bars {
+  height: 46px;
+}
+
+.graph-bars .bar {
+  fill: var(--engine-tint);
+}
+
+/* The words that name a figure's scale: the window drawn, the step the readings
+   were taken at, and the lowest, mean, and highest reading really inside it. */
+.graph-scale,
+.graph-none {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+/* What a figure says when it has nothing to draw: one short visible line, the
+   full reason lives in its tooltip. */
+.graph-none {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* A pool is a figure of the same kind: the bar takes the width of the tile it
+   stands in, and its words name the scale under it. */
+.pool {
+  width: 100%;
+  overflow: visible;
+}
+
+.pool-bar {
+  height: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.pool-fill {
+  height: 100%;
+  background: var(--engine-tint);
+}
+
+/* A row keeps a measure of its own, so a table on a wide card stays a readable
+   list of columns rather than numbers flung across the whole card; the columns
+   share that measure. */
+.status-card .card-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 720px;
+}
+
+.status-card .table-row {
+  display: grid;
+  grid-template-columns: 72px 62px 52px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 3px 8px;
+  align-items: center;
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
+/* A job row is one line of columns that give room: a value that does not fit its
+   column is cut with an ellipsis, and its full words live in the row's
+   tooltip — nothing on a card pushes sideways any more. */
+.status-card .table-row>* {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The hands beside a standing row keep a place of their own: the table's
+   columns are for numbers, so the hands take the row's full width beneath
+   them and hug its right edge. */
+.status-card .table-row .queue-hands {
+  grid-column: 1 / -1;
+  justify-self: end;
+  margin-left: 0;
+}
+
+/* A row's extra words, an error, or a made file keep a measure of their own and
+   wrap into the two lines the row has room for, so they never widen the row. */
+.status-card .card-extra,
+.status-card .card-error,
+.status-card .card-file {
+  min-width: 0;
+  max-width: 200px;
+  white-space: normal;
+}
+
+.status-card .table-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.status-card .table-row.running {
+  color: var(--warn);
+}
+
+.status-card .table-row.error,
+.status-card .table-row.cancelled {
+  color: var(--err);
+}
+
+.status-card .table-row.selected {
+  background: var(--bg3);
+}
+
+.status-card .card-foot {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* The access key lives in the config panel now, not in the header: the panel's
+   top row carries the input, and the answer of the auth check is shown there —
+   the row text is set by key-shim.js after it reads. */
+
+.config-lead {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* The config options: the header carries only a small button; the option
+   rows live in a dropdown panel that opens below the header, positioned by
+   config.js against the header's real bottom edge. */
+.config-btn {
+  position: relative;
+  z-index: 0;
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+/* The button that opens the machine's own options carries the gear that turns
+   them, under the words in the same dim way the tabs carry their marks. */
+.config-btn::before {
+  content: '⚙';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  font-family: "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", var(--sans);
+  font-size: 32px;
+  opacity: 0.22;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.config-btn:active {
+  transform: translateY(1px);
+}
+
+/* The corner clock in the header's right-hand end. A segment is never absent
+   from the face: dark ones stand on it in the same red at a faintness below
+   reading, so a lit digit carries the ghosts of the whole eight behind it the
+   way a real panel does when the light in the room is enough to see the glass.
+   The lit ones burn; the blink of an unset clock only takes the burning away,
+   never the segments. */
+#topbar>.clock7 {
+  /* the age counts push the clock to the right end now; the clock keeps its
+     place beside them, and the config button beside it */
+  margin-left: 9px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 7px;
+  background: #120b0a;
+  border: 1px solid #3a2321;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  --c7-ghost: rgba(255, 72, 52, 0.09);
+  --c7-lit: #ff4a38;
+  --c7-glow: rgba(255, 70, 50, 0.85);
+}
+
+#topbar>.config-btn {
+  margin-left: 6px;
+}
+
+/* The machine picker: one chip-shaped select among chips - the fleet reads
+   as part of the bar, not as a form dropped into it. */
+#topbar>.host-pick {
+  margin-left: 9px;
+  max-width: 20em;
+  padding: 4px 7px;
+  background: var(--bg3);
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.clock7 .c7num {
+  position: relative;
+  width: 15px;
+  height: 26px;
+}
+
+/* the seven bars: pointed at both ends along their own length, which is what
+   makes a seven-segment digit read as machined rather than typed. */
+.clock7 .c7s {
+  position: absolute;
+  background: var(--c7-ghost);
+  transition: background 0.18s, filter 0.18s;
+}
+
+.clock7 .c7a,
+.clock7 .c7g,
+.clock7 .c7d {
+  left: 1px;
+  width: 13px;
+  height: 4px;
+  clip-path: polygon(6% 0%, 94% 0%, 100% 50%, 94% 100%, 6% 100%, 0% 50%);
+}
+
+.clock7 .c7a {
+  top: 0;
+}
+
+.clock7 .c7g {
+  top: 11px;
+}
+
+.clock7 .c7d {
+  top: 22px;
+}
+
+.clock7 .c7f,
+.clock7 .c7b,
+.clock7 .c7e,
+.clock7 .c7c {
+  width: 4px;
+  height: 10px;
+  clip-path: polygon(0% 6%, 50% 0%, 100% 6%, 100% 94%, 50% 100%, 0% 94%);
+}
+
+.clock7 .c7f {
+  left: 0;
+  top: 3px;
+}
+
+.clock7 .c7b {
+  left: 11px;
+  top: 3px;
+}
+
+.clock7 .c7e {
+  left: 0;
+  top: 13px;
+}
+
+.clock7 .c7c {
+  left: 11px;
+  top: 13px;
+}
+
+.clock7 .c7col {
+  width: 4px;
+  height: 26px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+}
+
+.clock7 .c7dot {
+  width: 4px;
+  height: 4px;
+  background: var(--c7-ghost);
+  transition: background 0.18s, filter 0.18s;
+}
+
+.clock7 i.on {
+  background: var(--c7-lit);
+  filter: drop-shadow(0 0 3px var(--c7-glow));
+}
+
+/* the blink of the unset hour: the light leaves every lit digit segment and the
+   ghosts stand there alone until it comes back - but the colon keeps burning
+   straight through it, the way a stove holds its two dots while its 12:00
+   blinks. */
+.clock7.blink .c7s.on {
+  background: var(--c7-ghost);
+  filter: none;
+}
+
+/* The queue's claim: while the engines have work standing, the face burns
+   amber instead of the clock-red of idle hours - the color of an appliance
+   busy, not broken - and it counts hours and minutes the whole queue away.
+   Here the blink belongs to the colon, not the digits: the count is real
+   remaining work and stands lit while the two dots give way every three
+   seconds, which is what tells a reader the number is counting something
+   down rather than stating the hour wrong. */
+#topbar>.clock7.queue {
+  --c7-ghost: rgba(255, 158, 46, 0.10);
+  --c7-lit: #ff9e2e;
+  --c7-glow: rgba(255, 158, 46, 0.85);
+  border-color: #46301a;
+}
+
+.clock7.queue.blink .c7s.on {
+  background: var(--c7-lit);
+  filter: drop-shadow(0 0 3px var(--c7-glow));
+}
+
+.clock7.queue.blink .c7dot.on {
+  background: var(--c7-ghost);
+  filter: none;
+}
+
+/* The two counts beside the clock, told in minutes: the machine's own ages as
+   the clock's footnotes, not as chips. Small mono type and dim labels, right
+   against the clock they stand beside; the number carries a whisper of its
+   meaning - green for the fix that holds, red for the fault that is fresh -
+   and every count keeps a fixed width of room so the rows never jiggle as the
+   minutes climb. */
+#topbar>.age-stack {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.age-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.age-label {
+  color: var(--fg-dim);
+}
+
+.age-count {
+  min-width: 5ch;
+  color: var(--fg);
+}
+
+.age-row.fix .age-count {
+  color: color-mix(in srgb, var(--ok) 72%, var(--fg));
+}
+
+.age-row.bug .age-count {
+  color: color-mix(in srgb, var(--err) 80%, var(--fg));
+}
+
+.config-panel {
+  position: fixed;
+  z-index: 60;
+  display: none;
+  width: 420px;
+  max-width: 92vw;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+}
+
+.config-panel.config-open {
+  display: block;
+  transform-origin: top center;
+  animation: config-open .18s ease-out;
+}
+
+/* The panel hangs itself in: the press is answered the moment it happens, and
+   the rows arrive with it rather than appearing from nowhere. */
+@keyframes config-open {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(.98);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.config-row:hover {
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.config-row input {
+  font-size: 12px;
+  color: var(--fg);
+  width: 160px;
+  min-height: 0;
+}
+
+/* What a click answers with: a press dims and lifts, whatever just changed
+   glows once, and chips and header words ease into their new colours rather
+   than snapping. Every action on every page gets one of these. */
+button:active,
+.pill:active {
+  transform: translateY(1px);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chip,
+.head-status {
+  transition: color .35s ease, border-color .35s ease, background-color .35s ease;
+}
+
+.act-flash {
+  animation: act-flash .7s ease-out;
+}
+
+@keyframes act-flash {
+  0% {
+    box-shadow: 0 0 12px var(--accent);
+  }
+
+  100% {
+    box-shadow: 0 0 0px rgba(0, 0, 0, 0);
+  }
+}
+
+/* A card's line of what a model is made of - "24 layers · 1024 wide · 2 kv" -
+   set in a narrow column, so the words must never push anything sideways: they
+   wrap inside the card and the card grows as tall as its words need. */
+.model-shape {
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-width: 100%;
+}
+
+/* The last word on motion. This block sits after every animation the sheet names,
+   so it answers all of them - a name placed earlier would be overridden by the
+   animations written below it, and a reader who asked their screen for less
+   movement would still watch a striped bar. A bar that slides and a picture
+   that steps back are motion: without the animation they simply arrive at their
+   size. The colour fades elsewhere are left alone - they carry state (this card
+   is open, this word is the one being said), and a colour changing is not
+   movement. */
+@media (prefers-reduced-motion: reduce) {
+
+  .model-card.model-on,
+  .act-flash,
+  .config-panel.config-open {
+    animation: none;
+  }
+
+  /* A picture chosen from a row still arrives; it is not made to travel first. */
+  .shot img.swap,
+  .shot-stack img,
+  .viewer-runs img {
+    animation: none;
+    transition: none;
+  }
+
+  .prog-fill.loading,
+  #topbar.indeterminate::before,
+  #nav a[href="index.html"]::after {
+    animation: none;
+  }
+
+  .prog-fill,
+  .prog-fill.loading,
+  .ref-shot img {
+    transition: none;
+  }
+}
+
+/* Nothing here stands between a browser and a machine: a refused visit is
+   walked to the door page, which carries its own sheet. */
+
+/* ---------- model bars: the home page's open-models panel ----------
+   Each model is one bar: the line that names it and states how it stands,
+   and the line that moves - a running job's progress, or the newest job's
+   numbers. The facts strip and the jobs table wait behind their hands, so a
+   panel watching twenty models stays a page a person can read. */
+.model-bar .bar-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
+}
+
+.model-bar .bar-held {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The pool the held bytes fit in: a well with its own fill, standing on the
+   words it measures. */
+.model-bar .bar-pool {
+  display: inline-block;
+  width: 46px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.model-bar .bar-pool i {
+  display: block;
+  height: 100%;
+  background: var(--engine-tint);
+}
+
+.model-bar .bar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.model-bar .bar-actions .finger {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.model-bar .bar-actions .finger.on {
+  color: var(--fg);
+  border-color: var(--engine-tint);
+  background: color-mix(in srgb, var(--engine-tint) 16%, var(--bg3));
+}
+
+.model-bar .bar-live {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  min-height: 14px;
+}
+
+/* A running job on a bar is one line: the words beside the track, the track
+   filling the room the words leave. */
+.model-bar .bar-live .prog-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-bar .bar-live .prog-bar {
+  flex: 1 1 auto;
+  height: 7px;
+}
+
+.model-bar .bar-live .prog-text {
+  flex: 0 0 auto;
+  max-width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A standing picture is one line of the queue: where it stands, what it starts
+   from, what it will draw, what it was asked at, the job it is named by, and
+   the hands over it. The line names the work; the header of the page tells how
+   the drawing on the card goes. */
+.model-bar .bar-live.job-line {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.queue-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-left: 3px solid color-mix(in srgb, var(--warn) 55%, var(--line));
+  border-radius: 6px;
+  background: var(--bg2);
+}
+
+.queue-line.running {
+  border-left-color: var(--accent);
+}
+
+.queue-place {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.queue-ref {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+.queue-words {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-set {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.queue-id {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--fg-dim);
+  opacity: 0.7;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-hands {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.queue-hands .finger {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.model-bar.is-running {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+/* ---------- the network panel ----------
+   One card per adapter, a section per subject (wifi, what the machine
+   will change), all of it read from one document and answered through one
+   door. The colours are the page's own: a link up breathes in the ok green so
+   the panel reads alive at a glance, a refusal wears red, and a state nobody
+   stated stays its own orange. */
+.net-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.net-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.net-card-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* The kind of link, worn as a small word in its own colour so a row of cards
+   can be told apart before any of their words is read. */
+.net-kind {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--fg-dim);
+}
+
+.net-kind-ethernet {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.net-kind-wifi {
+  color: var(--accent2);
+  border-color: color-mix(in srgb, var(--accent2) 45%, var(--line));
+}
+
+.net-kind-bond {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.net-kind-vlan {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.net-state {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.net-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--fg-dim);
+}
+
+/* The live dot: green and breathing while a link carries, and still — a
+   thing that does not move is a thing that is not working. */
+.net-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--fg-dim);
+}
+
+.net-dot.up {
+  background: var(--ok);
+  animation: net-breathe 2.4s ease-in-out infinite;
+}
+
+.net-dot.down {
+  background: var(--err);
+  opacity: 0.55;
+}
+
+.net-dot.other {
+  background: var(--unknown);
+}
+
+@keyframes net-breathe {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 12%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .net-dot.up {
+    animation: none;
+  }
+}
+
+/* The rate figure: the newest words on the left, the four minutes of it to
+   the right, on the same measure every other figure on the page keeps. */
+.net-rate {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.net-rate-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-dim);
+  flex: 0 1 210px;
+  min-width: 0;
+}
+
+.net-rate-word {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-chart {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.net-chart>.trace>.graph {
+  display: block;
+  width: 100%;
+  height: 46px;
+}
+
+.net-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.net-fact {
+  display: flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  min-width: 0;
+}
+
+.net-fact>span:last-child {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.net-fact-name {
+  flex: 0 0 84px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  line-height: 1.9;
+}
+
+/* Folded forms: nobody sees the hands until a setting is being changed, and
+   a person mid-typing is never standing on a redraw. */
+.net-form {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg2);
+}
+
+.net-form>summary {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+  padding: 7px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.net-form>summary::-webkit-details-marker {
+  display: none;
+}
+
+.net-form>summary::before {
+  content: '▸ ';
+}
+
+.net-form[open]>summary::before {
+  content: '▾ ';
+}
+
+.net-form[open]>summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.net-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.net-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.net-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.net-field-name {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.net-input {
+  font-size: 12px;
+  min-width: 130px;
+  height: var(--field-h);
+}
+
+/* The hands of this panel: the page's button, a step smaller so five of them
+   fit one card row, and the ones that take something away speak amber and
+   red before they are pressed. */
+.net-hand {
+  font-size: 12px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.net-hand.net-ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.net-hand.net-err {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 45%, var(--line));
+}
+
+.net-hand.net-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.net-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.net-section-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.net-section-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* Tables: scan rows and port rows are both read across, so both take the
+   row grid the status wall uses; the two tables state their own columns. */
+.net-table {
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.net-tr {
+  display: grid;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--grid);
+  align-items: center;
+  min-width: 640px;
+}
+
+.net-tr:last-child {
+  border-bottom: none;
+}
+
+.net-tr>span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.net-mono {
+  font-family: var(--mono);
+}
+
+.net-th {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  background: var(--bg2);
+}
+
+.net-scan .net-tr {
+  grid-template-columns: 76px minmax(120px, 2fr) 148px 56px 34px minmax(110px, 1.4fr) 72px 128px;
+}
+
+.net-tr:hover {
+  background: var(--bg2);
+}
+
+.net-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.net-signal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Five bars, rising: the shape reads across the table before the number
+   beside it is found. */
+.net-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.net-bars i {
+  width: 4px;
+  background: var(--line);
+  border-radius: 1px;
+}
+
+.net-bars i:nth-child(1) {
+  height: 3px;
+}
+
+.net-bars i:nth-child(2) {
+  height: 5px;
+}
+
+.net-bars i:nth-child(3) {
+  height: 7px;
+}
+
+.net-bars i:nth-child(4) {
+  height: 10px;
+}
+
+.net-bars i:nth-child(5) {
+  height: 12px;
+}
+
+.net-bars i.lit {
+  background: var(--err);
+}
+
+.net-bars i.lit.fair {
+  background: var(--warn);
+}
+
+.net-bars i.lit.strong {
+  background: var(--ok);
+}
+
+.net-signal-pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-dim);
+  font-style: normal;
+}
+
+.net-ap {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.net-last .meta {
+  white-space: normal;
+}
+
+.net-input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  padding: 0;
+}
+
+/* ---------- the voice studio: script, cast, say ---------- */
+
+/* The controls above the rows. They are the panel's own hands, so they wear the
+   small voice of a fact row rather than the big buttons of a run: one press each,
+   and the words on them name what they do to the lines below. */
+#script-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+#script-bar .finger {
+  border-radius: 6px;
+}
+
+/* The script: rows, and one rule between them. A row is the line it stands for -
+   who speaks it, what they say, how they say it - so nothing below a row belongs
+   to another row. */
+#script-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.script-row {
+  display: grid;
+  grid-template-columns: 178px minmax(0, 1fr) 168px auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 2px;
+  border-top: 1px solid var(--line);
+}
+
+.script-row:first-child {
+  border-top: none;
+}
+
+/* The line the engine refused, or a cast recording that has no words kept and so
+   cannot be cloned by a model that needs them. It sits under the row it speaks of,
+   in the grid's own left column rather than across the panel. */
+.script-note {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* The speaker of a line: a cast recording, one of the model's own packaged voices,
+   or no voice at all. It is drawn as a fact row so it reads as a state of the line
+   and takes the same hover as every other control on these pages. */
+.script-voice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.script-voice select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.script-voice select:focus {
+  outline: none;
+}
+
+.script-voice option {
+  background: var(--bg2);
+  color: var(--fg);
+}
+
+.script-say {
+  width: 100%;
+  min-height: calc(2 * 1.4em + 8px);
+  line-height: 1.4;
+  resize: vertical;
+}
+
+/* The shaping of a line, folded away until asked for: a line that needs no
+   direction should not carry the weight of five fields claiming it does. */
+.script-shape {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+
+.script-shape[hidden] {
+  display: none;
+}
+
+.script-shape .opt-row {
+  gap: 5px;
+}
+
+.script-shape input,
+.script-shape select {
+  font-size: 11px;
+  min-height: 24px;
+  padding: 2px 6px;
+}
+
+.script-shape .shape-style {
+  flex: 1 1 260px;
+}
+
+.script-shape .shape-num {
+  width: 62px;
+}
+
+.script-shape .shape-pause {
+  width: 78px;
+}
+
+/* The hands on a line: add one below, take this one off. They are the smallest
+   thing in the row and never the first thing read. */
+.script-hands {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.script-hands .finger {
+  border-radius: 5px;
+  padding: 1px 7px;
+  opacity: .8;
+}
+
+.script-hands .finger:hover {
+  opacity: 1;
+}
+
+/* A row whose line cannot run wears the refusal's colour on its edge, so a script
+   that will not run reads as one thing before any press. */
+.script-row.script-blocked {
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+
+#script-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The single line of the say panel: model, voice or description, the words. */
+#voice-say-zone {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 6px 8px;
+  align-items: start;
+}
+
+#say-field {
+  grid-column: 2;
+  min-height: calc(3 * 1.4em + 8px);
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.say-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.say-line .finger.pick,
+.say-line select,
+.say-line input {
+  font-size: 12px;
+}
+
+.say-line .say-model {
+  width: 200px;
+}
+
+.say-line .say-voice {
+  flex: 1 1 220px;
+}
+
+.say-line .say-describe {
+  flex: 1 1 260px;
+}

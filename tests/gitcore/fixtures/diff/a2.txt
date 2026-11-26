@@ -1,0 +1,12 @@
+alpha
+bravo
+charlie
+one
+two
+three
+delta
+echo
+foxtrot
+golf
+hotel
+india

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>open-local-services</title>
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23151a22'/%3E%3Ctext x='50' y='74' font-size='68' text-anchor='middle'%3E%F0%9F%4C%81%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="ps-style.css">
+</head>
+
+<body>
+
+  <main id="ps-main">
+
+    <!-- The studio bar is the second row under the nav: it carries the one
+       question every panel of this page answers to - which project - and the
+       tab strip that picks which of the six panels stands. Nothing here is a
+       control that does nothing: the dropdown is filled from the machine's own
+       reading of its projects, and a tab's panel is drawn only when that tab is
+       the one in use. Which project and which tab are in use is kept in the
+       address, so a bookmark or an agent lands on exactly this view; the tab is
+       also kept in this browser, so a visit that names neither comes back to the
+       tab this browser last used. -->
+    <div id="proj-bar" class="ps-bar">
+
+      <select id="proj-dropdown" class="ps-dropdown" aria-label="which project is open"
+        title="The project every panel of this page reads. Choose one and the panels are drawn from what this browser holds of it at once, and then checked against the machine. A project this machine has never been told of is not offered."></select>
+
+      <button id="proj-add"
+        title="Add a project: a sheet slides in from the right and asks either for a new project this machine will start, or for a link to a repository somewhere else that this machine will take in as its own. Nothing is written until the sheet is sent.">+</button>
+
+      <div id="proj-facts" class="ps-quick-facts"
+        title="What the machine stated about the project in use: its branch, and the counts it keeps. A fact the machine never stated is not written here.">
+      </div>
+
+      <div id="proj-tabs" class="ps-tabs"
+        title="Which part of a project this page is open on. Choosing one is this page's own state, kept in this browser and in the address - the machine is never told a tab was chosen, and nothing else on the page is asked about again.">
+        <button id="proj-tab-code" class="ps-tab"
+          title="The project's files, its reading of them, and the facts the machine parsed from them.">code</button>
+        <button id="proj-tab-issues" class="ps-tab"
+          title="The issues this machine keeps for the project - each one pinned to a file.">issues</button>
+        <button id="proj-tab-pulls" class="ps-tab"
+          title="The pull requests this machine keeps for the project: who approved what, and where the work stands. The branches are read too - a pull is opened between two of them - but the rows this room lists are the pulls.">pulls</button>
+        <button id="proj-tab-builds" class="ps-tab"
+          title="The builds this machine runs for the project, like a panel of a CI room: definitions, runs, and their logs.">builds</button>
+        <button id="proj-tab-remotes" class="ps-tab"
+          title="The places this project answers to, and what the machine found when it tried each one.">remotes</button>
+        <button id="proj-tab-settings" class="ps-tab"
+          title="What this machine was told about the project: its name, its description, its license, and the features recorded as planned.">settings</button>
+      </div>
+
+      <div class="status-line" id="status-line"
+        title="The last thing this page has to say: what a press did, what it could not, or where the page stands while the machine is still answering.">
+      </div>
+
+    </div>
+
+    <!-- The six panels. All are present in the page; only the one the tab strip
+       names is drawn. Each is a place the machine has not answered in says so in
+       its own words rather than being left blank or filled with what a page
+       would guess. Controls a later phase adds live here are not drawn now: a
+       control that answers to nothing would be a lie about the machine. -->
+
+    <section class="panel ps-panel" id="ps-panel-code" hidden aria-live="polite">
+      <div class="panel-title">code</div>
+      <div id="ps-code-columns" class="ps-code-columns"
+        title="Three columns: the files the machine listed, the file this page is reading, and the outline the machine made of it. A narrow screen folds them into one.">
+        <div id="ps-code-files" class="ps-code-files"
+          title="The files column: what the machine listed, one folder at a time.">
+          <div id="ps-tree" class="ps-tree"
+            title="The files of the project in use, as the machine listed them. Only the folder the panel is standing in is listed; folders are opened one at a time, because a whole tree of a large repository is more than this row can carry.">
+          </div>
+          <div id="ps-tree-note" class="ps-note"></div>
+          <div class="ps-field-row">
+            <label for="proj-search"
+              title="Words to look for in the paths this page has loaded. Nothing is asked of the machine.">search these
+              paths</label>
+            <input id="proj-search" type="text"
+              title="Words to filter these paths by. The filter runs over what this page has loaded; a folder never opened was never searched.">
+          </div>
+        </div>
+        <div id="code-viewer" class="ps-code-viewer"
+          title="The viewer column: one line per line of the file this page is reading, at the ref its head names.">
+          <div id="code-viewer-head" class="ps-code-head">
+            <div id="code-viewer-path" class="ps-code-path"></div>
+            <div id="code-viewer-actions" class="ps-code-actions">
+              <button id="code-viewer-raw" class="ps-code-hand"
+                title="Read the file as it came: one block of words, no line numbers, no anchors.">raw</button>
+              <button id="code-viewer-history" class="ps-code-hand"
+                title="The dense file log the machine walks: the lane of the walk, who changed what and when, its refs and line counts, and a chosen commit told in full. Press again for the numbered reading.">history</button>
+              <button id="code-viewer-blame" class="ps-code-hand"
+                title="One commit mark per line: who wrote it. Press again for the numbered reading.">blame</button>
+              <button id="code-viewer-edit" class="ps-code-hand"
+                title="Type into this file in an editor pane beside the reading: the words you type stay in this browser, and only a save asks the machine to commit them. Press again for the numbered reading.">edit</button>
+            </div>
+            <span id="code-viewer-ref" class="ps-chip"></span>
+          </div>
+          <!-- The run strip: one file compiled where it stands, and read back from
+             the same job until it ends. The button presses the build door for the
+             file open in this column; the state beside it is what the status door
+             answered last, and nothing here is a guess about the machine. -->
+          <div id="code-run-strip" class="ps-run-strip">
+            <button id="code-run-build" class="ps-code-hand"
+              title="Compile and run this file: the build door is asked for the file open in this column, at the machine's own toolchain for its extension. While it stands, the state beside the button says how far it got; press again to ask a standing build to go.">build</button>
+            <span id="code-run-state" class="ps-run-state"></span>
+          </div>
+          <!-- The problems region: the compiler's own lines read as rows, newest
+             build first. It is drawn when a build has answered with its words;
+             before that it is not on the page at all. -->
+          <div id="ps-problems" class="ps-problems" hidden>
+            <div id="ps-problems-head" class="ps-problems-head"></div>
+            <div id="ps-problems-list" class="ps-problems-list"></div>
+            <div id="ps-problems-note" class="ps-note"></div>
+          </div>
+          <!-- The results block: the build's words as they came, stdout first and
+             stderr beside it. A stream the machine stated is never dropped here;
+             one it stated no word of says so itself. -->
+          <div id="ps-run-results" class="ps-run-results" hidden>
+            <div id="ps-run-stdout" class="ps-run-stream"></div>
+            <div id="ps-run-stderr" class="ps-run-stream"></div>
+          </div>
+          <div id="code-viewer-body" class="ps-code-body"></div>
+          <div id="code-viewer-note"></div>
+        </div>
+        <div id="code-outline" class="ps-code-outline"
+          title="The outline column: the shapes the machine named inside the file open. A press jumps there and anchors the line.">
+          <div id="code-outline-note"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- The issues room: the compact rows the machine makes for agents, one per
+         issue, with the file paths each one wears beside it. The strip above the
+         rows is the room's own asking: which state, which path, and a hand to
+         open a record. A row is pressed to read the record with the machine's own
+         re-anchoring of its file tags; the record's own doors work it. -->
+    <section class="panel ps-panel" id="ps-panel-issues" hidden>
+      <div class="panel-title">issues</div>
+      <div id="ps-issues-bar" class="ps-room-bar"
+        title="What this room asks for and what the answer carried: the state asked, the path asked, and the counts the rows themselves state.">
+      </div>
+      <div id="ps-issues-ask" class="ps-ask" hidden></div>
+      <div id="ps-issues" class="ps-list"
+        title="The issues the machine keeps for the project in use, newest changed first, as its compact reading rows them."></div>
+      <div id="ps-issues-note" class="ps-note"></div>
+      <div id="ps-issues-detail" class="ps-detail" hidden></div>
+    </section>
+
+    <!-- The pulls room: the pull records this machine keeps, with the approvals
+         count each row wears against the threshold the answer states beside the
+         rows. A row is pressed to read one record beside the two branch tips as
+         they stand now; the merge door's conflicts, if it answers any, are drawn
+         with the three sides each path carries and a place to settle them. -->
+    <section class="panel ps-panel" id="ps-panel-pulls" hidden>
+      <div class="panel-title">pulls</div>
+      <div id="ps-pulls-bar" class="ps-room-bar"
+        title="What this room asks for and what the answer carried: the state asked, the approvals threshold this project's own facts ask for, and the hands this room has.">
+      </div>
+      <div id="ps-pulls-ask" class="ps-ask" hidden></div>
+      <div id="ps-pulls" class="ps-list"
+        title="The pull requests the machine keeps for the project in use."></div>
+      <div id="ps-pulls-note" class="ps-note"></div>
+      <div id="ps-pulls-detail" class="ps-detail" hidden></div>
+    </section>
+
+    <section class="panel ps-panel" id="ps-panel-builds" hidden>
+      <div class="panel-title">builds</div>
+      <div id="ps-builds" class="ps-list"
+        title="The build definitions this machine holds for the project, and the runs they made."></div>
+      <div id="ps-builds-note" class="ps-note"></div>
+    </section>
+
+    <section class="panel ps-panel" id="ps-panel-remotes" hidden>
+      <div class="panel-title">remotes</div>
+      <div id="ps-remotes" class="ps-list"
+        title="The places this project answers to, and what the machine found when it tried each one."></div>
+      <div id="ps-remotes-note" class="ps-note"></div>
+    </section>
+
+    <section class="panel ps-panel" id="ps-panel-settings" hidden>
+      <div class="panel-title">settings</div>
+      <div id="ps-meta-read" class="ps-facts"
+        title="What the machine stated about this project: its name, its description, the license its own file says. Nothing here is typed by hand.">
+      </div>
+      <div class="ps-field-row" id="ps-row-name">
+        <label for="ps-meta-name"
+          title="The name this project is called by on this machine. Leave it as it stands to keep what the machine stated.">name</label>
+        <input id="ps-meta-name" type="text"
+          title="The name this project is called by on this machine. Blank keeps what the machine stated.">
+      </div>
+      <div class="ps-field-row" id="ps-row-description">
+        <label for="ps-meta-description"
+          title="The words that say what this project is. Leave blank to keep what the machine stated.">description</label>
+        <input id="ps-meta-description" type="text"
+          title="What this project is, in a few words. Blank keeps what the machine stated.">
+      </div>
+      <div class="ps-field-row" id="ps-row-license">
+        <label for="ps-meta-license"
+          title="The license this project carries. Blank keeps what the machine read from the license file.">license</label>
+        <select id="ps-meta-license"
+          title="The license this project carries. The machine read it from the file; choosing one here has the machine write it.">
+          <option value="" selected title="Keep what the machine read from the license file, or said nothing about.">the
+            machine's own reading</option>
+          <option value="MIT" title="MIT: short, permissive.">MIT</option>
+          <option value="Apache-2.0" title="Apache-2.0: permissive, with the licence file's own record of changes.">
+            Apache-2.0</option>
+          <option value="GPL-3.0" title="GPL-3.0: anything built on this stays open.">GPL-3.0</option>
+          <option value="BSD-3" title="BSD 3-Clause: permissive, with the attribution named.">BSD-3</option>
+          <option value="none" title="No license file in this project.">none</option>
+        </select>
+      </div>
+      <div id="ps-planned" class="ps-planned"
+        title="The features this machine has recorded as planned for this project. Rows appear only when the machine named them; marking one says whether it stands done, and the mark is sent when this panel is written.">
+      </div>
+      <button id="ps-meta-save"
+        title="Write what is in these fields, and the marks on the rows above, to the machine: the answer is the machine's own words about what it did. Nothing outside this panel is changed.">write
+        these to the machine</button>
+      <div id="ps-meta-note" class="ps-note"></div>
+    </section>
+
+    <!-- The sheet: a right-side panel with the page dimmed behind it. It is
+       drawn open only while a project is being added; ESC, pressing the sheet
+       closed again, or releasing the backdrop closes it. The two modes are
+       segments of one control: the fields of the mode not chosen are taken off
+       the page rather than left to answer to nothing. -->
+    <aside id="ps-sheet" class="ps-sheet"
+      title="Adding a project. Either this machine starts a new one, or takes in a repository that lives somewhere else by a link. The words the sheet answers with are the machine's own.">
+      <div class="ps-sheet-title">add a project</div>
+      <div id="ps-modes" class="ps-modes">
+        <button id="ps-mode-new" class="ps-mode"
+          title="Start a new project here: the machine makes the folder, the repository, and the first commit.">new
+          project</button>
+        <button id="ps-mode-link" class="ps-mode"
+          title="Take in a repository from a link: a clone address on github, gitlab, or anywhere else, read as this machine's own project.">from
+          a link</button>
+      </div>
+      <div id="ps-fields-new" hidden>
+        <div class="ps-field-row" id="ps-row-new-name">
+          <label for="ps-new-name"
+            title="What to call the new project. The machine keeps a plain name for its folder; the words beside the field show the name it would use.">name</label>
+          <input id="ps-new-name" type="text"
+            title="What to call the new project. Letters, digits, and dashes are kept; other characters are left out.">
+          <div id="proj-slug-preview" class="ps-slug-preview"
+            title="The name this machine would keep the project under - shown before anything is sent, so a person can see the name the machine would answer to.">
+          </div>
+        </div>
+        <div class="ps-field-row" id="ps-row-new-branch">
+          <label for="ps-new-branch"
+            title="The branch this project starts on. Blank leaves the machine's own first choice.">default
+            branch</label>
+          <input id="ps-new-branch" type="text"
+            title="The branch this project starts on. Blank lets the machine choose its own.">
+        </div>
+        <div class="ps-field-row" id="ps-row-new-readme">
+          <label for="ps-new-readme"
+            title="Whether the machine writes a README as the first thing in the project.">start with a readme</label>
+          <input id="ps-new-readme" type="checkbox"
+            title="Leave marked for the machine to write a README as the project's first commit; leave clear to start with no files.">
+        </div>
+        <div class="ps-field-row" id="ps-row-new-license">
+          <label for="ps-new-license" title="The license the machine writes into the new project.">license</label>
+          <select id="ps-new-license" title="The license written into the new project. None writes no file.">
+            <option value="MIT" selected title="MIT: the short, permissive license.">MIT</option>
+            <option value="Apache-2.0" title="Apache-2.0: permissive, with the licence file's own record of changes.">
+              Apache-2.0</option>
+            <option value="GPL-3.0" title="GPL-3.0: anything built on this stays open.">GPL-3.0</option>
+            <option value="BSD-3" title="BSD 3-Clause: permissive, with the attribution named.">BSD-3</option>
+            <option value="none" title="No license file.">none</option>
+          </select>
+        </div>
+      </div>
+      <div id="ps-fields-link" hidden>
+        <div class="ps-field-row" id="ps-row-link-url">
+          <label for="ps-link-url"
+            title="The clone address: the words a git person would paste, https or ssh, from github, gitlab, or anywhere else.">link</label>
+          <input id="ps-link-url" type="text"
+            title="Paste the clone address. The host and the owner/repository are read out of it and shown back to you before anything is sent, so a link aimed at the wrong place can be seen.">
+          <div id="ps-link-echo" class="ps-link-echo"
+            title="What was read out of the link, shown back before anything is sent. Reading the branch names and the pull requests that live at that address comes with the machine's own reading of it, in a later phase.">
+          </div>
+        </div>
+        <div class="ps-field-row" id="ps-row-link-branch">
+          <label for="ps-link-branch"
+            title="Which branch to take in. Blank takes the address's own default. Picking from the branches that live at the address comes when the machine can read it.">branch</label>
+          <input id="ps-link-branch" type="text"
+            title="A branch named here is asked for as it stands at that address. Blank takes the address's default. The list of branches that live there is read by the machine when its reading of the address lands.">
+        </div>
+        <div class="ps-field-row" id="ps-row-link-pr">
+          <label for="ps-link-pr" title="A pull request number to take in beside the branch. Blank takes none.">pull
+            request</label>
+          <input id="ps-link-pr" type="number" min="1" step="1"
+            title="The number of a pull request at that address to take in. The list of what lives there is read by the machine when its reading of the address lands.">
+        </div>
+      </div>
+      <div id="proj-sheet-error" class="ps-sheet-error" hidden></div>
+      <button id="ps-sheet-submit"
+        title="Send this to the machine. A new project is started, or the link is taken in; the sheet answers with the machine's own words, and the project that was just made becomes the one in use.">send
+        this to the machine</button>
+      <button id="ps-sheet-close" title="Put the sheet away without sending it.">close</button>
+    </aside>
+
+    <div id="ps-backdrop" class="ps-backdrop" hidden></div>
+
+  </main>
+
+  <script src="key-shim.js"></script>
+  <script src="status-cache.js"></script>
+  <script src="common.js"></script>
+  <script src="config.js"></script>
+  <!-- The code tab's line diff, as one global PsDiff. project.js only takes that
+     global — the gutter marks read with it, and a classic script cannot be
+     carried in by the module import that brings the editor. It stands before
+     project.js so the global is already there when the editor mounts. -->
+  <script src="/ps-diff.js"></script>
+  <script src="project.js"></script>
+</body>
+
+</html>

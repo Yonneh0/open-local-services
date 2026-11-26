@@ -1,0 +1,19 @@
+[Unit]
+Description=open-local-services api server
+# The server reads weights over the network the first time a model is asked for
+# and waits on nothing else, so it is stood up after the machine is on the
+# network rather than after it has merely a socket.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Edit these two lines to where this tree stands on this machine. The entry
+# finds its own folder, so the working folder is named for the machine's own
+# reader and journal, not because the server needs it.
+WorkingDirectory=/home/yonneh/open-local-services
+ExecStart=/home/yonneh/open-local-services/run.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

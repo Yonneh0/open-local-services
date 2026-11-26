@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>open-local-services</title>
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23151a22'/%3E%3Ctext x='50' y='74' font-size='68' text-anchor='middle'%3E%F0%9F%8E%A8%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <main>
+
+    <aside id="left">
+
+      <section class="panel"
+        title="Each card is a model: what it is good at, where its files are, and what it holds right now - in memory, ready on disk, or not fetched yet. The one a run would draw with is marked: its card has the heavier border and says in use. Tapping that card's words selects the model it names and nothing else - no weights are read in, no download is started, no memory is asked for. Tap another card to put that model in use instead; the choice is kept on the machine, so this page comes back to it. These cards are the only thing on the page that picks a model. The machine opens the models its memory window can hold at a time: load hands that window over, and when it is full the idle model that was used least recently is let go first; unload gives one model's memory back while its files stay on disk. A model that is not downloaded yet is offered download, which checks every weight against the sum the source states beside it, and where the source states none, against the whole of that file's own header. The faint mark under a control's words is only there so the control can be recognised by its shape.">
+        <div class="panel-title">models</div>
+        <div id="models-pane-list"></div>
+      </section>
+
+    </aside>
+
+    <section id="studio">
+
+      <!-- The ask and the settings for it are one decision read together, so they
+         share a row: the words take three parts of the width, the settings the
+         fourth. Below a window narrow enough to squeeze either, the row becomes a
+         stack again (see .studio-top in style.css). -->
+      <div class="studio-top">
+        <section class="panel prompt-panel" id="prompt-panel"
+          title="The words say what to draw, and the pictures this run starts from belong here with them. Three ways to put a picture in: choose files with the pictures control below the prompt, paste a picture from the clipboard, or drag a picture this page keeps onto it - the whole panel is the target, so a picture released anywhere over it lands here. A file of your own computer can be released over this panel too: the panel lights while a file is held over it, and letting go there reads the file here and keeps it on this machine; a file released anywhere else on the page is left to the browser. Each picture takes a numbered position in the strip, and the model reads them in that order, so put the picture you want changed first. The line under the strip states what is in use, how many pictures the model you picked can take, and what it will do with them.">
+          <div class="panel-title">prompt
+            <button id="prompt-reset" class="title-hand"
+              title="Put this model's own words and settings back: its prompt and avoid words, its size, steps, guidance, closeness, seed and count, and the strip of starting pictures it was given. The words and settings you had written stay kept on this browser for the model you came from.">reset</button>
+          </div>
+          <div class="row">
+            <label for="prompt-field"
+              title="What the image should show. The field opens with a prompt this model is good at; write over it. With pictures in the strip below, write the change instead.">prompt</label>
+            <textarea id="prompt-field" rows="5" spellcheck="true"
+              title="Subject, then style, then lighting. The more concrete, the better. With pictures in the strip below, write the change you want instead."></textarea>
+          </div>
+          <div class="row" id="avoid-row" hidden>
+            <label for="negative-field"
+              title="What to avoid. Leave blank to use this model's own default.">avoid</label>
+            <textarea id="negative-field" rows="5" spellcheck="true"
+              title="Optional. Blank uses this model's own default, which is usually enough."> </textarea>
+          </div>
+          <div class="row">
+            <label for="picture-file"
+              title="Choose picture files on your computer. Each one is read here, kept on this machine, and put in the strip below in the order you chose them.">pictures</label>
+            <form id="picture-form" class="picture-form">
+              <input id="picture-file" type="file" accept="image/*" multiple
+                title="Choose one or more picture files. They are read in this browser, kept on this machine, and put in the strip below in the order you chose them. Up to ten.">
+            </form>
+          </div>
+          <div class="drop-note" id="picture-note"></div>
+          <div class="ref-strip" id="ref-strip"
+            title="The pictures this run starts from, numbered in the order the model reads them."></div>
+          <div class="panel-foot" id="start-note"></div>
+        </section>
+
+        <section class="panel settings-panel">
+          <div class="panel-title">settings</div>
+          <div>
+            <div class="opt-row">
+              <label for="size-select"
+                title="Picture size. Every model names the size it was trained at; pick a preset, or choose custom to type exact pixels.">size</label>
+              <select id="size-select" title="Pick a size. Custom lets you type exact pixels.">
+                <option value="model" selected
+                  title="The size the model on the card names - the one its card states it was trained at. A model asked to draw at a size it never trained at costs the square of the ratio in time and gives back a picture it cannot fill.">
+                  the model's own size</option>
+                <option value="768x768"
+                  title="A square between the small and the large. Not the size most models were trained at.">768 × 768
+                </option>
+                <option value="512x512" title="Small square: the fastest run, with less detail.">512 × 512</option>
+                <option value="1024x1024" title="Large square: more detail, and more time.">1024 × 1024</option>
+                <option value="1024x768" title="Wide picture, landscape.">1024 × 768 wide</option>
+                <option value="768x1024" title="Tall picture, portrait.">768 × 1024 tall</option>
+                <option value="1344x768" title="Wide panorama. Needs tiling to stay sharp.">1344 × 768 wide</option>
+                <option value="custom" title="Set the exact width and height yourself.">custom…</option>
+              </select>
+              <input id="width" type="number" aria-label="width in pixels" min="64" max="4096" step="8" value=""
+                title="Width in pixels, only used with custom. The machine keeps a side inside 64..4096; multiples of 8.">
+              <input id="height" type="number" aria-label="height in pixels" min="64" max="4096" step="8" value=""
+                title="Height in pixels, only used with custom. The machine keeps a side inside 64..4096; multiples of 8.">
+            </div>
+            <div class="opt-row">
+              <label for="steps" title="Sampling steps. Leave blank to use the number this model wants.">steps</label>
+              <input id="steps" type="number" min="1" max="150" value=""
+                title="Blank uses this model's own number. The machine keeps steps inside 1..150. More steps is slower and sharper.">
+              <label for="guidance"
+                title="How strictly to follow the prompt. Leave blank for the model default.">guidance</label>
+              <input id="guidance" type="number" min="0" value=""
+                title="Only some models use this. Blank uses this model's own number; so does 0. Above 1 follows the prompt harder.">
+            </div>
+            <div class="opt-row" id="strength-row" hidden>
+              <label for="ref-strength"
+                title="How closely to keep the one picture this model redraws. Only shown for a model that redraws a picture.">closeness</label>
+              <select id="ref-strength" title="How closely to keep the picture this model redraws.">
+                <option value="" title="Let the model decide how far to move from the picture.">model default</option>
+                <option value="0.3" title="Change a lot: the picture only guides the layout.">loose</option>
+                <option value="0.6" title="Change some: keep the composition and much of the picture." selected>medium
+                </option>
+                <option value="0.9" title="Change little: stay close to the picture.">close</option>
+              </select>
+            </div>
+            <div class="opt-row" id="clip-row" hidden>
+              <label for="clip-length"
+                title="How many frames the clip this model moves should have. Only shown for a model that makes moving pictures. Leave blank for the length this model's card names.">frames</label>
+              <input id="clip-length" type="number" min="5" max="243" value=""
+                title="Frames, not seconds: this model names the rate it moves at, so the length of a clip is frames divided by that rate. The machine accepts 5..243 frames, on the grid of lengths the model works at. Blank uses the length the card names. A longer clip costs proportionally more time.">
+            </div>
+            <div class="opt-row">
+              <label for="seed" title="-1 gives a new image every run. A fixed number repeats one image.">seed</label>
+              <input id="seed" type="number" min="-1" value="-1"
+                title="-1 means a new image every run. Fix a number to repeat one image exactly.">
+              <label for="count"
+                title="How many pictures this press draws; each one is a job of its own on the machine, drawn one after another.">images</label>
+              <input id="count" type="number" min="1" max="16" value="1"
+                title="Each picture is a job of its own: its own line in the queue, its own slot on the card of this ask, its own stop hand. Each extra one costs the same time as the first.">
+            </div>
+          </div>
+          <div class="pill-row">
+            <span class="pill" id="pill-tiling"
+              title="Decode the image in tiles, which needs far less memory. Turn on above 1024 px.">vae tiling</span>
+            <span class="pill" id="pill-sage" title="Approximate attention: faster, slightly different output.">fast
+              attention</span>
+            <span class="pill" id="pill-cpu"
+              title="Work on this machine's own threads and leave the card to whatever else the machine is doing. Every weight and every step is then worked where the threads are: slower, and the card stays free.">work
+              on cpu</span>
+          </div>
+          <!-- The model a run would draw with, restated at the foot of this
+               panel: every dial above that is left blank is answered by that
+               model's own number, and a size or a count is chosen against those
+               numbers - they belong where the dial is, not only two panels away
+               down the card rail. This is the same card the rail draws, from the
+               same reading: nothing here asks the machine again, and a card that
+               states nothing of some kind says so rather than being filled in. -->
+          <div class="panel-title">the model a run draws with</div>
+          <div class="facts" id="model-card-here"></div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-title">run</div>
+        <!-- The three generate hands are one bar: they stand edge to edge with
+             one line between them, so the row reads as a single control. The
+             plain hand keeps its place at the left as the obvious first press;
+             the two quick batches are marked X4 and X16 and kept to the width
+             their own marks need, at the right end. They are drawn as a caution
+             because each picture costs what one run costs - four separate jobs
+             for four, sixteen separate jobs for sixteen, each picture its own
+             job on the machine; the mark is the whole ask, so the words that say
+             so live in the hand's own tip. -->
+        <div class="run-bar">
+          <button id="gen-btn" title="Open the model if needed, then render.">generate</button>
+          <button id="gen-4x" class="caution"
+            title="Draw four pictures from this prompt: four separate one-picture jobs, drawn one after another. Four times the work of one generate.">X4</button>
+          <button id="gen-16x" class="caution"
+            title="Draw sixteen pictures from this prompt: sixteen separate one-picture jobs, drawn one after another. Sixteen times the work of one generate. The ask stands in the gallery as one card with a slot for each picture of it; the stop hand on a slot stops that job.">X16</button>
+        </div>
+        <div class="status-line" id="status-line"
+          title="The last thing this page has to say. Renders speak on their own cards in the gallery; this line carries the words beside them - what a press did, or what it could not.">
+        </div>
+      </section>
+
+      <section class="panel"
+        title="Every render this machine keeps, newest first, drawn whole rather than cropped into a fixed box. The room is loaded in full: its records arrive a page at a time with the asks batched, and the line under the controls says when the whole room is here. A repeated ask - the same prompt and the same settings, a different seed - is one card whose thumbnails name every run. A run of that ask that has not come out yet is a slot on that same card, each slot with its own bar and its own stop hand, and the card is pulled to the front while any of its pictures stands. The model field shows how many of the pictures this machine keeps each model made, so a name with (0) beside it is a model this machine has no kept renders from. The bulk buttons work on what is shown here: select all marks every picture after the filters, clear puts them back, and the two deletes remove the pictures and their files on the machine, which cannot be undone.">
+        <div class="panel-title">gallery</div>
+        <div class="gallery-controls">
+          <select id="gallery-model" aria-label="show only one model"
+            title="Show only the renders made by one model; the count beside a name says how many of the pictures on this screen that model made. Leave it on all models to see everything."></select>
+          <input id="gallery-search" type="text" aria-label="words in the prompt or name" placeholder="search"
+            title="Find renders whose prompt, name, or model contains these words. Leave blank for all. The search reads every picture this machine keeps.">
+          <select id="gallery-sort" aria-label="how the list is ordered" title="How the list is ordered.">
+            <option value="new" title="Newest at the top." selected>newest first</option>
+            <option value="old" title="Oldest at the top.">oldest first</option>
+            <option value="big" title="Biggest files first.">largest first</option>
+          </select>
+        </div>
+        <div class="gallery-bulk">
+          <button id="gallery-select-all" title="Mark every picture here, after the model and search filter.">select
+            all</button>
+          <button id="gallery-clear" title="Put every marked picture back unmarked.">clear</button>
+          <button id="gallery-delete-marked"
+            title="Delete every marked picture and its file on the machine. This cannot be undone.">delete
+            marked</button>
+          <button id="gallery-delete-shown"
+            title="Delete every picture this page is showing and their files on the machine. This cannot be undone.">delete
+            all shown</button>
+        </div>
+        <div id="gallery-note" class="gallery-note"></div>
+        <div id="gallery"></div>
+      </section>
+
+      <section class="panel refs-panel"
+        title="What this machine holds as starting points: a render you pressed keep under, or a picture you brought in through the panel above. Each card shows the picture itself. Tap a card to put that picture into the strip above at the next position; drag a card onto the prompt panel does the same by hand, where you can see the position it lands in. remove stops keeping a picture and deletes its file on the machine. A picture this page has drawn once stays in this browser, so opening it again never downloads it a second time.">
+        <div class="panel-title">kept pictures</div>
+        <div id="refs-note" class="refs-note"></div>
+        <div id="refs"></div>
+      </section>
+
+      <div class="viewer" id="viewer">
+        <div class="viewer-head">
+          <div class="viewer-cap" id="viewer-cap"></div>
+          <div class="viewer-facts facts" id="viewer-facts"></div>
+        </div>
+        <div class="viewer-stage" id="viewer-stage"
+          title="The picture. Hold it and move it to look at the part that fell outside the frame.">
+          <img id="viewer-img" alt="render"
+            title="The picture you are looking at. The buttons below change the zoom, move to the pictures beside this one in the list on screen, and close it.">
+          <!-- The clock the scroll runs on: the line fills along the bottom of
+               the frame over the time a picture is kept on it, and the next is
+               moved to as the line reaches the frame's own edge. A picture read
+               at leisure carries no line at all. -->
+          <div class="viewer-tick" id="viewer-tick" hidden></div>
+        </div>
+        <!-- The other renders this same prompt and these settings made, when
+             there is more than one: the row under the frame picks which of them
+             stands in it, and rings the one that does. Drawn by app.js; hidden
+             for a picture that is the only one of its ask. -->
+        <div class="viewer-runs" id="viewer-runs" hidden></div>
+        <div class="viewer-bar">
+          <!-- The scroll, at the start of the bar: the runs of the ask this
+               picture belongs to, moved along on a clock this page owns. Each
+               stands for the time the first dropdown names, the move to the next
+               is the one the second names, made in the speed the third names,
+               and the last of them goes back to the first — a scroll standing on
+               the newest of four runs reaches it again after four moves. The
+               words under the frame repeat the clock the dropdowns now say, and a
+               picture that is the only one of its ask has nothing to scroll. -->
+          <div class="viewer-scroll">
+            <button id="viewer-play" aria-pressed="false"
+              title="Scroll through the runs of this ask on their own clock: each stands for the time chosen, and the last of them goes back to the first. Press again to stop.">play</button>
+            <select id="viewer-each" aria-label="how long each picture stands"
+              title="How long each picture stands before the next is moved to.">
+              <option value="1">1s</option>
+              <option value="2">2s</option>
+              <option value="3">3s</option>
+              <option value="5">5s</option>
+              <option value="15">15s</option>
+              <option value="30">30s</option>
+              <option value="60">1m</option>
+              <option value="120">2m</option>
+              <option value="300">5m</option>
+            </select>
+            <select id="viewer-wipe" aria-label="how the next picture is moved to"
+              title="How the next picture is moved to.">
+              <option value="fade">fade</option>
+              <option value="slide">slide</option>
+              <option value="zoom">zoom</option>
+              <option value="wipe">wipe</option>
+              <option value="none">none</option>
+            </select>
+            <select id="viewer-speed" aria-label="how fast that move is made" title="How fast that move is made.">
+              <option value="120">fast</option>
+              <option value="260">calm</option>
+              <option value="520">slow</option>
+              <option value="900">drawn out</option>
+            </select>
+          </div>
+          <button id="viewer-fit" title="Fit the whole picture in the frame.">fit</button>
+          <button id="viewer-out" title="Zoom out.">−</button>
+          <button id="viewer-in" title="Zoom in.">+</button>
+          <button id="viewer-full" title="Show the picture at its real size.">100%</button>
+          <button id="viewer-prev"
+            title="Open the picture that comes before this one in the list on screen.">prev</button>
+          <button id="viewer-next"
+            title="Open the picture that comes after this one in the list on screen.">next</button>
+          <button id="viewer-close" title="Close the picture.">close</button>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script src="key-shim.js"></script>
+  <script src="status-cache.js"></script>
+  <script src="common.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>

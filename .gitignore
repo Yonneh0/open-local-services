@@ -1,0 +1,91 @@
+build/
+src/build/
+src/build-arm64/
+# the development root a CUDA build on Windows drives with ninja: a generated
+# tree like every other build root, and its name is long on the same grounds.
+src/build-cuda/
+# the cpu-only shape's root, named by run.bat's nodevice word: generated like
+# every other build root.
+src/build-nd/
+# the development path's card-named roots: run.bat and build-rel.bat now name
+# the same root for one shape, so a root like build-c75 is generated state
+# exactly like every other build root and is never a source. these stand at
+# the repository top since the folder move; the src/ spellings stay for a tree
+# that has not moved its roots yet.
+build-c*/
+src/build-c*/
+# the release path's plain-vulkan cpu root on windows, same generated state.
+build-p/
+src/build-p/
+# the release path's own source-tree build root: kept shallow on the same
+# grounds as the development one, and never a source.
+src/.build/
+# the release roots named for one target each: the plain cpu flavour and one
+# folder per card generation, generated like every other build root.
+src/.build-p/
+src/.build-c*/
+Release/.build/
+*.exe
+# the object library the visual studio builder lays under a bin folder is
+# generated state, not an artifact of the release path: the release ships
+# archives, which stand under Release/ unpatterned and committed.
+bin/**/*.obj
+# an .obj left beside its source by a hand-run cl.exe is generated state like
+# every other built byte, wherever it lands.
+*.obj
+src/open-local-services
+src/open-local-services.new
+# the development tree runs the way the release folder will: with the image
+# engine copied beside the source it links against. built bytes, laid down by
+# run.bat on every build, never a source.
+src/stable-diffusion.dll
+src/open-local-services.exe
+weights/
+data/
+/vendor/
+!webui/vendor/
+.env
+
+# the release artifacts are built bytes, not source: build-rel.sh and
+# build-rel.bat lay them under Release/ on the box that built them - a server
+# binary and the engines beside it run to hundreds of megabytes each. the
+# finished ARCHIVES are the release and are committed - the repository is the
+# release - with these bounds, each one read off a measured fact:
+#   - the loose target folders stay out: an archive and its own unzipped
+#     folder are the same bytes twice, and the archive is the release.
+#   - cuda archives stay out wherever the tree clones: cuBLAS, cuBLASLt and
+#     cuFFT measure some 800 MB compressed per CUDA shape, and GitHub refuses
+#     any single file past 100 MB outright. they live beside the tree, carry
+#     their sha256 in the committed SHA256SUMS-<os>.txt manifest, and reach a
+#     machine over the link - a clone can hold the source of every artifact,
+#     not the heaviest artifacts themselves.
+#   - the vulkan and cpu archives (~50 MB) fit both bounds and are committed.
+# build-info.txt beside them names the commit everything was made from.
+Release/*/
+Release/*cuda*.zip
+Release/*cuda*.tar.gz
+
+# the phonemizer package the statically linked voice engine reads: built with
+# the voice engine and placed beside the binary by run.bat, so it is generated
+# data like the other built trees, not part of the source.
+src/espeak-ng-data/
+
+# the same generated phonemizer data beside a release artifact: build-rel.bat
+# copies it next to the binary it builds, and it is built data, not source.
+Release/*/espeak-ng-data/
+
+# the owner's reference manuals: 110 MB of PDFs that reach a machine by copy
+# over the link like the other payload trees, never by clone. what the
+# maintainer tab reads is held under data/maint once a manual is brought in,
+# so a clone on another box has no use for these bytes.
+ref/
+
+# the working notes an agent keeps for itself beside the tree: behaviour rules,
+# the map of this environment. Not part of the product, and written for the
+# machine that is doing the work, so it is never carried in a clone.
+local.md
+
+# what the picture suite wrote the last time it ran: one line per run, laid
+# beside the script that made it, so a person reads what the machine answered.
+# Machine state like every other log, and never part of a clone.
+*.log

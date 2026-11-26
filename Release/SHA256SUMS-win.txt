@@ -1,0 +1,5 @@
+60a79764b233f35c7f5a1a660e47b0eba9cd68783712d69c64ca8ec8b718677b  open-local-services-5884a7f-win-x64-windows.zip
+7d233534a864534ce68eaea776f714eff144728115784f1e35b55422e1b70e78  open-local-services-5884a7f-win-x64-windows-plain.zip
+bd98b82af0c2f6d09ae030f03580489b9beba55698a5abbc969b2cae8a4692fd  open-local-services-5884a7f-win-x64-cuda-70.zip
+d6b1586224747eaf3a8762469b14553c766c5e9f8fa7ac3a17587a62630b7357  open-local-services-5884a7f-win-x64-cuda-75.zip
+3b23d007c3b934e39c3f940769999f2f1435f429c8ab23f2e5d35d51e38f649c  open-local-services-5884a7f-win-x64-cuda-86.zip
