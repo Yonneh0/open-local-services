@@ -800,6 +800,7 @@ namespace ols
           // a forced scan may not be answered out of a browser's pocket.
           {"/api/service", 4},
           {"/api/update", -1}, // the hand's answer is one moment in time, never a reading to hold
+          {"/api/service/selftest", -1}, // what the process can do now, said once and never held
           {"/api/config", 15},
           {"/api/models", 2},
           {"/api/gallery", 2},
@@ -7456,6 +7457,19 @@ namespace ols
       out["did"] = taken;
       out["words"] = words;
       return jsonResponse(taken ? 200 : 400, out.dump());
+    }
+
+    // What this server can truly do, told straight: its account, its temp, and
+    // whether files land in the folders a hand needs. When an update refuses
+    // over a win32 error nobody can see from outside, this door says what the
+    // process itself sees. Read-only about the machine; it changes nothing.
+    if (path == "/api/service/selftest" && post)
+    {
+      std::string words;
+      ols::deploy::selfTest(words);
+      nlohmann::json out;
+      out["words"] = words;
+      return jsonResponse(200, out.dump());
     }
 
     // What this machine does about starting this server by itself. Nothing here

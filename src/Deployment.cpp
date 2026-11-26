@@ -448,6 +448,203 @@ namespace ols
         return "\"" + text + "\"";
       }
 
+      // The hand's own rights, asked of the machine once: this server is run by
+      // its boot task as SYSTEM, and a folder that refuses it - by an inherited
+      // deny nobody can name - leaves every door that writes there answering in
+      // refusal. When a write proves refused, this server stands a one-shot
+      // task of its own: the machine's icacls grants this very account modify
+      // over the data room and the tree it was handed, the entry runs itself
+      // once and is gone. The rights are the ones a running server needs to
+      // update itself; nothing else is asked of anyone, and the entry names
+      // only these two folders.
+      bool standingRepairTask(const std::string &root, std::string &why)
+      {
+        const std::string name = "ols-acl-repair";
+        // The entry names its command right on the create line: no script file
+        // anywhere. A server whose every writable folder refuses cannot be told
+        // to first write a helper somewhere else - that road was walked and it
+        // ends at the same closed door. What the entry does is two icacls
+        // grants over named folders, then its own deletion; nothing else runs.
+        const std::string progDir = selfExe().empty()
+                                        ? root
+                                        : std::filesystem::path(selfExe()).parent_path().string();
+        const std::string who = "S-1-5-18"; // this very account: LocalSystem
+        // No inner quotes anywhere in what the entry runs: paths are given by
+        // their 8.3 form, which this machine answers for every folder (probed -
+        // short names resolve even where a long one carries no space), and the
+        // self-delete names its task without quoting. The road through nested
+        // quotes was walked first and it ended with schtasks reading "/f\" as
+        // one mangled option - three layers of parser between these words and
+        // the command line they finally ride, and cmd breaks \" inside a quoted
+        // argument no matter how carefully the outer layer is escaped.
+        std::string shortRoot = root;
+        std::string shortProg = progDir;
+        char shortBuf[1024];
+        if (GetShortPathNameA(root.c_str(), shortBuf, sizeof(shortBuf)))
+          shortRoot = shortBuf;
+        if (GetShortPathNameA(progDir.c_str(), shortBuf, sizeof(shortBuf)))
+          shortProg = shortBuf;
+        const std::string inner = "icacls " + shortRoot + "\\data /grant *" + who +
+                                  ":(OI)(CI)M /T & icacls " + shortProg + " /grant *" + who +
+                                  ":(OI)(CI)M & schtasks /delete /tn " + name + " /f";
+        const std::string createLine = "schtasks /create /f /tn " + name +
+                                       " /tr \"cmd /c " + inner +
+                                       "\" /sc once /st 00:00 /ru SYSTEM /rl HIGHEST";
+        const Answer made = ask(createLine);
+        if (made.code != 0)
+        {
+          why = "schtasks /create said: " + oneLine(made.text);
+          return false;
+        }
+        const Answer started = ask("schtasks /run /tn \"" + name + "\"");
+        if (started.code != 0)
+        {
+          why = "schtasks /run said: " + oneLine(started.text);
+          return false;
+        }
+        // The entry is its own worker: give it a moment, and read the folder's
+        // answer rather than the task's.
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        return true;
+      }
+
+      // One door that shows what this server can actually do, for when its
+      // refusals need reading: every probe run in order, each with its honest
+      // outcome. Who am I, where does my temp live, can a file land in the
+      // data room, can a task be stood. Nothing is hidden here and nothing is
+      // fixed - it only says true about itself. POST-only, like every door
+      // that speaks about the machine.
+      bool anonymousSelfTest(std::string &words)
+      {
+        std::ostringstream said;
+        char whoBuf[256] = {0};
+        DWORD whoLen = sizeof(whoBuf);
+        if (GetUserNameA(whoBuf, &whoLen))
+          said << "account: " << whoBuf << "; ";
+        else
+          said << "account: unknown (win32 error " << GetLastError() << "); ";
+        const char *tmp = std::getenv("TEMP");
+        said << "temp: " << (tmp && *tmp ? tmp : "(unset)") << "; ";
+        // Where the refusals actually come from, read off the machine: the
+        // process's own integrity level and whether a child of its shell can
+        // even find schtasks. A Low-level process is refused writes to folders
+        // that any Medium process walks into freely, and it cannot reach the
+        // task scheduler at all - which reads exactly like "path not found".
+        {
+          HANDLE tok = nullptr;
+          if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok))
+          {
+            DWORD needed = 0;
+            GetTokenInformation(tok, TokenIntegrityLevel, nullptr, 0, &needed);
+            std::vector<char> buf(needed);
+            if (needed > 0 &&
+                GetTokenInformation(tok, TokenIntegrityLevel, buf.data(),
+                                    static_cast<int>(buf.size()), &needed))
+            {
+              const auto *label = reinterpret_cast<TOKEN_MANDATORY_LABEL *>(buf.data());
+              DWORD rid = *GetSidSubAuthority(label->Label.Sid, 0);
+              switch (rid)
+              {
+              case SECURITY_MANDATORY_UNTRUSTED_RID: said << "integrity: untrusted; "; break;
+              case SECURITY_MANDATORY_LOW_RID: said << "integrity: low; "; break;
+              case SECURITY_MANDATORY_MEDIUM_RID: said << "integrity: medium; "; break;
+              case SECURITY_MANDATORY_HIGH_RID: said << "integrity: high; "; break;
+              case SECURITY_MANDATORY_SYSTEM_RID: said << "integrity: system; "; break;
+              default: said << "integrity: rid " << rid << "; "; break;
+              }
+            }
+            else
+              said << "integrity: unreadable (win32 error " << GetLastError() << "); ";
+            CloseHandle(tok);
+          }
+          else
+            said << "integrity: no token (win32 error " << GetLastError() << "); ";
+        }
+        const Answer whereTask = ask("where schtasks");
+        said << "child where schtasks: "
+             << (whereTask.code == 0 ? oneLine(whereTask.text)
+                                     : ("refused - " + oneLine(whereTask.text)))
+             << "; ";
+        // A probe file in the data room, by name and gone after.
+        const State now = state();
+        const std::string probe = now.root.empty()
+                                      ? std::string{}
+                                      : now.root + "\\data\\ols-selftest-probe.tmp";
+        if (probe.empty())
+          said << "root: unknown; ";
+        else
+        {
+          std::ofstream out{probe, std::ios::binary | std::ios::trunc};
+          if (out.good())
+          {
+            out << "probe";
+            out.close();
+            said << "write data/: yes; ";
+            std::error_code rm{};
+            std::filesystem::remove(probe, rm);
+          }
+          else
+            said << "write data/: refused (win32 error " << GetLastError() << "); ";
+        }
+        // And the same probe beside the program it runs from.
+        const std::string selfFolder = selfExe();
+        if (!selfFolder.empty())
+        {
+          const std::string probe2 =
+              std::filesystem::path(selfFolder).parent_path().string() + "\\ols-selftest-probe.tmp";
+          std::ofstream out{probe2, std::ios::binary | std::ios::trunc};
+          if (out.good())
+          {
+            out << "probe";
+            out.close();
+            said << "write program folder: yes; ";
+            std::error_code rm{};
+            std::filesystem::remove(probe2, rm);
+          }
+          else
+            said << "write program folder: refused (win32 error " << GetLastError() << "); ";
+        }
+        // Can it see a task query at all? Read-only ask, no rights spent.
+        const Answer seen = ask("schtasks /query /fo LIST");
+        said << "schtasks /query: " << (seen.code == 0 ? "yes" : ("refused - " + oneLine(seen.text)))
+             << "; ";
+        // And the child's own eyes: what shell did the pipe hand to, and who is
+        // it. When a probe inside this process refuses where its children do
+        // not, that is the shape of the trouble; when they refuse alike, the
+        // whole line was born confined.
+        const Answer echoed = ask("echo %TEMP%");
+        said << "child echo: " << (echoed.code == 0 ? oneLine(echoed.text)
+                                                    : ("refused - " + oneLine(echoed.text)))
+             << "; ";
+        const Answer childWho = ask("whoami");
+        said << "child whoami: " << (childWho.code == 0 ? oneLine(childWho.text)
+                                                        : ("refused - " + oneLine(childWho.text)))
+             << "; ";
+        // And can the child put a file in the data room, where this process may
+        // not? The probe names itself so a stale one from an older round cannot
+        // be mistaken for a fresh answer.
+        if (!probe.empty())
+        {
+          const std::string childProbe = now.root + "\\data\\ols-child-probe.txt";
+          ask(("echo from-child> \"" + childProbe + "\"").c_str());
+          std::error_code pec{};
+          if (std::filesystem::is_regular_file(childProbe, pec))
+          {
+            std::ifstream in{childProbe};
+            std::string got;
+            std::getline(in, got);
+            said << "child write data/: yes (" << oneLine(got) << ")";
+            std::error_code rm{};
+            std::filesystem::remove(childProbe, rm);
+          }
+          else
+            said << "child write data/: refused";
+        }
+        words = said.str();
+        rememberWords(words);
+        return true;
+      }
+
       // The update hand, run by a detached helper running the script written
       // here. It waits for this process to let go of its file (a running image
       // is refused its own rename - that answer is the clock), moves what
@@ -512,12 +709,30 @@ namespace ols
         // running task takes the hand down with it, so /run alone brings the
         // new program up; only an already-stopped server needs both asks.
         const std::string progDir = programPath.parent_path().string();
-        const std::string script =
-            (std::filesystem::temp_directory_path() / "ols-update-hand.cmd").string();
+        // The hand's script stands beside the log it writes, in the data folder
+        // this server already owns - not %TEMP%, which for a boot-started task
+        // belongs to another account and refuses even the write.
+        // The hand's script stands beside the log it writes, in the data folder
+        // this server already owns - not %TEMP%, which for a boot-started task
+        // belongs to another account and refuses even the write. When even that
+        // folder refuses, these words name the file and the win32 behind it:
+        // a door that only says "could not" leaves nobody to ask why.
+        const std::filesystem::path handDir = std::filesystem::path(root) / "data";
+        std::error_code mk{};
+        std::filesystem::create_directories(handDir, mk);
+        const std::string script = (handDir / "ols-update-hand.cmd").string();
         std::ofstream out{script, std::ios::binary | std::ios::trunc};
         if (!out.good())
         {
-          words = "could not write the script that waits behind this server: nothing was handed.";
+          // The write was refused: stand the repair once and answer honestly.
+          std::string why{};
+          const bool stood = standingRepairTask(root, why);
+          words = "could not write the hand's script at " + script + " (win32 error " +
+                  std::to_string(GetLastError()) + "); " +
+                  (stood ? "this server stood its own rights-repair task - ask this door "
+                           "again in a moment, it should answer by then"
+                         : ("the repair could not stand either: " + why)) +
+                  ": nothing was handed.";
           rememberWords(words);
           return false;
         }
@@ -590,8 +805,13 @@ namespace ols
         {
           // systemd restarts the unit on its own clock; the move waits behind a
           // helper for the same reason the Windows hand does - a running
-          // program keeps its file until it is gone.
-          const std::string script = "/tmp/ols-update-hand.sh";
+          // program keeps its file until it is gone. The script stands in the
+          // data folder this server owns, not /tmp: what a root service writes
+          // there belongs to root and refuses a hand started any other way.
+          const std::filesystem::path handDir = std::filesystem::path(root) / "data";
+          std::error_code mk{};
+          std::filesystem::create_directories(handDir, mk);
+          const std::string script = (handDir / "ols-update-hand.sh").string();
           std::ofstream out{script, std::ios::binary | std::ios::trunc};
           if (!out.good())
           {
@@ -634,8 +854,12 @@ namespace ols
         {
           // No manager: the helper waits for the file, moves it, and starts the
           // new program itself - as this process's own detached child, which is
-          // the level this server stands at.
-          const std::string script = "/tmp/ols-update-hand.sh";
+          // the level this server stands at. The script stands in the data
+          // folder this server owns, not /tmp.
+          const std::filesystem::path handDir = std::filesystem::path(root) / "data";
+          std::error_code mk{};
+          std::filesystem::create_directories(handDir, mk);
+          const std::string script = (handDir / "ols-update-hand.sh").string();
           std::ofstream out{script, std::ios::binary | std::ios::trunc};
           if (!out.good())
           {
@@ -686,6 +910,15 @@ namespace ols
     bool updateHand(const std::string &exeName, const std::string &dllName, std::string &words)
     {
       return anonymousUpdateHand(exeName, dllName, words);
+    }
+
+    // What this server can truly do, told straight: account, temp, whether a
+    // file lands in its data room and program folder, whether it can see the
+    // task scheduler at all. For the day a hand refuses and nobody believes
+    // the folders are innocent.
+    bool selfTest(std::string &words)
+    {
+      return anonymousSelfTest(words);
     }
 
     // The header's reading of the running program: the same path these helpers

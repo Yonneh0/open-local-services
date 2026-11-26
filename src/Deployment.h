@@ -73,6 +73,12 @@ namespace ols
     // already carries.
     bool updateHand(const std::string &exeName, const std::string &dllName, std::string &words);
 
+    // What this server can truly do: the account it runs as, where its temp
+    // lives, whether a file lands in its data room and program folder, and
+    // whether the task scheduler answers its queries. Words, not guesses -
+    // for the day an update hand refuses and the folders are said to be guilty.
+    bool selfTest(std::string &words);
+
     // The words this server was started with, kept for the soft hand below.
     void rememberStart(const std::vector<std::string> &args);
 
