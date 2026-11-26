@@ -343,29 +343,40 @@ namespace ols
         {
             dirOut.clear();
             error.clear();
-            std::string dir;
             const char *env = std::getenv("OLS_SSH_DIR");
             if (env && *env)
             {
-                dir = env;
-            }
-            else
-            {
-                if (root.empty())
+                // A named folder answers for itself: found or refused in words,
+                // never a silent walk to another candidate.
+                std::error_code ec;
+                const std::filesystem::path binDir(env);
+                if (std::filesystem::is_regular_file(binDir / "ssh.exe", ec))
                 {
-                    error = "no root was named to find the vendored OpenSSH beside";
-                    return false;
+                    dirOut = env;
+                    return true;
                 }
-                dir = root + "/vendor/openssh";
+                error = std::string("no vendored ssh.exe stands at ") + env +
+                        ": the folder OLS_SSH_DIR names holds no pinned OpenSSH";
+                return false;
             }
-            std::error_code ec;
-            const std::filesystem::path binDir(dir);
-            if (!binDir.empty() && std::filesystem::is_regular_file(binDir / "ssh.exe", ec))
+            // Unnamed: the hands may stand beside the tree the code was built
+            // in, or beside the data dir the studio runs under - whichever a
+            // real ssh.exe answers from first. The build script lays them in
+            // the source tree; a serve that moved its root still finds them.
+            const std::filesystem::path candidates[] = {
+                std::filesystem::path(root) / "vendor" / "openssh",
+                std::filesystem::path("vendor") / "openssh",
+            };
+            for (const std::filesystem::path &binDir : candidates)
             {
-                dirOut = dir;
-                return true;
+                std::error_code ec;
+                if (std::filesystem::is_regular_file(binDir / "ssh.exe", ec))
+                {
+                    dirOut = binDir.string();
+                    return true;
+                }
             }
-            error = "no vendored ssh.exe stands at " + dir +
+            error = "no vendored ssh.exe stands at " + candidates[0].string() +
                     ": run the build script to take the pinned OpenSSH release";
             return false;
         }
