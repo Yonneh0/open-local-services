@@ -316,7 +316,10 @@ namespace ols
         bool looksSsh(const std::string &url, SshTarget &out)
         {
             std::string error;
-            const bool ok = classifySshUrl(url, out, error);
+            // The reading's own verdict is not asked here: a refused form
+            // leaves NotSsh in the readings and answers through the prefix
+            // arm below, while every accepted form lands on the kind check.
+            classifySshUrl(url, out, error);
             if (out.kind == UrlKind::SshUrl || out.kind == UrlKind::ScpLike)
             {
                 return true;
