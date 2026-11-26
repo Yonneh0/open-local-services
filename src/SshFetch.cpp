@@ -5,9 +5,15 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-// The desktop CreatePipe the blueprint calls: the UM flavor of the same name
-// takes two arguments, so the three-argument classic is named here once.
-extern __declspec(dllimport) BOOL CreatePipe(HANDLE *, HANDLE *, LPSECURITY_ATTRIBUTES);
+#pragma comment(lib, "onecore.lib")
+// The desktop CreatePipe the blueprint calls: this SDK's headers carry only a
+// two-argument flavor under the plain name, so the classic three-argument form
+// is named here once - at global scope with C linkage (inside ols::ssh the
+// compiler mangles it as our own function and the link asks for a symbol no
+// library ever had), and the linker is told to answer that import's name with
+// kernel32's own thunk. Proven on this machine: the pipe comes up inheritable.
+extern "C" __declspec(dllimport) BOOL WINAPI CreatePipeClassic(HANDLE *, HANDLE *, LPSECURITY_ATTRIBUTES);
+#pragma comment(linker, "/alternatename:__imp_CreatePipeClassic=__imp_CreatePipe")
 #endif
 #include "SshFetch.h"
 #include <cstdlib>
@@ -495,19 +501,19 @@ namespace ols
             HANDLE inRead = nullptr, inWrite = nullptr;
             HANDLE outRead = nullptr, outWrite = nullptr;
             HANDLE errRead = nullptr, errWrite = nullptr;
-            if (!CreatePipe(&inRead, &inWrite, &inheritable))
+            if (!CreatePipeClassic(&inRead, &inWrite, &inheritable))
             {
                 error = "the pipes for " + exePath + " could not be opened: win32 code " + std::to_string(GetLastError());
                 return false;
             }
-            if (!CreatePipe(&outRead, &outWrite, &inheritable))
+            if (!CreatePipeClassic(&outRead, &outWrite, &inheritable))
             {
                 error = "the pipes for " + exePath + " could not be opened: win32 code " + std::to_string(GetLastError());
                 CloseHandle(inRead);
                 CloseHandle(inWrite);
                 return false;
             }
-            if (!CreatePipe(&errRead, &errWrite, &inheritable))
+            if (!CreatePipeClassic(&errRead, &errWrite, &inheritable))
             {
                 error = "the pipes for " + exePath + " could not be opened: win32 code " + std::to_string(GetLastError());
                 CloseHandle(inRead);
@@ -869,19 +875,19 @@ namespace ols
             HANDLE stdinRead = nullptr, stdinWrite = nullptr;
             HANDLE stdoutRead = nullptr, stdoutWrite = nullptr;
             HANDLE stderrRead = nullptr, stderrWrite = nullptr;
-            if (!CreatePipe(&stdinRead, &stdinWrite, &inheritable))
+            if (!CreatePipeClassic(&stdinRead, &stdinWrite, &inheritable))
             {
                 error = "the pipes for the ssh road could not be opened: win32 code " + std::to_string(GetLastError());
                 return false;
             }
-            if (!CreatePipe(&stdoutRead, &stdoutWrite, &inheritable))
+            if (!CreatePipeClassic(&stdoutRead, &stdoutWrite, &inheritable))
             {
                 error = "the pipes for the ssh road could not be opened: win32 code " + std::to_string(GetLastError());
                 CloseHandle(stdinRead);
                 CloseHandle(stdinWrite);
                 return false;
             }
-            if (!CreatePipe(&stderrRead, &stderrWrite, &inheritable))
+            if (!CreatePipeClassic(&stderrRead, &stderrWrite, &inheritable))
             {
                 error = "the pipes for the ssh road could not be opened: win32 code " + std::to_string(GetLastError());
                 CloseHandle(stdinRead);
