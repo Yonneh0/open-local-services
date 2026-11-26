@@ -557,6 +557,12 @@ if not exist "!OUT!\open-local-services.exe" (
   echo open-local-services.exe is not there - the build above did not produce it.
   exit /b 1
 )
+rem the last target built also stages into bin\, the room /api/update reads: a
+rem person rebuilding this box builds here, posts the hand, and the running
+rem server moves in what stands staged while it is down. one staged copy per
+rem box - the shape that was just compiled is the shape this box runs.
+if not exist "bin" mkdir "bin"
+copy /Y "!API_EXE!" "bin\open-local-services.exe" >nul
 rem the server's own ggml is inside it - the device probe answers from it - so
 rem no ggml library is laid beside the server.
 copy /Y "!SD_BIN!\stable-diffusion.dll" "!OUT!\" >nul
@@ -564,6 +570,7 @@ if not exist "!OUT!\stable-diffusion.dll" (
   echo stable-diffusion.dll is not there - the image engine build did not produce it.
   exit /b 1
 )
+copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
 rem the pages travel with the binary: a webui folder beside the server is served
 rem from disk, so a release folder holds the live structure the development
 rem folder holds - and the copy embedded in the binary only answers when the

@@ -553,7 +553,16 @@ set SD_BIN=!SD_ROOT!\bin\Release
 if not exist "!SD_BIN!\stable-diffusion.dll" set SD_BIN=!SD_ROOT!\bin
 set API_EXE=!API_ROOT!\Release\open-local-services.exe
 if not exist "!API_EXE!" set API_EXE=!API_ROOT!\open-local-services.exe
+rem the running server is stopped above, so its own file lets go here: the copy
+rem that stands takes its place at once. the same pair goes into bin\ staged for
+rem /api/update - the hand a running server takes behind its own answer, moving
+rem what stands staged in while it is down. build-rel.bat stages there too.
+if not exist "bin" mkdir "bin"
 call :replace "!API_EXE!" "src\"
+copy /Y "!API_EXE!" "bin\open-local-services.exe" >nul
+if errorlevel 1 (
+    echo Could not stage bin\open-local-services.exe - check the folder is writable.
+)
 if errorlevel 1 (
     echo Could not replace src\open-local-services.exe - check the src folder is writable.
     exit /b 1
@@ -563,6 +572,7 @@ rem - so nothing is copied beside it for the server to load as a plugin: a
 rem backend already compiled in is registered twice that way, which is what
 rem MSI's cuda build failed on.
 copy /Y "!SD_BIN!\stable-diffusion.dll" "src\" >nul
+copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
 
 if /i not "%MODE%"=="build" goto start
 echo.

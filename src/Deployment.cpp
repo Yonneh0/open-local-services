@@ -447,7 +447,208 @@ namespace ols
       {
         return "\"" + text + "\"";
       }
+
+      // The update hand, run by a detached helper running the script written
+      // here. It waits for this process to let go of its file (a running image
+      // is refused its own rename - that answer is the clock), moves what
+      // stands staged into place with the old one set aside under .old and put
+      // back if the staged file cannot land, then starts the machine's road:
+      // schtasks /end + /run when a task holds this server, systemctl restart
+      // where systemd does, and plain start of the new program as the last
+      // honest resort. Everything here happens after this process is gone, so
+      // nothing it asks needs rights beyond what its parent already carried -
+      // which is why an elevated serve ends its own task and starts itself
+      // again with no prompt anywhere. Words go to a log beside the data
+      // folder; nobody reads a detached console.
+      bool anonymousUpdateHand(const std::string &exeName, const std::string &dllName,
+                               std::string &words)
+      {
+        const State now = state();
+        const std::string root = selfRoot();
+        if (root.empty() || exeName.empty())
+        {
+          words = "this server cannot name its own folder or program: nothing was handed.";
+          rememberWords(words);
+          return false;
+        }
+        std::error_code ec{};
+        const std::filesystem::path staged = std::filesystem::path(root) / "bin" / exeName;
+        if (!std::filesystem::is_regular_file(staged, ec))
+        {
+          words = "nothing stands staged at bin/" + exeName +
+                  ": build first (run.bat or build-rel.bat stages there), and this door answers "
+                  "without stopping anything.";
+          rememberWords(words);
+          return false;
+        }
+        std::ostringstream said;
+        said << "the hand was taken: bin/" << exeName << " stands staged; ";
+#ifdef _WIN32
+        const bool byTask = now.installed && now.manager == "the task scheduler";
+        const bool byService = now.installed && now.manager == "the service control manager";
+        const std::string script =
+            (std::filesystem::temp_directory_path() / "ols-update-hand.cmd").string();
+        std::ofstream out{script, std::ios::binary | std::ios::trunc};
+        if (!out.good())
+        {
+          words = "could not write the script that waits behind this server: nothing was handed.";
+          rememberWords(words);
+          return false;
+        }
+        out << "@echo off\r\n"
+               "set \"ROOT=" << root << "\"\r\n"
+               "set \"LOG=%ROOT%\\data\\update-hand.log\"\r\n"
+               "echo [%DATE% %TIME%] the hand waits for the running program to let go>>\"%LOG%\"\r\n"
+               ":again\r\n"
+               "move /y \"%ROOT%\\" << exeName << "\" \"%ROOT%\\" << exeName << ".old\" >nul 2>&1\r\n"
+               "if errorlevel 1 (\r\n"
+               "  timeout /t 1 /nobreak >nul\r\n"
+               "  goto :again\r\n"
+               ")\r\n"
+               "move /y \"%ROOT%\\bin\\" << exeName << "\" \"%ROOT%\\" << exeName << "\" >nul 2>&1\r\n"
+               "if errorlevel 1 (\r\n"
+               "  echo [%DATE% %TIME%] the staged binary would not take the old one's place: putting the old one back>>\"%LOG%\"\r\n"
+               "  move /y \"%ROOT%\\" << exeName << ".old\" \"%ROOT%\\" << exeName << "\" >nul 2>&1\r\n"
+               "  exit /b 1\r\n"
+               ")\r\n";
+        if (!dllName.empty())
+          out << "if exist \"%ROOT%\\bin\\" << dllName << "\" move /y \"%ROOT%\\bin\\" << dllName
+              << "\" \"%ROOT%\\" << dllName << "\" >nul 2>&1\r\n";
+        out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n";
+        if (byTask)
+          out << "schtasks /end /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
+              << "schtasks /run /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n";
+        else if (byService)
+          out << "sc stop \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
+              << "sc start \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n";
+        else
+          out << "start \"ols-server\" \"%ROOT%\\" << exeName << "\"\r\n";
+        out << "echo [%DATE% %TIME%] the hand is done>>\"%LOG%\"\r\n"
+               "exit /b 0\r\n";
+        out.close();
+        STARTUPINFOA look{};
+        look.cb = sizeof(look);
+        PROCESS_INFORMATION gone{};
+        std::string line = "cmd.exe /c \"" + script + "\"";
+        if (!CreateProcessA(nullptr, line.data(), nullptr, nullptr, FALSE,
+                            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &look,
+                            &gone))
+        {
+          words = "this machine would not start the hand (win32 error " +
+                  std::to_string(GetLastError()) + "): nothing was stopped.";
+          rememberWords(words);
+          return false;
+        }
+        CloseHandle(gone.hThread);
+        CloseHandle(gone.hProcess);
+        if (byTask)
+          said << "the task that holds this server starts it again on the new binary - "
+                  "this server stops now, at the level its task set.";
+        else if (byService)
+          said << "the service manager starts this name again on the new binary; this server stops now.";
+        else
+          said << "no manager holds this server: the new program starts as the hand's own child, "
+                  "at the level this server stands at. this server stops now.";
+#else
+        if (now.installed && now.manager == "systemd")
+        {
+          // systemd restarts the unit on its own clock; the move waits behind a
+          // helper for the same reason the Windows hand does - a running
+          // program keeps its file until it is gone.
+          const std::string script = "/tmp/ols-update-hand.sh";
+          std::ofstream out{script, std::ios::binary | std::ios::trunc};
+          if (!out.good())
+          {
+            words = "could not write the script that waits behind this server: nothing was handed.";
+            rememberWords(words);
+            return false;
+          }
+          out << "#!/bin/sh\n"
+              << "ROOT=\"" << root << "\"\n"
+              << "LOG=\"$ROOT/data/update-hand.log\"\n"
+              << "echo \"[$(date)] the hand waits for the running program to let go\" >>\"$LOG\"\n"
+              << "while ! mv \"$ROOT/" << exeName << "\" \"$ROOT/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
+              << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$ROOT/" << exeName << "\" 2>/dev/null; then\n"
+              << "  echo \"[$(date)] the staged binary would not take the old one's place: putting the old one back\" >>\"$LOG\"\n"
+              << "  mv \"$ROOT/" << exeName << ".old\" \"$ROOT/" << exeName << "\" 2>/dev/null\n"
+              << "  exit 1\n"
+              << "fi\n";
+          if (!dllName.empty())
+            out << "mv \"$ROOT/bin/" << dllName << "\" \"$ROOT/" << dllName << "\" 2>/dev/null || true\n";
+          out << "echo \"[$(date)] the staged binary took the running one's place\" >>\"$LOG\"\n"
+              << "systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
+              << "echo \"[$(date)] the hand is done\" >>\"$LOG\"\n";
+          out.close();
+          const pid_t runner = fork();
+          if (runner == 0)
+          {
+            execl("/bin/sh", "sh", script.c_str(), static_cast<char *>(nullptr));
+            _exit(1);
+          }
+          if (runner < 0)
+          {
+            words = "this machine would not start the hand: nothing was stopped.";
+            rememberWords(words);
+            return false;
+          }
+          said << "systemd restarts its unit on the new binary; this server stops now.";
+        }
+        else
+        {
+          // No manager: the helper waits for the file, moves it, and starts the
+          // new program itself - as this process's own detached child, which is
+          // the level this server stands at.
+          const std::string script = "/tmp/ols-update-hand.sh";
+          std::ofstream out{script, std::ios::binary | std::ios::trunc};
+          if (!out.good())
+          {
+            words = "could not write the script that waits behind this server: nothing was handed.";
+            rememberWords(words);
+            return false;
+          }
+          out << "#!/bin/sh\n"
+              << "ROOT=\"" << root << "\"\n"
+              << "LOG=\"$ROOT/data/update-hand.log\"\n"
+              << "while ! mv \"$ROOT/" << exeName << "\" \"$ROOT/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
+              << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$ROOT/" << exeName << "\" 2>/dev/null; then\n"
+              << "  mv \"$ROOT/" << exeName << ".old\" \"$ROOT/" << exeName << "\" 2>/dev/null\n"
+              << "  exit 1\n"
+              << "fi\n";
+          if (!dllName.empty())
+            out << "mv \"$ROOT/bin/" << dllName << "\" \"$ROOT/" << dllName << "\" 2>/dev/null || true\n";
+          out << "nohup \"$ROOT/" << exeName << "\" >>\"$LOG\" 2>&1 &\n";
+          out.close();
+          const pid_t runner = fork();
+          if (runner == 0)
+          {
+            execl("/bin/sh", "sh", script.c_str(), static_cast<char *>(nullptr));
+            _exit(1);
+          }
+          if (runner < 0)
+          {
+            words = "this machine would not start the hand: nothing was stopped.";
+            rememberWords(words);
+            return false;
+          }
+          said << "no manager holds this server: the new program starts from the hand, at the "
+                  "level this server stands at. this server stops now.";
+        }
+#endif
+        words = said.str();
+        rememberWords(words);
+        letGo();
+        return true;
+      }
     } // namespace
+
+    // The header's update hand stands on the anonymous one above: it wrote and
+    // started the waiting script, weighed what stands staged, and stopped this
+    // server behind its own answer. Nothing else stands between a bin/ binary
+    // and the machine's manager starting it.
+    bool updateHand(const std::string &exeName, const std::string &dllName, std::string &words)
+    {
+      return anonymousUpdateHand(exeName, dllName, words);
+    }
 
     // The header's reading of the running program: the same path these helpers
     // read, named so it does not stand twice under one name.

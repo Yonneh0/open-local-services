@@ -799,6 +799,7 @@ namespace ols
           // door is left out entirely because it does work on being asked, and
           // a forced scan may not be answered out of a browser's pocket.
           {"/api/service", 4},
+          {"/api/update", -1}, // the hand's answer is one moment in time, never a reading to hold
           {"/api/config", 15},
           {"/api/models", 2},
           {"/api/gallery", 2},
@@ -7432,6 +7433,31 @@ namespace ols
         return jsonError(405, "The pages are read with a GET and taken out of the server with a POST");
       return expandStaticDir();
     }
+    // The update hand: one POST, and the server restarts itself on what stands
+    // staged in bin/ - the folder run.bat and build-rel.bat put a fresh build
+    // into. The answer goes out first; behind it the waiting script moves the
+    // old program aside (only once this process lets go of its file), puts the
+    // staged one in its place, and starts the machine's own road again - the
+    // scheduled task or the systemd unit that already holds this server, which
+    // is what brings it back at the level the machine set. No prompt stands
+    // anywhere: the rights these roads need are the ones a running server
+    // already carries. Nothing staged is an honest refusal that stops nothing.
+    if (path == "/api/update" && post)
+    {
+      std::string words;
+      const bool taken = ols::deploy::updateHand(
+#ifdef _WIN32
+          "open-local-services.exe", "stable-diffusion.dll",
+#else
+          "open-local-services", "",
+#endif
+          words);
+      nlohmann::json out;
+      out["did"] = taken;
+      out["words"] = words;
+      return jsonResponse(taken ? 200 : 400, out.dump());
+    }
+
     // What this machine does about starting this server by itself. Nothing here
     // installs a server anywhere: it is this program, out of this folder, set to
     // start when the machine starts, disabled without stopping anything that is

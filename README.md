@@ -156,6 +156,14 @@ GET  /api/monitor            one merged reading: system levels, engine state, an
                              block the corner clock counts
 GET  /api/service            how this server is installed and run; POST acts with
                              startup_on, startup_off, remove, restart, or shutdown
+POST /api/update             the update hand: what stands staged in bin/ (run.bat,
+                             run.sh, build-rel.* lay a fresh build there) moves into
+                             place while the server is down, and the machine's own
+                             manager - the scheduled task or the systemd unit that
+                             already holds this server - starts it again at the level
+                             it set. No prompt stands anywhere; nothing staged is an
+                             honest refusal that stops nothing. Answers {did,words}
+                             before anything stops.
 GET  /api/config             local settings; secrets read only as set or unset (POST to change)
 GET  /api/timings            the cost ledger: what finished runs cost, per model, device, and kind
 GET  /api/peers              the fleet table: other machines of this suite the machine knows,

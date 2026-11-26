@@ -60,6 +60,19 @@ namespace ols
     // did not happen, and the words say why.
     bool act(const std::string &action, std::string &words);
 
+    // The update hand: what stands staged in bin/ named for this program moves
+    // into its place - the old one set aside under .old first, and put back if
+    // the staged file cannot land - and the new program starts at the level the
+    // machine's manager set (Windows: the scheduled task that already holds
+    // this server is ended and run again; Linux: systemd restarts its unit).
+    // With no manager holding this server, the move waits behind a detached
+    // helper and the new program comes as this one's own child, at the level
+    // this process stands at. The answer returns before anything stops; words
+    // name what was staged, what moved, and what starts. Nothing here asks the
+    // machine for leave: the rights these roads need are the ones this server
+    // already carries.
+    bool updateHand(const std::string &exeName, const std::string &dllName, std::string &words);
+
     // The words this server was started with, kept for the soft hand below.
     void rememberStart(const std::vector<std::string> &args);
 

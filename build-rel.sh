@@ -436,6 +436,12 @@ build_one() {
 
   # the binary and every library it really needs, nothing else
   cp -f "$API_BUILD/open-local-services" "$OUT/open-local-services"
+  # the last target built also stages into bin/, the room /api/update reads:
+  # a person rebuilding this box builds here, posts the hand, and the running
+  # server moves in what stands staged while it is down. one staged copy per
+  # box - the shape just compiled is the shape this box runs.
+  mkdir -p bin
+  cp -f "$API_BUILD/open-local-services" bin/open-local-services
   for SO in "$SD_BUILD"/*.so "$SD_BUILD"/bin/*.so; do
     [ -f "$SO" ] && cp -f "$SO" "$OUT/"
   done

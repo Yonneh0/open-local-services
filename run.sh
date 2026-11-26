@@ -402,6 +402,13 @@ else
   mv -f src/open-local-services.new src/open-local-services
 fi
 
+# ---- stage for /api/update ----
+# bin/ is the room a running server reads when it is handed over: what stands
+# here named for the program moves into place while the server is down. one
+# staged copy per box - the shape just compiled is the shape this box runs.
+mkdir -p bin
+cp -f "$API_BUILD/open-local-services" bin/open-local-services
+
 if [ "$MODE" = build ]; then
   echo ""
   echo "Built. Start the server with: run.sh"

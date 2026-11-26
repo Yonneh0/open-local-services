@@ -68,6 +68,12 @@ Release/*/
 Release/*cuda*.zip
 Release/*cuda*.tar.gz
 
+# bin/ is the staging room for /api/update: run.bat and build-rel.* lay a
+# fresh build there, and the hand moves it into place while the server is
+# down. built bytes never ride the clone - the source builds them where they
+# stand.
+bin/
+
 # the owner's reference manuals: 110 MB of PDFs that reach a machine by copy
 # over the link like the other payload trees, never by clone. what the
 # maintainer tab reads is held under data/maint once a manual is brought in,
