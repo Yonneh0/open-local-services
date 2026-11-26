@@ -10,6 +10,7 @@
 #include "gitcore/merge.h"
 #include "gitcore/diff.h" // the exact rename pairing and the blob diff the issue re-anchor reads
 #include "GitSmartHttp.h"
+#include "SshFetch.h"
 #include "gitcore/wire.h"
 // The wire unit's ground again, on the same road GitSmartHttp.cpp takes: the
 // definitions are inline and no build names wire.cpp as a source, so the doors
@@ -6419,12 +6420,12 @@ namespace ols
       if (!link.empty())
       {
         // The "From a link" form. A git address this door reads is http(s) over
-        // a host with a repository path standing under it; the shape is read
-        // first, so an ask that is no git address is refused for what it is.
-        // Cloning what passes belongs to the fetch client, which has not landed
-        // (plan.md C3), so the answer the shape earns is this 501 stating that
-        // truth - not a 400 saying a folder is missing, which this form never
-        // named. The folder form below answers the same ask today.
+        // a host with a repository path standing under it, or an ssh address -
+        // either form the ssh readings take (E2), which rides the vendored road
+        // from here: the shape check passes it and the clone answers with the
+        // ssh words when the pinned hands or the studio's key room are not yet
+        // standing. The shape is read first, so an ask that is no git address
+        // is refused for what it is.
         if (!plainWords(link))
         {
           res = projectDoorRefusal(400,
@@ -6432,31 +6433,37 @@ namespace ols
           return true;
         }
         const size_t schemeEnd = link.find("://");
-        if (schemeEnd == std::string::npos)
+        ols::ssh::SshTarget sshShape;
+        const bool sshRoad = ols::ssh::looksSsh(link, sshShape);
+        if (schemeEnd == std::string::npos && !sshRoad)
         {
           res = projectDoorRefusal(400,
                                    "That link names no scheme: an http or https git address, please");
           return true;
         }
-        std::string scheme = link.substr(0, schemeEnd);
+        std::string scheme = schemeEnd == std::string::npos ? std::string()
+                                                            : link.substr(0, schemeEnd);
         for (char &c : scheme)
           c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (scheme != "http" && scheme != "https")
+        if (!sshRoad && scheme != "http" && scheme != "https")
         {
           res = projectDoorRefusal(400,
                                    "That link speaks " + scheme +
                                        "; this door takes http and https git addresses only");
           return true;
         }
-        const std::string rest = link.substr(schemeEnd + 3);
+        const std::string rest = schemeEnd == std::string::npos ? link : link.substr(schemeEnd + 3);
         const size_t hostEnd = rest.find_first_of("/?#");
         const std::string host = hostEnd == std::string::npos ? rest : rest.substr(0, hostEnd);
-        if (host.empty())
+        if (host.empty() && !sshRoad)
         {
           res = projectDoorRefusal(400, "That link names no host: the address ends at its scheme");
           return true;
         }
-        if (host.find('@') != std::string::npos)
+        // An ssh address may carry its login inside it - that is the address,
+        // and the key room decides what answers the far side. For http(s) a
+        // name inside the address stays refused as before.
+        if (host.find('@') != std::string::npos && !sshRoad)
         {
           res = projectDoorRefusal(400,
                                    "That link carries a name and a key inside its address, which "
@@ -6464,25 +6471,33 @@ namespace ols
           return true;
         }
         std::string repoPath;
-        if (hostEnd != std::string::npos && rest[hostEnd] == '/')
+        if (sshRoad)
         {
-          const size_t tail = rest.find_first_of("?#", hostEnd + 1);
-          repoPath = tail == std::string::npos ? rest.substr(hostEnd + 1)
-                                               : rest.substr(hostEnd + 1, tail - hostEnd - 1);
+          // The ssh readings already refused a form with no repository path,
+          // so what stands on this road carries one: the shape check ends.
         }
-        if (repoPath.empty())
+        else
         {
-          res = projectDoorRefusal(400, "That link names no repository under its host");
-          return true;
-        }
-        if (scheme == "https")
-        {
-          res = projectDoorRefusal(
-              501,
-              "the address " + link +
-                  " asks for https, which is TLS, and this tree carries no TLS layer for it: "
-                  "send a plain http:// address");
-          return true;
+          if (hostEnd != std::string::npos && rest[hostEnd] == '/')
+          {
+            const size_t tail = rest.find_first_of("?#", hostEnd + 1);
+            repoPath = tail == std::string::npos ? rest.substr(hostEnd + 1)
+                                                 : rest.substr(hostEnd + 1, tail - hostEnd - 1);
+          }
+          if (repoPath.empty())
+          {
+            res = projectDoorRefusal(400, "That link names no repository under its host");
+            return true;
+          }
+          if (scheme == "https")
+          {
+            res = projectDoorRefusal(
+                501,
+                "the address " + link +
+                    " asks for https, which is TLS, and this tree carries no TLS layer for it: "
+                    "send a plain http:// address");
+            return true;
+          }
         }
         // The http address goes to the module: it asks the advertisement,
         // makes the folder, clones, and refuses in its own words when it
