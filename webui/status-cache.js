@@ -5,6 +5,12 @@
 //   network, and a stale entry is replaced by the next real request.
 // - A successful write (POST/PUT/...) clears every reading of that service,
 //   so a page never renders state the write just changed.
+// - A page that learned of a move from elsewhere - a stream frame, not its own
+//   write - can take one project's readings away by path prefix through
+//   window.olsCache.dropPrefix, so a later ask of another filter variant goes
+//   to the machine instead of replaying a reading taken before the move. The
+//   browser's own copy of such an address is left out for the same window,
+//   because the door states that window for the address itself.
 // - Images and audio the machine serves are kept twice apart, each in its own
 //   place: while this page is open a file it read is held in this page's memory,
 //   so the same picture drawn again asks the machine for nothing; across visits
@@ -211,6 +217,43 @@
     save();
   }
 
+  // A reading taken away because of a move must not be answered from the
+  // browser's own copy either: the door states the same window for the same
+  // address, so the ask that follows an eviction is the one that must reach
+  // the machine. Only the prefixes just evicted are remembered, and only for
+  // as long as the readings they carried were allowed to stand.
+  const evicted = [];
+
+  function bustedBy(path) {
+    const now = Date.now();
+    for (let i = evicted.length - 1; i >= 0; i--) {
+      if (!(now < Number(evicted[i].until))) {
+        evicted.splice(i, 1);
+        continue;
+      }
+      if (path.indexOf(evicted[i].prefix) === 0) return true;
+    }
+    return false;
+  }
+
+  // Take the readings under a path prefix away now, rather than waiting for
+  // their window: a page that just learned a project moved must not replay a
+  // reading taken before the move, and the exact URL of another filter
+  // variant is not the one its own re-ask carries. Only API readings leave -
+  // files a page made of its own bytes keep their place.
+  function dropPrefix(prefix) {
+    let until = 0;
+    for (const path of Object.keys(entries)) {
+      if (path.indexOf(prefix) === 0) {
+        const stands = Number(entries[path].until);
+        if (stands > until) until = stands;
+        delete entries[path];
+      }
+    }
+    if (until > Date.now()) evicted.push({ prefix: prefix, until: until });
+    save();
+  }
+
   // What pages may ask the store for: a file this page made of its own bytes, and
   // the last copy of a reading (with whether it is still inside its window, so a
   // panel can name when its rows were read). A file the machine serves is not
@@ -223,6 +266,7 @@
     },
     lastCopy: lastCopy,
     staleAt: staleAt,
+    dropPrefix: dropPrefix,
   };
 
   // A stored answer replays as an equivalent live one: same body, same
@@ -281,25 +325,31 @@
       const keptFile = replayFile(path);
       if (keptFile) return keptFile;
 
+      // Past this point the ask goes to the machine. A reading just evicted
+      // because of a move also leaves the browser's own copy of the address
+      // out, so the ask that follows the eviction carries the no-store word.
+      let ask = options;
+      if (bustedBy(path)) ask = Object.assign(options || {}, { cache: 'no-store' });
+
       const waiting = pending[path];
       if (waiting) {
         try {
           await waiting;
         } catch (failedRead) {
           // The shared read failed; answer this caller with a fresh request.
-          const retry = await inner(url, options);
+          const retry = await inner(url, ask);
           return retry;
         }
         const kept = entries[path];
         if (mayReplay && kept && Date.now() < Number(kept.until)) return replay(path);
         const keptNow = replayFile(path);
         if (keptNow) return keptNow;
-        return await inner(url, options);
+        return await inner(url, ask);
       }
 
       let original = null;
       const read = async function () {
-        const res = await inner(url, options);
+        const res = await inner(url, ask);
         original = res;
         if (res.status !== 200 || !res.ok) return null;
         const type = String(res.headers.get('content-type') || '');

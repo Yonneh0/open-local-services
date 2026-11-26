@@ -3539,6 +3539,7 @@
   function roomSaid(room, read, didWords, notWords) {
     const words = doorWords(read);
     const did = !!(read.answer && read.answer.did);
+    if (did) evictRoomDoors(state.project);
     ui.log((did ? didWords : notWords) + ': ' + words, did ? 'ok' : 'err');
     ui.toastPush(oneLiner(words, 180), did ? 'ok' : 'err', 12);
     if (room) room.said = { words: words, did: did };
@@ -3557,6 +3558,23 @@
     // browser's own cache as well - status-cache replays a GET inside its
     // stated freshness for any ask that does not say no-store.
     if (listed) void askRoom(listed, true);
+  }
+
+  // A mutation for the project this page stands on puts this project's list
+  // readings out of the browser's own cache: the exact URL of another filter
+  // variant may stand cached inside its window from before the write, and the
+  // fresh ask beside the mutation carries the no-store word only for itself.
+  // Only this project's record-room doors are named - other rooms' and other
+  // projects' readings keep their windows.
+  function evictRoomDoors(slug) {
+    const cache = window.olsCache;
+    if (!cache || !cache.dropPrefix) return;
+    const here = encodeURIComponent(String(slug));
+    for (const room of ROOMS) {
+      if (room.tab === 'issues' || room.tab === 'pulls') {
+        cache.dropPrefix(room.door + '?project=' + here);
+      }
+    }
   }
 
   // ---------- the pulls room ----------
@@ -3609,6 +3627,16 @@
       room.listEl.hidden = true;
       const asking = E('ps-pulls-ask');
       if (asking) asking.hidden = true;
+      // The sheet stands over the list, and the list keeps its rows from
+      // this reading: a pull the page just worked has left the filter the
+      // list stands on, and it must be gone the moment the sheet is put
+      // away. The detail is painted after, so its note stands beside the
+      // open sheet.
+      if (pullsRoom.painted !== answer) {
+        pullsRoom.painted = answer;
+        paintPullsBar(room, answer);
+        paintPullsList(room, answer, slug, heldAt);
+      }
       paintPullsDetail(room);
       return;
     }
@@ -4332,6 +4360,16 @@
       room.listEl.hidden = true;
       const asking = E('ps-issues-ask');
       if (asking) asking.hidden = true;
+      // The sheet stands over the list, but the list keeps its own rows from
+      // this reading: a record the page just worked has left the filter the
+      // list stands on, and the row must be gone the moment the sheet is put
+      // away - not at the next ask. The detail is painted after, so its note
+      // is the one that stands beside the open sheet.
+      if (issuesRoom.painted !== answer) {
+        issuesRoom.painted = answer;
+        paintIssuesBar(room, answer);
+        paintIssuesList(room, answer, slug, heldAt);
+      }
       paintIssuesDetail(room);
       return;
     }
@@ -5092,11 +5130,25 @@
     }
   }
 
-  // §9.3: the stream beside the doors says when a project moved; the page
-  // re-presses only what stands visible - the room it is standing on, from
-  // a reading that may not be answered from a kept copy. The page's own
-  // polling stays the fallback either way.
-  const liveInvalidator = function () { void refreshLive(true); };
+  // §9.3: the stream beside the doors says when a project moved. The page
+  // re-presses what stands visible then - the room it is standing on, from
+  // a reading that may not be answered from a kept copy - beside the index
+  // reading that paints the dropdown and the facts. The page's own polling
+  // stays the fallback either way.
+  const liveInvalidator = function (slug, frame) {
+    void refreshLive(true);
+    // A frame for the project this page stands on moves the rows the person
+    // is looking at, not only the dropdown: the visible room is re-asked the
+    // way a press beside a write is - held copy put away, the ask riding
+    // no-store - and this project's list doors leave the browser's own cache,
+    // so a later filter switch cannot replay a reading taken before the move.
+    if (state.project && String(slug || '') === state.project) {
+      evictRoomDoors(state.project);
+      if (state.tab === 'issues') roomRefresh(issuesRoom, 'issues');
+      else if (state.tab === 'pulls') roomRefresh(pullsRoom, 'pulls');
+      else if (state.tab === 'code') roomRefresh(roomNamed('code'), 'code');
+    }
+  };
 
   // Where the page stands while the machine is not answering. Two different
   // things look alike here and are not the same fact: a machine that refuses a
