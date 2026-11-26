@@ -397,6 +397,21 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem the ssh road's pinned hands: the clone doors spawn ssh.exe for an ssh
+rem address and refuse every ask in words until it stands, so the release is
+rem taken here like every other vendor's - a zip whose published digest is
+rem asked before a byte is unpacked, the binaries laid flat under
+rem vendor\openssh where sshBinDir reads them. the Preview build is the one
+rem spike proved: BatchMode over a non-interactive session, upload-pack on
+rem the far side, exit codes whole.
+set PIN_SSH=10.4.0.0p1-Preview
+set PIN_SSH_SHA256=b67ff8becd203502190ec42ac7787c24c2cd3325ed7700485fe7a1c83d2a7957
+call :pin_ssh "vendor\openssh" "!PIN_SSH!" "!PIN_SSH_SHA256!"
+if errorlevel 1 (
+  echo Could not put the ssh road on its pinned release.
+  exit /b 1
+)
+
 
 rem ---- build the image engine ----
 rem the image engine is built as a shared library in its own vendor tree, under
@@ -677,6 +692,33 @@ tar -xjf "%~f1\mbedtls-release.tar.bz2" -C "%~f1" --strip-components=1
 if errorlevel 1 exit /b 1
 del /q "%~f1\mbedtls-release.tar.bz2"
 echo mbedtls-%~2> "%~f1\.pin"
+exit /b 0
+
+:pin_ssh
+rem %1 = the folder the hands stand in, %2 = the release this road is written
+rem against, %3 = the SHA256 that release publishes. the win32-openssh zip
+rem carries its folders; the studio reads its hands flat beside ssh.exe, so
+rem everything unpacks one layer deep and only the folder's own files stay.
+rem a folder already recorded on this release is done.
+if not exist "%~f1\.pin" goto :pin_ssh_get
+for /f "usebackq delims=" %%P in ("%~f1\.pin") do set PINNED=%%P
+if defined PINNED if /i "!PINNED!"=="openssh-%~2" exit /b 0
+set PINNED=
+:pin_ssh_get
+echo Taking the ssh road release archive for openssh-%~2
+if not exist "%~f1" mkdir "%~f1"
+curl -sSL --fail --retry 2 -o "%~f1\openssh-release.zip" "https://github.com/PowerShell/Win32-OpenSSH/releases/download/%~2/OpenSSH-Win64-v%~2.zip"
+if errorlevel 1 exit /b 1
+certutil -hashfile "%~f1\openssh-release.zip" SHA256 | find /i "%~3" >nul
+if errorlevel 1 (
+  echo The ssh road archive did not carry its published digest: %~1
+  del /q "%~f1\openssh-release.zip"
+  exit /b 1
+)
+tar -xf "%~f1\openssh-release.zip" -C "%~f1" --strip-components=1
+if errorlevel 1 exit /b 1
+del /q "%~f1\openssh-release.zip"
+echo openssh-%~2> "%~f1\.pin"
 exit /b 0
 
 :pin_sub
