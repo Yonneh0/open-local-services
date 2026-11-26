@@ -1625,6 +1625,7 @@ function drawCard(entry, system, history) {
     const cells = [ui.clock(run.t), run.kind, run.state];
     if (engine === 'image') {
       cells.push(statedCount(run, 'max'), secondsText(runMs(run)), rateText(runRate(run), 'steps/s'));
+    }
     for (const cell of cells) {
       const node = document.createElement('span');
       node.textContent = cell;
