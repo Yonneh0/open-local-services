@@ -40,8 +40,11 @@ src/open-local-services
 src/open-local-services.new
 # the development tree runs the way the release folder will: with the image
 # engine copied beside the source it links against. built bytes, laid down by
-# run.bat on every build, never a source.
-src/stable-diffusion.dll
+# run.bat on every build, never a source - under the split these wear the
+# engine's shape name, stable-diffusion-cuda.dll and its siblings on windows,
+# libstable-diffusion-cuda.so and its twins on linux.
+src/stable-diffusion*.dll
+src/libstable-diffusion*.so*
 src/open-local-services.exe
 weights/
 data/
