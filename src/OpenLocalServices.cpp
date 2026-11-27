@@ -840,8 +840,18 @@ namespace ols
         if (path == listed.first)
           return listed.second;
       for (const auto &listed : FRESH)
-        if (path.rfind(std::string(listed.first) + "/", 0) == 0)
+      {
+        // A family row carries its own separator (".../pulls/"), so the name IS
+        // the stem; a bare name owns only the family beneath it, which needs one
+        // added. Asking for "//" (name plus a slash the name already wore) made
+        // every family row dead: no address ever names a double separator, so
+        // the record doors under a hand fell to the five-second default and a
+        // closed issue kept saying open from the browser's pocket.
+        const std::string name(listed.first);
+        const std::string stem = (!name.empty() && name.back() == '/') ? name : name + "/";
+        if (path.rfind(stem, 0) == 0)
           return listed.second;
+      }
       return 5;
     }
 
