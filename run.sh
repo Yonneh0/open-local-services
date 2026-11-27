@@ -276,6 +276,29 @@ for WHAT in "vendor/stable-diffusion.cpp $PIN_IMAGE leejet/stable-diffusion.cpp"
   fi
 done
 
+# the TLS library arrives the same way run.bat brings it: the release archive
+# of the pinned version, its sha256 read back before it is unpacked, and the
+# version recorded in the .pin beside its CMakeLists. the server build adds
+# this tree as a subdirectory, so a box that stands without it configures into
+# nothing - which is exactly what UM780 showed the first time this line was
+# built on linux.
+PIN_TLS=3.6.8
+PIN_TLS_SHA256=bc54b818e87f49c0b3281dd85d24adaede0e63b4e822e3fbd49c005a38b9595b
+if [ ! -f vendor/mbedtls/CMakeLists.txt ]; then
+  echo "Taking the TLS library release archive for mbedtls-$PIN_TLS"
+  mkdir -p vendor/mbedtls
+  curl -sSL --fail --retry 2 -o vendor/mbedtls/mbedtls-release.tar.bz2 \
+    "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$PIN_TLS/mbedtls-$PIN_TLS.tar.bz2" || exit 1
+  echo "$PIN_TLS_SHA256  vendor/mbedtls/mbedtls-release.tar.bz2" | sha256sum -c - >/dev/null || {
+    rm -f vendor/mbedtls/mbedtls-release.tar.bz2
+    echo "the TLS archive did not answer the expected sha256 - it is not unpacked."
+    exit 1
+  }
+  tar -xjf vendor/mbedtls/mbedtls-release.tar.bz2 -C vendor/mbedtls --strip-components=1 || exit 1
+  rm -f vendor/mbedtls/mbedtls-release.tar.bz2
+  echo "mbedtls-$PIN_TLS" > vendor/mbedtls/.pin
+fi
+
 # ---- the ssh road's pinned hands (E2) ----
 # the clone doors spawn an ssh running git-upload-pack for an ssh address, and
 # refuse every such ask in words until it stands. on windows run.bat fetches
