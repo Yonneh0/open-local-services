@@ -170,10 +170,11 @@ add_executable(open-local-services
   # The wire unit is not named here: its definitions are inline, and a
   # translation unit that only defines inline functions emits no code for them,
   # so compiling wire.cpp as a source would hand the link nothing to resolve.
-  # The doors that ask its symbols - GitSmartHttp.cpp, OpenLocalServices.cpp,
-  # and gitcore/fetch.cpp (which unity-includes it) - pull the unit in beside
-  # their own, where the inline definitions land in those doors' objects and
-  # fold to one across the link; the harness reaches the same ground through
+  # The units that ask its symbols - GitSmartHttp.cpp, OpenLocalServices.cpp,
+  # gitcore/fetch.cpp and gitcore/fetch_wire.cpp - pull the unit in beside
+  # their own with a unity include (gcc proved the need: inline definitions do
+  # not fold across sibling objects there, and an omitted include reads back
+  # an undefined reference), the harness reaches the same ground through
   # test_wire.cpp's include - which is why the harness names no wire.cpp
   # source either. receive.cpp stands in this list because no door unity-
   # includes it: its definitions are plain, one object, once.

@@ -1,17 +1,18 @@
 // src/gitcore/fetch_wire.cpp — the ground fetch_wire.h stands on.
 //
 // Named as a source beside the other units whose definitions are external
-// (receive.cpp is named the same way); nothing here is inline and nothing here
-// is unity-included by a door. Only the headers of the wire unit are named
-// here: its definitions are inline and land once, in the object that carries
-// the ground - test_wire.cpp and the doors - and a second landing of that
-// ground in this object would fold its internal helpers across objects, the
-// shape wire.cpp's own top comment forbids.
+// (receive.cpp is named the same way). This unit asks the wire unit's
+// symbols, so it carries the wire ground itself - the same road fetch.cpp
+// rides: a translation unit that calls inline definitions must see them,
+// for the link folds copies across objects only on the compiler that
+// promised to (whole-program MSVC folded them here for years; gcc answers
+// the call with an undefined reference and no mercy). The guard inside
+// wire.cpp keeps a unity host from landing it twice in one unit.
 #ifndef OLS_GITCORE_FETCH_WIRE_CPP
 #define OLS_GITCORE_FETCH_WIRE_CPP
 
 #include "fetch_wire.h"
-#include "gitcore/wire.h"
+#include "gitcore/wire.cpp"
 
 namespace ols
 {
