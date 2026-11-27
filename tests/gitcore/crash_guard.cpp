@@ -31,8 +31,8 @@ void install_crash_guard()
 #ifdef _WIN32
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 #endif
-    _set_abort_behavior(0u, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #if defined(_MSC_VER)
+    _set_abort_behavior(0u, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);

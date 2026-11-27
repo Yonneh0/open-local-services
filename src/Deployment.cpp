@@ -450,6 +450,7 @@ namespace ols
         return "\"" + text + "\"";
       }
 
+#ifdef _WIN32
       // The hand's own rights, asked of the machine once: this server is run by
       // its boot task as SYSTEM, and a folder that refuses it - by an inherited
       // deny nobody can name - leaves every door that writes there answering in
@@ -646,7 +647,7 @@ namespace ols
         rememberWords(words);
         return true;
       }
-
+#endif // _WIN32: the repair task and the selftest speak windows tools
       // The update hand, run by a detached helper running the script written
       // here. It waits for this process to let go of its file (a running image
       // is refused its own rename - that answer is the clock), moves what
@@ -1066,7 +1067,17 @@ namespace ols
     // the folders are innocent.
     bool selfTest(std::string &words)
     {
+#ifdef _WIN32
       return anonymousSelfTest(words);
+#else
+      // Every probe above is a windows tool: tokens, schtasks, the 8.3 road.
+      // Here the machine answers the same questions with its own words, and
+      // the service doors state them - this one says what it cannot.
+      words = "the standing probes speak windows tools (tokens, schtasks, icacls); "
+              "on this machine the level is uid " + std::to_string(geteuid()) +
+              ", and /api/service answers what stands";
+      return true;
+#endif
     }
 
     // The header's reading of the running program: the same path these helpers
