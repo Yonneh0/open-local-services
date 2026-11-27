@@ -23,9 +23,8 @@ namespace {
 // to write throwaway things; nothing here outlives the run.
 std::filesystem::path sshScratch(const std::string &caseName)
 {
-    const char *tmp = std::getenv("TEMP");
     const std::filesystem::path root =
-        std::filesystem::path(tmp != nullptr ? tmp : ".") / "ols-git-tests-ssh";
+        ols_test::scratchRoot() / "ols-git-tests-ssh";
     const std::filesystem::path room = root / caseName;
     std::error_code ec;
     std::filesystem::remove_all(room, ec);

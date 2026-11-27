@@ -26,7 +26,7 @@ struct ResolutionsScratch
     {
         std::error_code ec{};
         const std::filesystem::path base =
-            std::filesystem::temp_directory_path(ec) / ("ols-resolutions-" + tag);
+            ols_test::scratchRoot() / ("ols-resolutions-" + tag);
         repoDir = base.string();
         std::filesystem::remove_all(base, ec);
     }

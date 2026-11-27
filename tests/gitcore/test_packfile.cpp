@@ -917,10 +917,10 @@ TEST(the_pack_folder_walk_answers_a_file_standing_in_its_place_as_not_a_folder)
 {
     std::error_code ec;
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path(ec) /
+        ols_test::scratchRoot() /
         ("ols-packwalk-" + std::to_string(std::random_device{}()));
-    CHECK(!ec);
-    if (ec) {
+    CHECK(!root.empty());
+    if (root.empty()) {
         return;
     }
     std::filesystem::create_directories(root / "objects", ec);

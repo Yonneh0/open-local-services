@@ -48,8 +48,8 @@ std::filesystem::path make_temp(const std::string& tag)
 {
     static int seq = 0;
     std::error_code ec;
-    std::filesystem::path base = std::filesystem::temp_directory_path(ec);
-    if (ec) {
+    std::filesystem::path base = ols_test::scratchRoot();
+    if (base.empty()) {
         return std::filesystem::path();  // a case with no temp says so through
                                          // its own failed claims
     }

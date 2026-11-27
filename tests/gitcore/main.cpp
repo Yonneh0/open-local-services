@@ -22,6 +22,8 @@
 // the compiler reads as a source dependency, so a new case file is one line
 // added below and nothing in CMakeLists.txt at all.
 
+#include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -123,6 +125,11 @@ static std::string read_fixture(const std::string& name)
 
 } // namespace ols_test
 
+// The scratch ground - where the cases' folders stand, and what the harness
+// says when a ground refuses - lives in scratch_root.h, included by the case
+// files; it asks the machine once, falls back once, and never hides either
+// answer from the run's own words.
+
 #define TEST(name)                                        \
     static void name();                                   \
     static ols_test::Registrar ols_register_##name(#name, name); \
@@ -135,8 +142,22 @@ static std::string read_fixture(const std::string& name)
 int main(int argc, char** argv)
 {
     ols_test::install_crash_guard();
-    if (argc > 1) {
-        ols_test::fixtures_root = argv[1];
+    // argv: [fixture dir] [--only NAME]... - with names given, only the named
+    // cases run; that is the bisect road: one case at a time, in stated order,
+    // when a whole-suite run refuses to say which ground it broke.
+    std::vector<std::string> only;
+    bool reading_only = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--only") {
+            reading_only = true;
+            continue;
+        }
+        if (reading_only) {
+            only.push_back(a);
+        } else if (i == 1) {
+            ols_test::fixtures_root = a;
+        }
     }
     if (ols_test::cases().empty()) {
         std::cout << "no test case is registered: this target carries no case\n";
@@ -153,6 +174,15 @@ int main(int argc, char** argv)
     int passed = 0;
     int failed = 0;
     for (const ols_test::Case& c : ols_test::cases()) {
+        if (!only.empty()) {
+            bool named = false;
+            for (const std::string& want : only) {
+                if (want == c.name) { named = true; break; }
+            }
+            if (!named) {
+                continue;
+            }
+        }
         ols_test::running_case = c.name;
         ols_test::case_checks_failed = 0;
         c.run();

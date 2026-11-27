@@ -26,7 +26,7 @@ struct IssuesScratch
     {
         std::error_code ec{};
         const std::filesystem::path base =
-            std::filesystem::temp_directory_path(ec) / ("ols-issues-" + tag);
+            ols_test::scratchRoot() / ("ols-issues-" + tag);
         repoDir = base.string();
         std::filesystem::remove_all(base, ec);
     }

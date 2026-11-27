@@ -768,7 +768,7 @@ class ScratchRepo
 public:
     explicit ScratchRepo(const std::string &tag)
     {
-        dir_ = (std::filesystem::temp_directory_path() / "ols-receive-tests" / tag).string();
+        dir_ = (ols_test::scratchRoot() / "ols-receive-tests" / tag).string();
         std::error_code ec;
         std::filesystem::remove_all(dir_, ec);
         if (!ols::gitcore::initBare(dir_)) {

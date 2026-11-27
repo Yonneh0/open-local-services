@@ -92,3 +92,7 @@ local.md
 # beside the script that made it, so a person reads what the machine answered.
 # Machine state like every other log, and never part of a clone.
 *.log
+
+# the second scratch ground the test harness falls back to when the machine's
+# temp refuses it: built-state, disposable, never part of a clone.
+ols-test-scratch/

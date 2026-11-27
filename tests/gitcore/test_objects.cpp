@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include "scratch_root.h"
+
 namespace {
 
 using namespace ols::gitcore;
@@ -144,17 +146,37 @@ std::size_t looseFilesUnder(const std::string &dir)
 // for this run's.
 std::string scratchDir(const std::string &name)
 {
-    std::error_code here{};
-    std::filesystem::path base = std::filesystem::temp_directory_path(here);
-    if (here || base.empty())
+    const std::filesystem::path root = ols_test::scratchRoot();
+    if (root.empty())
         return std::string();
     std::ostringstream where;
     where << "ols-b1-" << name << "-" << std::chrono::steady_clock::now().time_since_epoch().count();
-    base /= where.str();
+    std::filesystem::path base = root / where.str();
     std::error_code made{};
     std::filesystem::create_directories(base, made);
     if (made)
+    {
+        // The probed ground still refused this very folder. Say so, then try
+        // the same folder once beside the run folder: a policy keyed on names
+        // or on temp answers one and not the other, and a case built on
+        // either ground proves the same code.
+        std::cout << "  scratch refused: create_directories over `" << base.string()
+                  << "' said " << made.message() << "\n";
+        const std::filesystem::path alt = ols_test::scratchAlt();
+        if (!alt.empty())
+        {
+            std::filesystem::path moved = alt / where.str();
+            std::error_code again{};
+            std::filesystem::create_directories(moved, again);
+            if (!again)
+            {
+                std::cout << "  scratch ground moved to " << alt.string()
+                          << " for this run\n";
+                return moved.string();
+            }
+        }
         return std::string();
+    }
     return base.string();
 }
 
@@ -894,6 +916,14 @@ TEST(objects_read_and_write_beyond_the_short_path_limit)
     std::string error;
     const std::string scratch = scratchDir("longpath");
     CHECK(!scratch.empty());
+    // A refused ground ends the case here. Every path below is built by
+    // appending to this one: with an empty start the deep chain would stand
+    // where the harness runs rather than in scratch, and the removal at the
+    // end - taken through the extended-length form - would reach for the
+    // folder this suite runs from. The check above has already failed the
+    // case loudly; nothing here writes anything relative.
+    if (scratch.empty())
+        return;
 
     std::filesystem::path deep = std::filesystem::path(scratch);
     while (deep.string().size() < 240u) {

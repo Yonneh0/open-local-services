@@ -25,7 +25,7 @@ struct PullsScratch
     {
         std::error_code ec{};
         const std::filesystem::path base =
-            std::filesystem::temp_directory_path(ec) / ("ols-pulls-" + tag);
+            ols_test::scratchRoot() / ("ols-pulls-" + tag);
         repoDir = base.string();
         std::filesystem::remove_all(base, ec);
     }
