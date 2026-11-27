@@ -4,6 +4,7 @@
 #include "Deployment.h"
 
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
@@ -271,6 +272,20 @@ namespace ols
 
       void warmNow()
       {
+        // The ggml inside the engine library installs its own crash handler
+        // when it is opened, and a ggml that finds the handler claimed twice
+        // stops the process before it can listen - the reason the run scripts
+        // export GGML_NO_BACKTRACE. A systemd unit starting this binary never
+        // sees a script's exports: the production road must carry the same
+        // posture as the development one, so the word is said from inside the
+        // process, before the first engine open, whatever road started this.
+        // A crash still prints its own words; it just does not reach for a
+        // handler twice.
+#ifndef _WIN32
+        setenv("GGML_NO_BACKTRACE", "1", 1);
+#else
+        _putenv_s("GGML_NO_BACKTRACE", "1");
+#endif
         std::call_once(gCardOnce, [] { gCard = probeNvml(); });
         std::vector<std::string> tries;
         for (const std::string &shape : machineOrder())
