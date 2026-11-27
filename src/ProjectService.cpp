@@ -242,8 +242,8 @@ namespace ols
     // was, said plainly. The errno itself never travels into an answer - it
     // belongs to the console line, where the full message is written. The
     // Windows codes stand beside the standard names because the two machines
-    // refuse the same things apart; one of the standard names is spelled
-    // apart there too, and each side is asked for under its own spelling.
+    // refuse the same things apart; what a machine spells the same way is
+    // asked once, under that one spelling.
     static std::string ioWords(const std::error_code &ec)
     {
 #ifdef _WIN32
@@ -262,12 +262,9 @@ namespace ols
       default:
         break;
       }
-      if (ec == std::errc::read_only_filesystem)
-        return "the disk is read-only";
-#else
+#endif
       if (ec == std::errc::read_only_file_system)
         return "the disk is read-only";
-#endif
       if (ec == std::errc::permission_denied)
         return "permissions";
       if (ec == std::errc::no_space_on_device)
