@@ -1138,6 +1138,23 @@ namespace ols
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
           return read;
         DWORD needed = 0;
+        // The machine's own account sits in the token's user, not necessarily
+        // in its group list - a task running as SYSTEM proved exactly that: its
+        // groups named the administrators alias and never the machine itself.
+        // Ask the user first, then the groups, and either answer counts.
+        GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+        if (needed > 0)
+        {
+          std::vector<char> user(needed);
+          if (GetTokenInformation(token, TokenUser, user.data(),
+                                  static_cast<DWORD>(user.size()), &needed))
+          {
+            const auto *tu = reinterpret_cast<const TOKEN_USER *>(user.data());
+            if (EqualSid(tu->User.Sid, systemAccountSid()))
+              read.machine = true;
+          }
+        }
+        needed = 0;
         GetTokenInformation(token, TokenGroups, nullptr, 0, &needed);
         if (needed > 0)
         {
