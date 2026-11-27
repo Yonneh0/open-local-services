@@ -378,6 +378,15 @@ else
   NEEDS_RENAME=0
   if [ "$CACHE_VERSION" != "dev" ]; then NEEDS_RENAME=1; fi
   if grep -q '^OLS_SD_BUILD' "$API_BUILD/CMakeCache.txt" 2>/dev/null; then NEEDS_RENAME=1; fi
+  # a configure that died partway leaves its cache standing with nothing
+  # generated beside it - UM780's first meeting of this line left exactly
+  # that, and an incremental build then asks a tree for its Makefile and stops.
+  # cmake_install.cmake is what every generator writes when it generates; a
+  # cache without it is a half a tree, and gets restated, not nursed.
+  if [ ! -f "$API_BUILD/cmake_install.cmake" ]; then
+    echo "The build cache stands without generated build files - a configure died partway. Restating it."
+    NEEDS_RENAME=1
+  fi
   if [ "$NEEDS_RENAME" != 0 ]; then
     # the version is a name the link answers with, so restating it re-links
     # what the tree holds; nothing else about this build is a shape any more -

@@ -425,6 +425,9 @@ if not exist "!SERVER_ROOT!\CMakeCache.txt" (
   set NEEDS_RENAME=
   if not "!CACHE_VERSION!"=="!CODE_VERSION!" set NEEDS_RENAME=1
   findstr /I /C:"OLS_SD_BUILD" "!SERVER_ROOT!\CMakeCache.txt" >nul 2>&1 && set NEEDS_RENAME=1
+  rem a cache standing without generated build files is a configure that died
+  rem partway; cmake_install.cmake is written by every generator that finishes.
+  if not exist "!SERVER_ROOT!\cmake_install.cmake" set NEEDS_RENAME=1
   if defined NEEDS_RENAME (
     echo the server cache names another version or the old engine link; restating it
     cmake -S src -B !SERVER_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION!

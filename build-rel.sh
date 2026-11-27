@@ -406,7 +406,8 @@ build_one() {
   if [ -f "$API_BUILD/CMakeCache.txt" ]; then
     CACHE_VERSION=$(sed -n 's/^OLS_VERSION[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
     if [ "$CACHE_VERSION" = "$CODE_VERSION" ] &&
-       ! grep -q '^OLS_SD_BUILD' "$API_BUILD/CMakeCache.txt" 2>/dev/null; then
+       ! grep -q '^OLS_SD_BUILD' "$API_BUILD/CMakeCache.txt" 2>/dev/null &&
+       [ -f "$API_BUILD/cmake_install.cmake" ]; then
       NEEDS_RENAME=""
     fi
   fi

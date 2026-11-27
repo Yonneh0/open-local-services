@@ -503,6 +503,11 @@ if not exist "!API_ROOT!\CMakeCache.txt" (
     rem a cache that still names the engine tree belongs to the old shape of
     rem this build: it wants restating even when the version already reads dev.
     findstr /I /C:"OLS_SD_BUILD" "!API_ROOT!\CMakeCache.txt" >nul 2>&1 && set NEEDS_RENAME=1
+    rem a configure that died partway leaves its cache standing with nothing
+    rem generated beside it, and the incremental build below then asks a tree
+    rem for files it never got. cmake_install.cmake is what every generator
+    rem writes when it generates; a cache without it is restated, not nursed.
+    if not exist "!API_ROOT!\cmake_install.cmake" set NEEDS_RENAME=1
     if defined NEEDS_RENAME (
       rem the version is a name the link answers with, so restating it re-links
       rem what the tree holds; nothing else about this build is a shape any
