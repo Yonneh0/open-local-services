@@ -737,9 +737,6 @@ namespace ols
         const std::string progDir = programPath.parent_path().string();
         // The hand's script stands beside the log it writes, in the data folder
         // this server already owns - not %TEMP%, which for a boot-started task
-        // belongs to another account and refuses even the write.
-        // The hand's script stands beside the log it writes, in the data folder
-        // this server already owns - not %TEMP%, which for a boot-started task
         // belongs to another account and refuses even the write. When even that
         // folder refuses, these words name the file and the win32 behind it:
         // a door that only says "could not" leaves nobody to ask why.
@@ -750,11 +747,16 @@ namespace ols
         std::ofstream out{script, std::ios::binary | std::ios::trunc};
         if (!out.good())
         {
+          // The write's own error is read here, before anything else spends a
+          // win32 last-error of its own: standing the repair first handed
+          // these words the repair's pipe error instead of the write's real
+          // refusal, and a wrong number in a refusal line wastes the whole day.
+          const DWORD writeErr = GetLastError();
           // The write was refused: stand the repair once and answer honestly.
           std::string why{};
           const bool stood = standingRepairTask(root, why);
           words = "could not write the hand's script at " + script + " (win32 error " +
-                  std::to_string(GetLastError()) + "); " +
+                  std::to_string(writeErr) + "); " +
                   (stood ? "this server stood its own rights-repair task - ask this door "
                            "again in a moment, it should answer by then"
                          : ("the repair could not stand either: " + why)) +
@@ -1219,15 +1221,18 @@ namespace ols
     bool carriesManagerLevel()
     {
       const LevelReading read = readLevel();
-      // The integrity floor proves one thing: an admins-group token is the
-      // elevated one and not the filtered shadow UAC hands out. The machine
-      // account needs no such proof - it is not an account UAC filters, and
-      // the only hand that can place its token on a process is an admin's
-      // registration, which is the proof already. A machine's own task has
-      // served this code at whatever label the scheduler gave it; the law
-      // asks the machine account who it is, and the admins token how it stands.
+      // The integrity floor proves one thing for the admins token: it is the
+      // elevated one and not the filtered shadow UAC hands out. For the
+      // machine account the floor answers a different question, and X1 proved
+      // it the hard way: a task registered without the highest privileges
+      // hands SYSTEM a LOW label, and that confined token cannot write inside
+      // the tree it serves (folders carry an explicit no-write-up for Low),
+      // cannot stand a task, cannot hand - a manager in name only. So the
+      // machine answers for itself at the labels the machine actually works
+      // at, medium and above, and only the scheduler's misregistration meets
+      // the refusal now.
       if (read.machine)
-        return true;
+        return read.labelRead && read.rid >= SECURITY_MANDATORY_MEDIUM_RID;
       return read.admins && read.labelRead &&
              read.rid >= SECURITY_MANDATORY_HIGH_RID;
     }

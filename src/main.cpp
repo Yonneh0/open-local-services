@@ -283,6 +283,11 @@ static void ensureElevated(int argc, char **argv)
             << ols::deploy::managerLevelWords() << "). Start it through the machine's prompt "
             << "(run.bat answers it once), a task that raises it, or an account that "
                "already holds it"
+#ifdef _WIN32
+            << ". If that reading names the machine account at a low "
+               "label, the task itself was registered confined: an admin's "
+               "schtasks /change /tn <the task> /rl HIGHEST mends it"
+#endif
             << std::endl;
   std::exit(EXIT_FAILURE);
 }
