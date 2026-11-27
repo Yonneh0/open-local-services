@@ -262,10 +262,10 @@ namespace ols
       default:
         break;
       }
-      if (ec == std::errc::read_only_file_system)
+      if (ec == std::errc::read_only_filesystem)
         return "the disk is read-only";
 #else
-      if (ec == std::errc::read_only_filesystem)
+      if (ec == std::errc::read_only_file_system)
         return "the disk is read-only";
 #endif
       if (ec == std::errc::permission_denied)
@@ -2012,7 +2012,7 @@ namespace ols
       if (take > 0u)
       {
         if (from > 0u)
-          in.seekg(static_cast<std::streamoff>(from), std::ios::binary);
+          in.seekg(static_cast<std::streamoff>(from), std::ios::beg);
         if (!in.good())
           return false;
         text.resize(take);
