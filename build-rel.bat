@@ -263,7 +263,7 @@ goto :next_arg
 :args_read
 if defined BAD_ARG (
   echo this script does not know a target name - the names are cpu-avx512,
-  echo cpu-plain, and cuda (one CUDA engine for sm_70, sm_75 and sm_86).
+  echo cpu-plain, and cuda ^(one CUDA engine for sm_70, sm_75 and sm_86^).
   exit /b 1
 )
 if not defined REQUESTED (
@@ -299,7 +299,7 @@ set CUDA_WANTED_LIST=70 75 86
 set CUDA_ARCH_LIST=
 set CUDA_HAVE=
 if defined CUDA_HOME for /f "delims=" %%L in ('"!CUDA_HOME!\bin\nvcc.exe" --list-gpu-arch 2^>nul') do set "CUDA_HAVE=!CUDA_HAVE! %%~fL"
-for %%A in (!CUDA_WANTED_LIST!) do (
+if defined CUDA_HOME for %%A in (!CUDA_WANTED_LIST!) do (
   echo !CUDA_HAVE! | findstr /L "compute_%%A" >nul
   if not errorlevel 1 (
     if defined CUDA_ARCH_LIST (set "CUDA_ARCH_LIST=!CUDA_ARCH_LIST!;%%A") else set CUDA_ARCH_LIST=%%A
@@ -309,7 +309,7 @@ for %%A in (!CUDA_WANTED_LIST!) do (
   )
 )
 if not defined CUDA_ARCH_LIST echo this CUDA toolkit can write none of the supported generations: the cuda target has nothing to carry.
-echo the cuda engine of this run will carry: sm_!CUDA_ARCH_LIST:;.  sm_!
+echo the cuda engine of this run will carry: sm_!CUDA_ARCH_LIST:;=.  sm_!
 rem the server builds once for the whole matrix: it links no engine, so no
 rem target changes a single compile command in its tree.
 set SERVER_ROOT=build
@@ -351,9 +351,9 @@ rem what the artifacts carry, in the note the README points at
   echo     avx512 at all.
   echo   x64-cuda: the same server and one CUDA engine - stable-diffusion-cuda.dll -
   echo     whose kernels carry every card generation this project supports:
-  echo     sm_70 for the compute 7.0 cards (a V100), sm_75 for the compute 7.5
-  echo     cards (an RTX 20 series, the card in the laptop down the network) and
-  echo     sm_86 for the compute 8.6 cards (an RTX 30 series). the loader inside
+  echo     sm_70 for the compute 7.0 cards ^(a V100^), sm_75 for the compute 7.5
+  echo     cards ^(an RTX 20 series, the card in the laptop down the network^) and
+  echo     sm_86 for the compute 8.6 cards ^(an RTX 30 series^). the loader inside
   echo     the library picks each card's own kernels when the server opens it,
   echo     so one library answers every one of those machines; the linux side
   echo     builds the same one.
@@ -488,7 +488,7 @@ if /I "!TARGET!"=="cpu-avx512" (
   rem carry except avx512-bf16, which is not a CPU question at all - the bf16
   rem kernels of the vendored engines cast through MSVC's strict __m512bh type
   rem and only compile under gcc. the runtime dispatch still asks the CPU every
-  remaining question; this only says what the compiler here is able to answer.
+  rem remaining question; this only says what the compiler here is able to answer.
   set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
   set AVX512_WANT=ON
   set BACKEND=cpu up to avx512
@@ -518,7 +518,7 @@ set OUT=%REL%\x64-cuda
 set ENGINE_NAME=stable-diffusion-cuda.dll
 set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
 set CUDA_ON=1
-set BACKEND=CUDA sm_!CUDA_ARCH_LIST:;. sm_!
+set BACKEND=CUDA sm_!CUDA_ARCH_LIST:;= sm_!
 exit /b 0
 
 :build_target
@@ -589,7 +589,7 @@ if /I "!TARGET!"=="!BOX_SHAPE!" (
   copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\!ENGINE_NAME!" >nul
   echo staged into bin\ for /api/update: the shape of this box, !TARGET!.
 ) else (
-  echo !TARGET! is not the shape this box runs \(!BOX_SHAPE!\): bin\ is left as it is.
+  echo !TARGET! is not the shape this box runs ^(!BOX_SHAPE!^): bin\ is left as it is.
 )
 rem the pages travel with the binary: a webui folder beside the server is served
 rem from disk, so a release folder holds the live structure the development
