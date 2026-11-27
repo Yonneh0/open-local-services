@@ -740,23 +740,33 @@ namespace ols
                "set \"ROOT=" << root << "\"\r\n"
                "set \"PROG=" << progDir << "\"\r\n"
                "set \"LOG=%ROOT%\\data\\update-hand.log\"\r\n"
+               "set TRIES=0\r\n"
                "echo [%DATE% %TIME%] the hand waits for the running program to let go>>\"%LOG%\"\r\n"
                ":again\r\n"
+               "set /a TRIES+=1\r\n"
                "move /y \"%PROG%\\" << exeName << "\" \"%PROG%\\" << exeName << ".old\" >nul 2>&1\r\n"
                "if errorlevel 1 (\r\n"
-               "  timeout /t 1 /nobreak >nul\r\n"
+               "  if %TRIES% geq 300 (\r\n"
+               "    echo [%DATE% %TIME%] the running program would not let go of its file in five minutes: the old one starts again>>\"%LOG%\"\r\n"
+               "    goto :restart\r\n"
+               "  )\r\n"
+               "  ping -n 2 127.0.0.1 >nul\r\n"
                "  goto :again\r\n"
                ")\r\n"
                "move /y \"%ROOT%\\bin\\" << exeName << "\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
                "if errorlevel 1 (\r\n"
                "  echo [%DATE% %TIME%] the staged binary would not take the old one's place: putting the old one back>>\"%LOG%\"\r\n"
                "  move /y \"%PROG%\\" << exeName << ".old\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
-               "  exit /b 1\r\n"
+               "  echo [%DATE% %TIME%] the old one stands again and is started>>\"%LOG%\"\r\n"
+               "  goto :restart\r\n"
                ")\r\n";
         if (!dllName.empty())
-          out << "if exist \"%ROOT%\\bin\\" << dllName << "\" move /y \"%ROOT%\\bin\\" << dllName
-              << "\" \"%PROG%\\" << dllName << "\" >nul 2>&1\r\n";
-        out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n";
+          out << "if exist \"%ROOT%\\bin\\" << dllName << "\" (\r\n"
+              << "  move /y \"%ROOT%\\bin\\" << dllName << "\" \"%PROG%\\" << dllName
+              << "\" >nul 2>&1 || echo [%DATE% %TIME%] the staged dll would not move: the old one stands>>\"%LOG%\"\r\n"
+              << ")\r\n";
+        out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n"
+               ":restart\r\n";
         if (byTask)
         {
           out << "schtasks /run /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
@@ -824,14 +834,27 @@ namespace ols
               << "PROG=\"" << programPath.parent_path().string() << "\"\n"
               << "LOG=\"$ROOT/data/update-hand.log\"\n"
               << "echo \"[$(date)] the hand waits for the running program to let go\" >>\"$LOG\"\n"
-              << "while ! mv \"$PROG/" << exeName << "\" \"$PROG/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
+              << "tries=0; moved=0\n"
+              << "while [ $tries -lt 300 ]; do\n"
+              << "  tries=$((tries+1))\n"
+              << "  if mv \"$PROG/" << exeName << "\" \"$PROG/" << exeName << ".old\" 2>/dev/null; then moved=1; break; fi\n"
+              << "  sleep 1\n"
+              << "done\n"
+              << "if [ $moved -eq 0 ]; then\n"
+              << "  echo \"[$(date)] the running program would not let go of its file in five minutes: the unit starts again on the old one\" >>\"$LOG\"\n"
+              << "  systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
+              << "  exit 1\n"
+              << "fi\n"
               << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$PROG/" << exeName << "\" 2>/dev/null; then\n"
               << "  echo \"[$(date)] the staged binary would not take the old one's place: putting the old one back\" >>\"$LOG\"\n"
               << "  mv \"$PROG/" << exeName << ".old\" \"$PROG/" << exeName << "\" 2>/dev/null\n"
+              << "  echo \"[$(date)] the old one stands again and the unit starts on it\" >>\"$LOG\"\n"
+              << "  systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
               << "  exit 1\n"
               << "fi\n";
           if (!dllName.empty())
-            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName << "\" 2>/dev/null || true\n";
+            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName
+                << "\" 2>/dev/null || echo \"[$(date)] the staged dll would not move: the old one stands\" >>\"$LOG\"\n";
           out << "echo \"[$(date)] the staged binary took the running one's place\" >>\"$LOG\"\n"
               << "systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
               << "echo \"[$(date)] the hand is done\" >>\"$LOG\"\n";
@@ -871,13 +894,26 @@ namespace ols
               << "ROOT=\"" << root << "\"\n"
               << "PROG=\"" << programPath.parent_path().string() << "\"\n"
               << "LOG=\"$ROOT/data/update-hand.log\"\n"
-              << "while ! mv \"$PROG/" << exeName << "\" \"$PROG/" << exeName << ".old\" 2>/dev/null; do sleep 1; done\n"
+              << "tries=0; moved=0\n"
+              << "while [ $tries -lt 300 ]; do\n"
+              << "  tries=$((tries+1))\n"
+              << "  if mv \"$PROG/" << exeName << "\" \"$PROG/" << exeName << ".old\" 2>/dev/null; then moved=1; break; fi\n"
+              << "  sleep 1\n"
+              << "done\n"
+              << "if [ $moved -eq 0 ]; then\n"
+              << "  echo \"[$(date)] the running program would not let go of its file in five minutes: starting the old one again\" >>\"$LOG\"\n"
+              << "  cd \"$ROOT\" && nohup \"$PROG/" << exeName << "\" >>\"$LOG\" 2>&1 &\n"
+              << "  exit 1\n"
+              << "fi\n"
               << "if ! mv \"$ROOT/bin/" << exeName << "\" \"$PROG/" << exeName << "\" 2>/dev/null; then\n"
               << "  mv \"$PROG/" << exeName << ".old\" \"$PROG/" << exeName << "\" 2>/dev/null\n"
+              << "  echo \"[$(date)] the old one stands again and starts\" >>\"$LOG\"\n"
+              << "  cd \"$ROOT\" && nohup \"$PROG/" << exeName << "\" >>\"$LOG\" 2>&1 &\n"
               << "  exit 1\n"
               << "fi\n";
           if (!dllName.empty())
-            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName << "\" 2>/dev/null || true\n";
+            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName
+                << "\" 2>/dev/null || echo \"[$(date)] the staged dll would not move: the old one stands\" >>\"$LOG\"\n";
           out << "cd \"$ROOT\" && nohup \"$PROG/" << exeName << "\" >>\"$LOG\" 2>&1 &\n";
           out.close();
           const pid_t runner = fork();
