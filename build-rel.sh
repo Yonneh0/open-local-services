@@ -56,7 +56,9 @@
 #     than left to be discovered at run time.
 #
 # the trees are shared: building the release way leaves the engine trees built
-# with the release settings, and the next run.sh build
+# with the release settings, and the next run.sh build puts them back the
+# development way. nothing is wrong about that - each entry point states the
+# kind of binary it makes.
 #
 # how a release works here, in plain words - there is no release server, no
 # pipeline, and no version numbers, and that is the whole design:
@@ -79,9 +81,7 @@
 #      avx512 runs untouched on one that has never seen it. the glibc floor
 #      of each artifact is read off the binaries and printed beside them -
 #      which is honest only because linux artifacts are built on the same
-#      ubuntu release as the machines that will run them. puts them back the
-# development way. nothing is wrong about that - each entry point states the
-# kind of binary it makes.
+#      ubuntu release as the machines that will run them.
 #
 # usage: build-rel.sh            every linux target this box can build
 #        build-rel.sh x86        the cpu one only
@@ -267,29 +267,31 @@ configure_engine() {
 # flag and passes every other argument on untouched. the name keeps the
 # compiler's own name in it so cmake still reads the compiler as what it is.
 cross_filter() {
-  # $1 = the real compiler, the file to write it into
-  REAL=$1
-  FILE=$2
-  cat > "$FILE" <<'CROSSFILTER'
+  # $1 = the real compiler, $2 = the file to write it into
+  # the real compiler is baked in here, at generation time: cmake calls this
+  # file itself as the compiler, so the compiler's name could never arrive as
+  # an argument to it - a wrapper that read $1 as the compiler would exec a
+  # compile flag. the here-doc is unquoted so $1 lands as the baked value;
+  # every runtime dollar is escaped to survive the writing.
+  cat > "$2" <<CROSSFILTER
 #!/bin/sh
 # the real cross compiler, with -march=native taken out of the list: a cross
 # compiler does not know the machine that is building, and that flag names it.
-REAL=$1
-shift
-n=$#
-while [ "$n" -gt 0 ]; do
-  a=$1
+REAL="$1"
+n=\$#
+while [ "\$n" -gt 0 ]; do
+  a=\$1
   shift
-  if [ "$a" = '-march=native' ]; then
+  if [ "\$a" = '-march=native' ]; then
     :
   else
-    set -- "$@" "$a"
+    set -- "\$@" "\$a"
   fi
-  n=$((n - 1))
+  n=\$((n - 1))
 done
-exec "$REAL" "$@"
+exec "\$REAL" "\$@"
 CROSSFILTER
-  chmod +x "$FILE"
+  chmod +x "$2"
 }
 
 # the file the cross build calls instead of the cross compiler, and the folder
@@ -436,12 +438,15 @@ build_one() {
 
   # the binary and every library it really needs, nothing else
   cp -f "$API_BUILD/open-local-services" "$OUT/open-local-services"
-  # the last target built also stages into bin/, the room /api/update reads:
-  # a person rebuilding this box builds here, posts the hand, and the running
-  # server moves in what stands staged while it is down. one staged copy per
-  # box - the shape just compiled is the shape this box runs.
+  # the staged room, bin/, holds one shape: the one this box runs. the last
+  # target of a full list is not necessarily that shape, so staging asks the
+  # box's own shape alone - and a person rebuilding this box builds here,
+  # posts the hand, and the running server moves in what stands staged while
+  # it is down.
   mkdir -p bin
-  cp -f "$API_BUILD/open-local-services" bin/open-local-services
+  if [ "$TARGET" = "$BOX_SHAPE" ]; then
+    cp -f "$API_BUILD/open-local-services" bin/open-local-services
+  fi
   for SO in "$SD_BUILD"/*.so "$SD_BUILD"/bin/*.so; do
     [ -f "$SO" ] && cp -f "$SO" "$OUT/"
   done
@@ -523,6 +528,16 @@ for A in $CUDA_OK; do
 done
 
 FAILED=""
+# the shape this box itself runs, read off the box: the staged room bin/ must
+# hold what the serve standing here reads, and a cross-built target never
+# does - the card, if one answers, names the cuda shape; without a card this
+# box runs the plain cpu shape.
+BOX_SHAPE=linux-x86_64
+[ "$(uname -m)" = aarch64 ] && BOX_SHAPE=linux-aarch64
+BOX_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d .)
+if [ -n "$BOX_CAP" ] && [ "$(uname -m)" = x86_64 ]; then
+  BOX_SHAPE=linux-x86_64-cuda-$BOX_CAP
+fi
 for SPEC in $PLAN; do
   TARGET=${SPEC%%:*}
   REST=${SPEC#*:}

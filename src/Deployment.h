@@ -60,11 +60,28 @@ namespace ols
     // did not happen, and the words say why.
     bool act(const std::string &action, std::string &words);
 
+    // Whether this process carries the level this machine's manager works at -
+    // the level a boot entry, a unit, a task are the manager's to take. Windows:
+    // the token holds the administrators group for real (not the deny-only
+    // shadow a filtered token carries) or is the machine's own SYSTEM account,
+    // and the mandatory label is High or System. Linux: the effective user is
+    // root. This is the one law; both the entry point and the doors read it.
+    bool carriesManagerLevel();
+
+    // What the token answers with, in words - the account and the level it
+    // carries - so a start that is refused says what it actually held, and a
+    // server that stands says the level it stands at.
+    std::string managerLevelWords();
+
     // The update hand: what stands staged in bin/ named for this program moves
     // into its place - the old one set aside under .old first, and put back if
     // the staged file cannot land - and the new program starts at the level the
     // machine's manager set (Windows: the scheduled task that already holds
-    // this server is ended and run again; Linux: systemd restarts its unit).
+    // this server is asked to run again once its scheduler calls it Ready -
+    // never ended, for the hand rides under that very task and ending it would
+    // take the hand down; Linux: systemd restarts its unit, the hand having
+    // stood up as a transient unit beside the service so the unit's stop can
+    // sweep nothing away).
     // With no manager holding this server, the move waits behind a detached
     // helper and the new program comes as this one's own child, at the level
     // this process stands at. The answer returns before anything stops; words

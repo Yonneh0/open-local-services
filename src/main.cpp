@@ -159,79 +159,11 @@ static bool askedForElevation()
 }
 
 #ifdef _WIN32
-// The administrator group's SID (S-1-5-32-544), spelled out in bytes instead
-// of asked of the machine. AllocateAndInitializeSid is left out on purpose:
-// the on-disk header and the preprocessed output both show one canonical
-// __stdcall 11-parameter declaration, yet cl rejected 0, 9 and 10 arguments
-// against it in a row, pointing at that same line each time. A well-known
-// constant SID needs no API - revision 1, two sub-authorities, the NT
-// authority (00-00-00-00-00-05), then 32 and 544, little-endian.
-static PSID LocalGroupSid()
-{
-  static unsigned char kAdmins[] = {
-      0x01, 0x02,                          // revision 1, two sub-authorities
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x05,  // SECURITY_NT_AUTHORITY
-      0x20, 0x00, 0x00, 0x00,              // 32   - builtin domain
-      0x20, 0x02, 0x00, 0x00               // 544  - Administrators
-  };
-  return reinterpret_cast<PSID>(kAdmins);
-}
-
-// The machine's own way of saying whether this process carries the leave its
-// manager needs. Read off the token, not out of a child command: `net session`
-// was walked first and it answers 0 even for a process that holds no elevation
-// at all - a law built on it lets every plain server through, which is exactly
-// the half-armed machine the law exists to refuse. The elevated token carries
-// both the administrator group (S-1-5-32-544) and the High mandatory label; a
-// plain one carries neither, whatever its account's name promises.
+// The law of the level lives in the deployment module (Deployment.h): both the
+// entry point and the doors read the same reading of the token there.
 static bool alreadyElevated()
 {
-  HANDLE token = nullptr;
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
-    return false;
-  bool armed = false;
-  DWORD needed = 0;
-  GetTokenInformation(token, TokenGroups, nullptr, 0, &needed);
-  if (needed > 0)
-  {
-    std::vector<char> groups(needed);
-    if (GetTokenInformation(token, TokenGroups, groups.data(),
-                            static_cast<DWORD>(groups.size()), &needed))
-    {
-      const auto *list = reinterpret_cast<const TOKEN_GROUPS *>(groups.data());
-      const PSID admins = LocalGroupSid();
-      for (DWORD i = 0; i < list->GroupCount && !armed; ++i)
-        if (EqualSid(list->Groups[i].Sid, admins))
-          armed = true;
-    }
-  }
-  bool highEnough = false;
-  needed = 0;
-  GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &needed);
-  if (needed > 0)
-  {
-    std::vector<char> label(needed);
-    if (GetTokenInformation(token, TokenIntegrityLevel, label.data(),
-                            static_cast<DWORD>(label.size()), &needed))
-    {
-      const auto *ml = reinterpret_cast<const TOKEN_MANDATORY_LABEL *>(label.data());
-      const DWORD rid = *GetSidSubAuthority(ml->Label.Sid, 0);
-      highEnough = rid >= SECURITY_MANDATORY_HIGH_RID;
-    }
-  }
-  CloseHandle(token);
-  return armed && highEnough;
-}
-
-// The program this server is running as, read off the machine rather than
-// guessed from a path somebody typed.
-static std::string selfExe()
-{
-  char buffer[32768];
-  const DWORD len = GetModuleFileNameA(nullptr, buffer, static_cast<DWORD>(sizeof(buffer)));
-  if (len == 0 || len >= sizeof(buffer))
-    return std::string();
-  return std::string(buffer, len);
+  return ols::deploy::carriesManagerLevel();
 }
 
 // Starting this very program again through the machine's elevation prompt. The
@@ -252,7 +184,7 @@ static void standRaised(int argc, char **argv)
   ask.cbSize = sizeof(ask);
   ask.fMask = SEE_MASK_NOCLOSEPROCESS;
   ask.lpVerb = "runas";
-  const std::string program = selfExe();
+  const std::string program = ols::deploy::selfProgram();
   ask.lpFile = program.c_str();
   ask.lpParameters = params.empty() ? nullptr : params.c_str();
   ask.nShow = SW_HIDE;
@@ -285,24 +217,22 @@ static void standRaised(int argc, char **argv)
 // look like a server that never started.
 static bool alreadyElevated()
 {
-  return geteuid() == 0;
+  return ols::deploy::carriesManagerLevel();
 }
 
 static bool answersWithoutPassword()
 {
-  return std::system("command -v sudo >/dev/null 2>&1 && sudo -n -v >/dev/null 2>&1") == 0;
-}
-
-static std::string selfExe()
-{
-  std::error_code ec{};
-  const auto self = std::filesystem::canonical("/proc/self/exe", ec);
-  return ec ? std::string() : self.string();
+  // Probed with a real command, not with `sudo -v`: on a host whose sudoers
+  // carries both a rule that asks and a rule that does not, -v validates the
+  // timestamp against the asking rule and refuses even where sudo -n would
+  // run the command without a word. `true` asks the question the same way the
+  // elevation below will be asked.
+  return std::system("command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1") == 0;
 }
 
 static void standRaised(int argc, char **argv)
 {
-  const std::string program = selfExe();
+  const std::string program = ols::deploy::selfProgram();
   if (program.empty())
     return;
   if (!answersWithoutPassword())
@@ -335,14 +265,23 @@ static void ensureElevated(int argc, char **argv)
   if (askedForElevation() && !alreadyElevated())
     standRaised(argc, argv);
   if (alreadyElevated())
+  {
+    // The scripts promise that the line this server prints names the level it
+    // stands at; here is that line, read off the token or the uid, never
+    // assumed from the account a person typed.
+    std::cout << "this server stands at the level its manager works at: "
+              << ols::deploy::managerLevelWords() << std::endl;
     return;
+  }
   // One law on every machine, checked once and after every road the raise could
   // have taken: a server that does not stand at the manager's level does not
   // stand. Declining the prompt with OLS_ELEVATE=off is a refusal to be raised,
-  // not a licence to serve half-armed.
+  // not a licence to serve half-armed. The words say what the token held, so a
+  // refusal names the account and level it actually read.
   std::cerr << "open-local-services refuses to start: this process does not carry the "
-               "level its manager works at. Start it through the machine's prompt "
-               "(run.bat answers it once), a task that raises it, or an account that "
+               "level its manager works at (read: "
+            << ols::deploy::managerLevelWords() << "). Start it through the machine's prompt "
+            << "(run.bat answers it once), a task that raises it, or an account that "
                "already holds it"
             << std::endl;
   std::exit(EXIT_FAILURE);
@@ -460,20 +399,21 @@ int main(int argc, char **argv)
               << std::endl;
     return 1;
   }
-  // A hand stood by a running server: it was started only to make the soft hand
-  // when a newer build stands, so it binds no port of anyone's - it asks for one
-  // far from the visited address and gives it up before its doors are ever read.
+  // A hand stood by a running server: it was started only to ask the soft hand
+  // of the door that server stands at, once a newer build has landed. It binds
+  // nothing of its own - the number named on this flag is the port to ask, not
+  // a port to hold.
   bool handStand = false;
   uint16_t handPort = 0;
   for (int i = 1; i + 1 < argc; ++i)
   {
-    if (std::string(argv[i]) != "--hand-stand")
+    if (std::string(argv[i]) != "--hand-ask")
       continue;
     handStand = true;
     handPort = toPort(argv[i + 1], 0);
     if (handPort == 0)
     {
-      std::cout << "Invalid --hand-stand value: it must be a number from 1 to 65535." << std::endl;
+      std::cout << "Invalid --hand-ask value: it must be a number from 1 to 65535." << std::endl;
       return 1;
     }
   }
@@ -527,19 +467,14 @@ int main(int argc, char **argv)
   ols::net::init();
   // nothing is read here: no model is opened, no table is built, no engine is
   // stood up. the port is taken next, and the first page read asks the machine.
-  if (!api->start(handStand ? handPort : port))
-  {
-    const std::string why = api->startRefusal();
-    std::cout << (why.empty() ? "Could not bind a port" : why) << std::endl;
-    return 1;
-  }
   if (handStand)
   {
-    // The hand stands at its own address only to ask one thing of itself: the
-    // soft hand, asked and answered over its own loopback socket, then nothing.
-    // A process that exists for this binds no visited port and serves no page -
-    // it exists so the replacement is made by something already gone rather than
-    // by the server still standing at the machine's door.
+    // The hand binds nothing and serves no page: it asks one thing - the soft
+    // hand - of the server still standing at the machine's door, over the
+    // loopback that door answers on. The ask arrives behind the waiting
+    // server's own answer, and the replacement is then made by that server,
+    // which takes its hand when its listening closes. Asking a door of its own
+    // instead, as this hand once did, sets a flag no loop is left to read.
     bool handed = false;
     {
       if (ols::platform::initSockets())
@@ -547,8 +482,8 @@ int main(int argc, char **argv)
         const ols::platform::sock_t askSock = ols::platform::newStreamSocket();
         if (askSock != ols::platform::kBadSocket)
         {
-          // The hand asks its own door over loopback, through the socket API the
-          // server itself stands on.
+          // The hand asks the standing door over loopback, through the socket
+          // API the server itself stands on.
           const sockaddr_in where = ols::platform::endpointFor(handPort, true);
           if (ols::platform::connectSocket(askSock, where) != ols::platform::kSocketError)
           {
@@ -577,11 +512,17 @@ int main(int argc, char **argv)
         }
       }
     }
-    api->stop();
-    std::cout << (handed ? "the hand has asked: the program on disk takes the machine from here."
-                         : "the hand could not ask its own door: nothing was restarted.")
+    std::cout << (handed ? "the hand has asked: the server standing at the door takes the machine from there."
+                         : "the hand could not ask the door standing at port " +
+                               std::to_string(handPort) + ": nothing was restarted.")
               << std::endl;
     return handed ? 0 : 1;
+  }
+  if (!api->start(port))
+  {
+    const std::string why = api->startRefusal();
+    std::cout << (why.empty() ? "Could not bind a port" : why) << std::endl;
+    return 1;
   }
   // The port answers from this moment on, in the clear.
   std::cout << "API server on http://" << api->bindHost() << ":" << api->port() << std::endl;

@@ -7577,17 +7577,13 @@ namespace ols
             std::cout << "the build named for the hand never stood newer than this server: nothing was restarted." << std::endl;
             return;
           }
-          // The program on disk is started as this process's own child at the
-          // level this server stands at, and asked to stop with its listening
-          // closed (--hand-stand below): it binds no port of anyone's - a
-          // replacement reaching for the address while the running server still
-          // holds it would only refuse and leave nothing standing - so it hands
-          // on from something already gone. The number named is drawn from what
-          // this server stands at, and nothing ever visits that address: two
-          // servers waiting on one machine each watch behind their own.
-          const int handPort = herePort + 3000;
-          const std::string handArgs = "--hand-stand " +
-                                       std::to_string(handPort > 65535 ? handPort - 1000 : handPort);
+          // A copy of this program is started - bound nothing, serving nothing -
+          // to ask the soft hand of this server's own door once the answer
+          // behind these words has left the wire: the ask reaches the door as
+          // any other restart hand does, and the replacement is then made by
+          // the server itself when its listening closes. The number named is
+          // this server's own port: the door to ask, never a port to hold.
+          const std::string handArgs = "--hand-ask " + std::to_string(herePort);
           const std::string program = ols::deploy::selfProgram();
           if (program.empty())
           {

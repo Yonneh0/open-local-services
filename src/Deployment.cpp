@@ -24,6 +24,7 @@
 #else
 #define OLS_POPEN popen
 #define OLS_PCLOSE pclose
+#include <pwd.h>
 #include <unistd.h>
 #endif
 
@@ -166,6 +167,37 @@ namespace ols
           const std::string trimmed = trim(named);
           if (!trimmed.empty())
             return trimmed;
+        }
+        // The environment of a machine-started server is the machine's, and the
+        // .env lines the config panel writes never reach it: so the name this
+        // server's home goes by is read here too, from the .env the server
+        // itself reads, walking up from the folder the program stands in. One
+        // name law for both roads - the environment first, the file beside it
+        // next, the default last.
+        std::filesystem::path at{std::filesystem::path(selfProgram()).parent_path()};
+        for (int depth = 0; depth < 8 && !at.empty(); ++depth)
+        {
+          const std::filesystem::path env = at / ".env";
+          std::error_code seen{};
+          if (std::filesystem::is_regular_file(env, seen))
+          {
+            std::ifstream in{env};
+            std::string line{};
+            while (std::getline(in, line))
+            {
+              static const std::string key = "OLS_SERVICE_NAME=";
+              if (line.rfind(key, 0) == 0)
+              {
+                const std::string trimmed = trim(line.substr(key.size()));
+                if (!trimmed.empty())
+                  return trimmed;
+              }
+            }
+          }
+          const std::filesystem::path above = at.parent_path();
+          if (above == at)
+            break;
+          at = above;
         }
         return "open-local-services";
       }
@@ -769,7 +801,36 @@ namespace ols
                ":restart\r\n";
         if (byTask)
         {
-          out << "schtasks /run /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
+          // The task that holds this server is still its own cmd when the move
+          // lands: the scheduler refuses /run of a task it still calls Running,
+          // and the hand is a child of that very cmd. So the hand waits for the
+          // scheduler's own word - Ready - and only then asks; the ask itself is
+          // repeated a few times in case the task was winding down between the
+          // query and the run. A scheduler that would not have it says so in the
+          // log, with the new binary standing in place unstarted - the hand
+          // never pretends a refused ask ran.
+          out << "set RTRIES=0\r\n"
+              << ":readyagain\r\n"
+              << "set /a RTRIES+=1\r\n"
+              << "schtasks /query /tn \"" << now.name << "\" /fo LIST 2>nul | findstr /i /c:\"Status\" | findstr /i /c:\"Ready\" >nul\r\n"
+              << "if errorlevel 1 (\r\n"
+              << "  if %RTRIES% geq 30 (\r\n"
+              << "    echo [%DATE% %TIME%] the task never stood Ready within half a minute: asking anyway>>\"%LOG%\"\r\n"
+              << "    goto :runask\r\n"
+              << "  )\r\n"
+              << "  ping -n 2 127.0.0.1 >nul\r\n"
+              << "  goto :readyagain\r\n"
+              << ")\r\n"
+              << ":runask\r\n"
+              << "schtasks /run /tn \"" << now.name << "\" >>\"%LOG%\" 2>&1\r\n"
+              << "if errorlevel 1 (\r\n"
+              << "  if %RTRIES% geq 33 (\r\n"
+              << "    echo [%DATE% %TIME%] the scheduler refused to run the task: the new binary stands in place, unstarted>>\"%LOG%\"\r\n"
+              << "    goto :handdone\r\n"
+              << "  )\r\n"
+              << "  ping -n 3 127.0.0.1 >nul\r\n"
+              << "  goto :runask\r\n"
+              << ")\r\n"
               << "echo [%DATE% %TIME%] the hand asked the task to run again>>\"%LOG%\"\r\n";
           said << "the task that holds this server is asked to run again on the new binary - "
                   "this server stops now, and its scheduler brings it back at the level the "
@@ -792,7 +853,8 @@ namespace ols
           said << "no manager holds this server: the new program is asked of the machine's own "
                   "elevation once, as it was when this server first started. this server stops now.";
         }
-        out << "echo [%DATE% %TIME%] the hand is done>>\"%LOG%\"\r\n"
+        out << ":handdone\r\n"
+            << "echo [%DATE% %TIME%] the hand is done>>\"%LOG%\"\r\n"
                "exit /b 0\r\n";
         out.close();
         STARTUPINFOA look{};
@@ -859,15 +921,23 @@ namespace ols
               << "systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
               << "echo \"[$(date)] the hand is done\" >>\"$LOG\"\n";
           out.close();
-          const pid_t runner = fork();
-          if (runner == 0)
+          // The hand may not ride in the unit's own cgroup: when this server's
+          // main process lets go, systemd sweeps every process the unit still
+          // holds - and a helper forked here dies in that sweep before a single
+          // file is moved. So the hand stands up as a transient unit of its
+          // own: a sibling beside the service, invisible to its stopping.
+          std::ostringstream escaped;
+          escaped << "systemd-run --quiet --collect --unit=ols-update-hand"
+                  << " --working-directory=" << root
+                  << " /bin/sh '" << script << "'";
+          const Answer stood = ask(escaped.str());
+          if (stood.code != 0)
           {
-            execl("/bin/sh", "sh", script.c_str(), static_cast<char *>(nullptr));
-            _exit(1);
-          }
-          if (runner < 0)
-          {
-            words = "this machine would not start the hand: nothing was stopped.";
+            // Without the transient road the hand would die in the sweep, so
+            // this server says so plainly and stands aside unstopped - worse
+            // than a hand that cannot hold is a hand that breaks mid-move.
+            words = "this machine would not stand the hand beside the unit (code " +
+                    std::to_string(stood.code) + "): nothing was stopped.";
             rememberWords(words);
             return false;
           }
@@ -964,6 +1034,154 @@ namespace ols
       return selfExe();
     }
 
+#ifdef _WIN32
+    // The administrator group's SID (S-1-5-32-544), spelled out in bytes
+    // instead of asked of the machine: revision 1, two sub-authorities, the NT
+    // authority (00-00-00-00-00-05), then 32 and 544, little-endian.
+    namespace
+    {
+      PSID adminsSid()
+      {
+        static unsigned char kAdmins[] = {
+            0x01, 0x02,                          // revision 1, two sub-authorities
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x05,  // SECURITY_NT_AUTHORITY
+            0x20, 0x00, 0x00, 0x00,              // 32   - builtin domain
+            0x20, 0x02, 0x00, 0x00               // 544  - Administrators
+        };
+        return reinterpret_cast<PSID>(kAdmins);
+      }
+
+      // The machine's own account, SYSTEM (S-1-5-18), spelled the same way.
+      // The boot task of a Windows box stands at this account, and it wears no
+      // administrators alias at all: its own SID and the System label are the
+      // whole of its leave.
+      PSID systemAccountSid()
+      {
+        static unsigned char kSystem[] = {
+            0x01, 0x01,                          // revision 1, one sub-authority
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x05,  // SECURITY_NT_AUTHORITY
+            0x12, 0x00, 0x00, 0x00               // 18   - LOCAL_SYSTEM_RID
+        };
+        return reinterpret_cast<PSID>(kSystem);
+      }
+
+      struct LevelReading
+      {
+        bool admins = false;    // the administrators group, held for real
+        bool machine = false;   // the SYSTEM account itself
+        bool denyOnly = false;  // the group, marked deny-only by the filter
+        bool labelRead = false;
+        DWORD rid = 0;
+        std::string label = "unread";
+        std::string account = "unread";
+      };
+
+      std::string integrityName(DWORD rid)
+      {
+        if (rid >= SECURITY_MANDATORY_SYSTEM_RID)
+          return "System";
+        if (rid >= SECURITY_MANDATORY_HIGH_RID)
+          return "High";
+        if (rid >= SECURITY_MANDATORY_MEDIUM_PLUS_RID)
+          return "MediumPlus";
+        if (rid >= SECURITY_MANDATORY_MEDIUM_RID)
+          return "Medium";
+        return "Low";
+      }
+
+      LevelReading readLevel()
+      {
+        LevelReading read{};
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+          return read;
+        DWORD needed = 0;
+        GetTokenInformation(token, TokenGroups, nullptr, 0, &needed);
+        if (needed > 0)
+        {
+          std::vector<char> groups(needed);
+          if (GetTokenInformation(token, TokenGroups, groups.data(),
+                                  static_cast<DWORD>(groups.size()), &needed))
+          {
+            const auto *list = reinterpret_cast<const TOKEN_GROUPS *>(groups.data());
+            for (DWORD i = 0; i < list->GroupCount; ++i)
+            {
+              if (EqualSid(list->Groups[i].Sid, adminsSid()))
+              {
+                // Deny-only is the filtered token's shadow of the group, and a
+                // disabled one is the same refusal written another way: neither
+                // answers for the level.
+                if (list->Groups[i].Attributes & SE_GROUP_USE_FOR_DENY_ONLY)
+                  read.denyOnly = true;
+                else if (list->Groups[i].Attributes & SE_GROUP_ENABLED)
+                  read.admins = true;
+              }
+              else if (EqualSid(list->Groups[i].Sid, systemAccountSid()) &&
+                       (list->Groups[i].Attributes & SE_GROUP_ENABLED))
+                read.machine = true;
+            }
+          }
+        }
+        needed = 0;
+        GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &needed);
+        if (needed > 0)
+        {
+          std::vector<char> label(needed);
+          if (GetTokenInformation(token, TokenIntegrityLevel, label.data(),
+                                  static_cast<DWORD>(label.size()), &needed))
+          {
+            const auto *ml =
+                reinterpret_cast<const TOKEN_MANDATORY_LABEL *>(label.data());
+            read.rid = *GetSidSubAuthority(ml->Label.Sid, 0);
+            read.label = integrityName(read.rid);
+            read.labelRead = true;
+          }
+        }
+        char who[256] = {0};
+        DWORD whoLen = static_cast<DWORD>(sizeof(who));
+        if (GetUserNameA(who, &whoLen))
+          read.account = std::string(who, whoLen > 0 ? whoLen - 1 : 0);
+        CloseHandle(token);
+        return read;
+      }
+    } // namespace
+
+    bool carriesManagerLevel()
+    {
+      const LevelReading read = readLevel();
+      return (read.admins || read.machine) && read.labelRead &&
+             read.rid >= SECURITY_MANDATORY_HIGH_RID;
+    }
+
+    std::string managerLevelWords()
+    {
+      const LevelReading read = readLevel();
+      std::string words = "account " + read.account + ", integrity " + read.label;
+      if (read.admins)
+        words += ", the administrators group held";
+      else if (read.denyOnly)
+        words += ", the administrators group deny-only";
+      else
+        words += ", no administrators group";
+      if (read.machine)
+        words += ", the machine account itself";
+      return words;
+    }
+#else
+    bool carriesManagerLevel()
+    {
+      return geteuid() == 0;
+    }
+
+    std::string managerLevelWords()
+    {
+      std::string words = "uid " + std::to_string(geteuid());
+      if (struct passwd *pw = getpwuid(geteuid()))
+        words += " (" + std::string(pw->pw_name) + ")";
+      return words;
+    }
+#endif
+
     State state()
     {
       State state;
@@ -1019,14 +1237,11 @@ namespace ols
       // What a page needs to know before it offers a hand: setting this on a
       // Windows box means the task scheduler, and a hand may be refused because
       // this process does not carry the leave the manager needs. The level is
-      // asked of the machine here - the same question the manager will be asked
-      // - rather than guessed from the account a person typed.
-      out["elevated"] =
-#ifdef _WIN32
-          ask("net session").code == 0;
-#else
-          geteuid() == 0;
-#endif
+      // read off this process's own token - the same law the entry point stands
+      // under - rather than asked of a child command: `net session` answers 0
+      // even for a process that holds no elevation at all.
+      out["elevated"] = carriesManagerLevel();
+      out["level"] = managerLevelWords();
       out["platform"] =
 #ifdef _WIN32
           "windows";

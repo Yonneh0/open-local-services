@@ -129,9 +129,20 @@ OLS_WEIGHTS_DIR=weights
 OLS_DATA_DIR=data
 OLS_STARTUP=false
 OLS_ELEVATE=off
+OLS_SERVICE_NAME=open-local-services
 ```
 
+`OLS_SERVICE_NAME` names the machine's home entry for this server — the scheduled task on Windows, the systemd unit on Linux — where that home goes by anything other than the default (on X1 it is `ols-serve`). The environment wins over the `.env` line; the hand, the doors, and the state readings all ask the scheduler for this one name.
+
 The config panel uses `GET /api/config` and `POST /api/config`. Secret values are shown only as `set` or `unset`.
+
+## Standing on a machine — and being updated there
+
+**Development.** `run.bat` / `run.sh` build what is missing and start the server, asking the machine's own elevation once — the server first stands at the level its machine's manager works at (a Windows admin's token at High integrity, or the machine account a task carries; on Linux, uid 0, reached through `sudo` when it answers without a password), and a server that does not stand there says so and refuses to start. Which level it stands at is one of the lines it prints as it starts. `OLS_ELEVATE=off` declines the prompt — on a machine that was not raised, that is a refusal to start, not a licence to serve half-armed.
+
+**A machine home.** So a boot entry, a task ended, or a service started can hold the level the server must stand at, the server's home is the machine's own entry: a scheduled task on Windows (`OLS_SERVICE_NAME`, running `run.bat`, at startup), a systemd unit on Linux. `GET /api/service` answers whether such an entry exists, running, starts at boot, and at which level the server stands; `POST /api/service` with `{"action":"startup_on"|"startup_off"|"restart"|"remove"}` walks its roads. `startup_on` stands the task/unit for this program when none exists and asks the machine to run it.
+
+**Updating a running server.** Both roads stage into `bin/` first — the room `/api/update` reads. `run.bat`/`run.sh` and the release scripts do the staging; when the running server belongs to the machine's manager and this shell cannot stop it, the scripts stop honestly, leaving the fresh pair staged. `POST /api/update` (key-gated) hands a running server its update behind its own answer: it checks what stands staged, stops itself, and a detached hand waits for the file to let go, moves the new pair into place with the old set aside under `.old` (put back if the new one cannot land), and asks the machine's own entry — the task by its name, the unit by `systemctl restart` — to stand the new program up. Where no manager holds the server, the hand starts the new program itself, at the level the old one stood at. Everything the hand does goes to `data/update-hand.log` beside the answer's words; `last_words` in `/api/service` keeps the last answer for the next reading.
 
 ## Web UI
 

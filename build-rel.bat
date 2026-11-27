@@ -275,6 +275,14 @@ if defined CUDA_ASKED (
     exit /b 1
   )
 )
+rem the shape this box itself runs, read off the box: the staged room bin\ must
+rem hold what the serve standing here reads. a card answers by its compute
+rem capability; without a card this box runs the plain cpu shape - never the
+rem avx512 one, which asks more of the machine than plain code does.
+set BOX_CAP=
+for /f "delims=" %%C in ('nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2^>nul') do if not defined BOX_CAP set BOX_CAP=%%C
+if defined BOX_CAP set BOX_CAP=!BOX_CAP:.=!
+if defined BOX_CAP (set BOX_SHAPE=cuda-!BOX_CAP!) else set BOX_SHAPE=cpu-plain
 rem the card architectures this toolkit can write for: the three the project
 rem supports, checked against what nvcc here says it knows rather than assumed,
 rem so a card this toolkit cannot write for is named in this summary rather than
@@ -557,20 +565,25 @@ if not exist "!OUT!\open-local-services.exe" (
   echo open-local-services.exe is not there - the build above did not produce it.
   exit /b 1
 )
-rem the last target built also stages into bin\, the room /api/update reads: a
-rem person rebuilding this box builds here, posts the hand, and the running
-rem server moves in what stands staged while it is down. one staged copy per
-rem box - the shape that was just compiled is the shape this box runs.
-if not exist "bin" mkdir "bin"
-copy /Y "!API_EXE!" "bin\open-local-services.exe" >nul
-rem the server's own ggml is inside it - the device probe answers from it - so
-rem no ggml library is laid beside the server.
 copy /Y "!SD_BIN!\stable-diffusion.dll" "!OUT!\" >nul
 if not exist "!OUT!\stable-diffusion.dll" (
   echo stable-diffusion.dll is not there - the image engine build did not produce it.
   exit /b 1
 )
-copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
+rem the staged room, bin\, holds one shape: the one this box runs. the last
+rem target of a full sweep is not necessarily that shape, so staging asks the
+rem box's own shape alone; a person rebuilding this box builds here, posts the
+rem hand, and the running server moves in what stands staged while it is down.
+if not exist "bin" mkdir "bin"
+if /I "!TARGET!"=="!BOX_SHAPE!" (
+  copy /Y "!API_EXE!" "bin\open-local-services.exe" >nul
+  rem the server's own ggml is inside it - the device probe answers from it - so
+  rem no ggml library is laid beside the server.
+  copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
+  echo staged into bin\ for /api/update: the shape of this box, !TARGET!.
+) else (
+  echo !TARGET! is not the shape this box runs \(!BOX_SHAPE!\): bin\ is left as it is.
+)
 rem the pages travel with the binary: a webui folder beside the server is served
 rem from disk, so a release folder holds the live structure the development
 rem folder holds - and the copy embedded in the binary only answers when the

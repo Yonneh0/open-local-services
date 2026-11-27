@@ -18,6 +18,11 @@ REM Everything already built is skipped, and a server that is running is stopped
 REM only after the build below succeeds, right before its binary is replaced.
 SETLOCAL EnableDelayedExpansion
 
+rem the script's own folder is the tree's root, whichever folder the machine
+rem started it from: every name below is read from here, so the machine's task
+rem needs no start-in folder of its own and a person can run this from anywhere.
+cd /d "%~dp0" || exit /b 1
+
 rem ---- server location, same defaults as the C++ side ----
 rem the server reads its own .env, so the defaults here are only for this script's
 rem own words: they are kept in script-local names, never handed to the server in
@@ -542,37 +547,56 @@ if errorlevel 1 (
     echo The build did not finish. The tree keeps its shape and its cache.
     exit /b 1
 )
-rem the build above succeeded: a fresh binary exists, so stop the running
-rem server now, right before its binary is replaced
-call :stop_process open-local-services.exe
-if errorlevel 2 echo The running server stands at the manager's level; this shell left it running, and the replace below waits for it to let go.
-if not errorlevel 1 echo The running server was stopped to replace its binary.
+rem the build above succeeded: a fresh binary exists. It is staged into bin\
+rem before anything is stopped: staging files nobody has open never waits, and
+rem bin\ is where the hand of a running server looks - so when the replace
+rem below cannot be done from this shell, the fresh pair still stands ready and
+rem POST /api/update moves it from there, behind the running server's own
+rem answer. build-rel.bat stages there too.
 rem the built engine is read from where either project builder puts it - the
 rem Visual Studio one under a bin\Release folder, ninja a plain bin\.
 set SD_BIN=!SD_ROOT!\bin\Release
 if not exist "!SD_BIN!\stable-diffusion.dll" set SD_BIN=!SD_ROOT!\bin
 set API_EXE=!API_ROOT!\Release\open-local-services.exe
 if not exist "!API_EXE!" set API_EXE=!API_ROOT!\open-local-services.exe
-rem the running server is stopped above, so its own file lets go here: the copy
-rem that stands takes its place at once. the same pair goes into bin\ staged for
-rem /api/update - the hand a running server takes behind its own answer, moving
-rem what stands staged in while it is down. build-rel.bat stages there too.
 if not exist "bin" mkdir "bin"
-call :replace "!API_EXE!" "src\"
 copy /Y "!API_EXE!" "bin\open-local-services.exe" >nul
 if errorlevel 1 (
     echo Could not stage bin\open-local-services.exe - check the folder is writable.
+    exit /b 1
 )
+copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
 if errorlevel 1 (
-    echo Could not replace src\open-local-services.exe - check the src folder is writable.
+    echo Could not stage bin\stable-diffusion.dll - check the folder is writable.
+    exit /b 1
+)
+rem the running server is stopped now, right before its binary is replaced
+call :stop_process open-local-services.exe
+if errorlevel 2 (
+    echo The running server stands at the manager's level and this shell cannot
+    echo stop it: it keeps serving on the old binary. The fresh pair is staged
+    echo in bin\; the server's own update hand - POST /api/update - moves it
+    echo into place behind its answer and asks the machine's road to stand it
+    echo up again. Nothing was lost here.
+    exit /b 0
+)
+if not errorlevel 1 echo The running server was stopped to replace its binary.
+call :replace "!API_EXE!" "src"
+if errorlevel 1 (
+    echo Could not replace src\open-local-services.exe - the file would not let go.
+    echo The fresh pair stands staged in bin\ for the update hand to move.
     exit /b 1
 )
 rem the server carries its own ggml inside it - the device probe answers from it
 rem - so nothing is copied beside it for the server to load as a plugin: a
 rem backend already compiled in is registered twice that way, which is what
 rem MSI's cuda build failed on.
-copy /Y "!SD_BIN!\stable-diffusion.dll" "src\" >nul
-copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
+call :replace "!SD_BIN!\stable-diffusion.dll" "src"
+if errorlevel 1 (
+    echo Could not replace src\stable-diffusion.dll - the file would not let go.
+    echo The fresh pair stands staged in bin\ for the update hand to move.
+    exit /b 1
+)
 
 if /i not "%MODE%"=="build" goto start
 echo.
@@ -781,30 +805,33 @@ set LEFT=0
 tasklist /FI "IMAGENAME eq %1" | findstr /I "%1" >nul
 if errorlevel 1 exit /b 0
 set /A LEFT=LEFT+1
-if %LEFT% geq 60 (
+if %LEFT% geq 20 (
     echo This shell cannot stop that server: it stands at the level this machine's
     echo manager works at, and stopping it is the manager's - the page's stop hand,
     echo the machine's own schtasks /end, or a shell that carries the same leave.
     exit /b 2
 )
-ping -n 5 >nul
+ping -n 2 >nul
 goto stop_wait
 
 :replace
-rem %1 = the file the build produced, %2 = the runtime folder that holds it.
+rem %1 = the file the build produced, %2 = the runtime folder that holds it,
+rem named without quotes or trailing backslash.
 rem a process that was just stopped can still hold its image for a while -
 rem with the Vulkan and ggml dlls mapped it can take tens of seconds to let
 rem go - so the copy is refused while that image lives. the name is taken
 rem away first - unlinking it works while the old image is still open - and
 rem the fresh file is put in its place, so the wait is only for the moment
-rem when even that is refused.
+rem when even that is refused. The destination is always named whole, as a
+rem folder plus the file's own name: a directory spelled with a trailing
+rem backslash inside quotes escapes its own quote in front of most readers.
 set TRY=0
 :replace_try
 set /A TRY=TRY+1
-copy /Y %1 %2 >nul
+copy /Y "%~1" "%~2\%~nx1" >nul
 if not errorlevel 1 exit /b 0
-del /q "%2%~nx1" 2>nul
-copy /Y %1 %2 >nul
+del /q "%~2\%~nx1" 2>nul
+copy /Y "%~1" "%~2\%~nx1" >nul
 if not errorlevel 1 exit /b 0
 if %TRY% geq 20 exit /b 1
 ping -n 5 >nul
