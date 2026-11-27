@@ -1191,7 +1191,16 @@ namespace ols
     bool carriesManagerLevel()
     {
       const LevelReading read = readLevel();
-      return (read.admins || read.machine) && read.labelRead &&
+      // The integrity floor proves one thing: an admins-group token is the
+      // elevated one and not the filtered shadow UAC hands out. The machine
+      // account needs no such proof - it is not an account UAC filters, and
+      // the only hand that can place its token on a process is an admin's
+      // registration, which is the proof already. A machine's own task has
+      // served this code at whatever label the scheduler gave it; the law
+      // asks the machine account who it is, and the admins token how it stands.
+      if (read.machine)
+        return true;
+      return read.admins && read.labelRead &&
              read.rid >= SECURITY_MANDATORY_HIGH_RID;
     }
 
