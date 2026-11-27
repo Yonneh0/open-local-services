@@ -72,6 +72,12 @@ namespace ols
       std::string engineError() const;
     };
 
+    // The engine that runs the pictures stands OUTSIDE this binary: a library
+    // beside the program - stable-diffusion-cpu, -vulkan, or -cuda - loaded at
+    // start by EngineLoader.cpp, whose header declares every reading of it:
+    // warmEngine, the shape and words it answers with, the card, the table of
+    // calls. Nothing in this binary links the engine or its ggml.
+
   } // namespace imagegen
 } // namespace ols
 

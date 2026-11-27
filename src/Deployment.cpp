@@ -160,46 +160,16 @@ namespace ols
         return out;
       }
 
+      // dotenvValue and configWord stand in the open namespace beside their
+      // declaration in the header - the config panel's doors and the engine
+      // loader both read them, so they are not this file's own.
+
       std::string serviceName()
       {
-        if (const char *named = std::getenv("OLS_SERVICE_NAME"))
-        {
-          const std::string trimmed = trim(named);
-          if (!trimmed.empty())
-            return trimmed;
-        }
-        // The environment of a machine-started server is the machine's, and the
-        // .env lines the config panel writes never reach it: so the name this
-        // server's home goes by is read here too, from the .env the server
-        // itself reads, walking up from the folder the program stands in. One
-        // name law for both roads - the environment first, the file beside it
-        // next, the default last.
-        std::filesystem::path at{std::filesystem::path(selfProgram()).parent_path()};
-        for (int depth = 0; depth < 8 && !at.empty(); ++depth)
-        {
-          const std::filesystem::path env = at / ".env";
-          std::error_code seen{};
-          if (std::filesystem::is_regular_file(env, seen))
-          {
-            std::ifstream in{env};
-            std::string line{};
-            while (std::getline(in, line))
-            {
-              static const std::string key = "OLS_SERVICE_NAME=";
-              if (line.rfind(key, 0) == 0)
-              {
-                const std::string trimmed = trim(line.substr(key.size()));
-                if (!trimmed.empty())
-                  return trimmed;
-              }
-            }
-          }
-          const std::filesystem::path above = at.parent_path();
-          if (above == at)
-            break;
-          at = above;
-        }
-        return "open-local-services";
+        // One name law for both roads - the environment first, the file beside
+        // it next, the default last.
+        const std::string named = configWord("OLS_SERVICE_NAME");
+        return named.empty() ? "open-local-services" : named;
       }
 
       // The program this server is running as, read off the machine rather than
@@ -689,8 +659,7 @@ namespace ols
       // which is why an elevated serve ends its own task and starts itself
       // again with no prompt anywhere. Words go to a log beside the data
       // folder; nobody reads a detached console.
-      bool anonymousUpdateHand(const std::string &exeName, const std::string &dllName,
-                               std::string &words)
+      bool anonymousUpdateHand(const std::string &exeName, std::string &words)
       {
         const State now = state();
         // The folder the program itself sits in - not selfRoot's walk to .env:
@@ -732,6 +701,30 @@ namespace ols
         }
         std::ostringstream said;
         said << "the hand was taken: bin/" << exeName << " stands staged; ";
+        // The engine libraries ride with the binary: however many stand staged
+        // under the engine's own name cross the same hand, so a staged set
+        // moves as one set.
+        size_t stagedEngines = 0;
+        {
+          const std::filesystem::path binRoom = std::filesystem::path(root) / "bin";
+          std::error_code seen{};
+          if (std::filesystem::is_directory(binRoom, seen))
+          {
+            for (const auto &entry : std::filesystem::directory_iterator(binRoom, seen))
+            {
+              if (!entry.is_regular_file())
+                continue;
+              const std::string name = entry.path().filename().string();
+              if (name.rfind("stable-diffusion-", 0) == 0 &&
+                  (name.size() > 4 && (name.compare(name.size() - 4, 4, ".dll") == 0 ||
+                                       name.compare(name.size() - 3, 3, ".so") == 0)))
+                ++stagedEngines;
+            }
+          }
+        }
+        if (stagedEngines > 0)
+          said << stagedEngines << " engine librar" << (stagedEngines == 1 ? "y stands" : "ies stand")
+               << " staged with it; ";
 #ifdef _WIN32
         const bool byTask = now.installed && now.manager == "the task scheduler";
         const bool byService = now.installed && now.manager == "the service control manager";
@@ -792,11 +785,12 @@ namespace ols
                "  echo [%DATE% %TIME%] the old one stands again and is started>>\"%LOG%\"\r\n"
                "  goto :restart\r\n"
                ")\r\n";
-        if (!dllName.empty())
-          out << "if exist \"%ROOT%\\bin\\" << dllName << "\" (\r\n"
-              << "  move /y \"%ROOT%\\bin\\" << dllName << "\" \"%PROG%\\" << dllName
-              << "\" >nul 2>&1 || echo [%DATE% %TIME%] the staged dll would not move: the old one stands>>\"%LOG%\"\r\n"
-              << ")\r\n";
+        // The engine libraries move beside the binary as a set: every library
+        // staged under the engine's own name crosses, and a library that will
+        // not move leaves the old one standing - named in the log, not lost.
+        out << "for %%F in (\"%ROOT%\\bin\\stable-diffusion-*.dll\") do (\r\n"
+            << "  move /y \"%%F\" \"%PROG%\\%%~nxF\" >nul 2>&1 || echo [%DATE% %TIME%] the staged engine library %%~nxF would not move: the old one stands>>\"%LOG%\"\r\n"
+            << ")\r\n";
         out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n"
                ":restart\r\n";
         if (byTask)
@@ -914,9 +908,10 @@ namespace ols
               << "  systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
               << "  exit 1\n"
               << "fi\n";
-          if (!dllName.empty())
-            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName
-                << "\" 2>/dev/null || echo \"[$(date)] the staged dll would not move: the old one stands\" >>\"$LOG\"\n";
+          out << "for f in \"$ROOT\"/bin/libstable-diffusion-*.so; do\n"
+              << "  [ -e \"$f\" ] || continue\n"
+              << "  mv \"$f\" \"$PROG/$(basename \"$f\")\" 2>/dev/null || echo \"[$(date)] the staged engine library $(basename \"$f\") would not move: the old one stands\" >>\"$LOG\"\n"
+              << "done\n";
           out << "echo \"[$(date)] the staged binary took the running one's place\" >>\"$LOG\"\n"
               << "systemctl restart \"" << now.name << "\" >>\"$LOG\" 2>&1\n"
               << "echo \"[$(date)] the hand is done\" >>\"$LOG\"\n";
@@ -981,9 +976,10 @@ namespace ols
               << "  cd \"$ROOT\" && nohup \"$PROG/" << exeName << "\" >>\"$LOG\" 2>&1 &\n"
               << "  exit 1\n"
               << "fi\n";
-          if (!dllName.empty())
-            out << "mv \"$ROOT/bin/" << dllName << "\" \"$PROG/" << dllName
-                << "\" 2>/dev/null || echo \"[$(date)] the staged dll would not move: the old one stands\" >>\"$LOG\"\n";
+          out << "for f in \"$ROOT\"/bin/libstable-diffusion-*.so; do\n"
+              << "  [ -e \"$f\" ] || continue\n"
+              << "  mv \"$f\" \"$PROG/$(basename \"$f\")\" 2>/dev/null || echo \"[$(date)] the staged engine library $(basename \"$f\") would not move: the old one stands\" >>\"$LOG\"\n"
+              << "done\n";
           out << "cd \"$ROOT\" && nohup \"$PROG/" << exeName << "\" >>\"$LOG\" 2>&1 &\n";
           out.close();
           const pid_t runner = fork();
@@ -1009,13 +1005,59 @@ namespace ols
       }
     } // namespace
 
+    // The config words, in the open: the environment first, the .env beside the
+    // program next, empty last. The engine loader reads its search folder and
+    // shape this way, the deployment roads their service name, and a
+    // machine-started server hears what the config panel wrote even though no
+    // one exported it into its environment.
+    std::string dotenvValue(const std::string &key)
+    {
+      const std::string want = key + "=";
+      std::filesystem::path at{std::filesystem::path(selfProgram()).parent_path()};
+      for (int depth = 0; depth < 8 && !at.empty(); ++depth)
+      {
+        const std::filesystem::path env = at / ".env";
+        std::error_code seen{};
+        if (std::filesystem::is_regular_file(env, seen))
+        {
+          std::ifstream in{env};
+          std::string line{};
+          while (std::getline(in, line))
+          {
+            if (line.rfind(want, 0) == 0)
+            {
+              const std::string trimmed = trim(line.substr(want.size()));
+              if (!trimmed.empty())
+                return trimmed;
+            }
+          }
+        }
+        const std::filesystem::path above = at.parent_path();
+        if (above == at)
+          break;
+        at = above;
+      }
+      return std::string();
+    }
+
+    std::string configWord(const std::string &name)
+    {
+      if (const char *named = std::getenv(name.c_str()))
+      {
+        const std::string trimmed = trim(named);
+        if (!trimmed.empty())
+          return trimmed;
+      }
+      return dotenvValue(name);
+    }
+
     // The header's update hand stands on the anonymous one above: it wrote and
     // started the waiting script, weighed what stands staged, and stopped this
     // server behind its own answer. Nothing else stands between a bin/ binary
     // and the machine's manager starting it.
-    bool updateHand(const std::string &exeName, const std::string &dllName, std::string &words)
+    bool updateHand(const std::string &exeName, std::string &words)
     {
-      return anonymousUpdateHand(exeName, dllName, words);
+      return anonymousUpdateHand(exeName, words);
     }
 
     // What this server can truly do, told straight: account, temp, whether a

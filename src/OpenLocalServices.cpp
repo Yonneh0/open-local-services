@@ -1,5 +1,6 @@
 #include "OpenLocalServices.h"
 #include "Deployment.h"
+#include "EngineLoader.h"
 #include "ImageService.h"
 #include "MonitorService.h"
 #include "NetworkService.h"
@@ -43,7 +44,6 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
-#include "ggml-backend.h"
 #include "Platform.h"
 #include "TlsLayer.h"
 #include "HardwareInfo.h"
@@ -2965,16 +2965,14 @@ namespace ols
   }
 #endif
 
-  // The ggml the image engine links into this binary is the machine's device
-  // probe: the backend this build was asked for is compiled into it, so the
-  // probe only enumerates what this binary already carries.
-  // Plugin ggml libraries must never be read from beside the server: measured
-  // on the 2026-10-28 release, a plugin dll the loader picked up registered the
-  // same card a second time beside the ggml inside the process, and the process
-  // failed (0xC0000409) as a finished picture was handed back, with one copy's
-  // tensor standing in the other's hands. The probe is still asked for here,
-  // before the port is taken, so the first page read states the device instead
-  // of paying for finding it.
+  // The engine library beside the server is opened here, before the port is
+  // taken: the machine is read - card, vulkan loader, or cpu - and the one
+  // library of the kind it answers with is loaded, so the first page read
+  // states the device instead of paying for finding it. The plugin lesson
+  // stands measured on the 2026-10-28 release: a second ggml picked up beside
+  // the server registers the same card twice in one process, and the process
+  // fails as a finished picture is handed back. That is why the server itself
+  // carries no ggml at all now, and exactly one engine library is opened.
   void OpenLocalServices::preloadBackends()
   {
 #ifdef _WIN32
@@ -2989,7 +2987,7 @@ namespace ols
         SetEnvironmentVariableA("VK_DRIVER_FILES", manifest.c_str());
     }
 #endif
-    static_cast<void>(ggml_backend_dev_count());
+    ols::imagegen::warmEngine();
   }
 
   // What share of each thread of the machine's processor is in use right now.
@@ -3157,21 +3155,23 @@ namespace ols
 
     std::string selfBackend()
     {
-#ifndef OLS_BACKEND
-      return std::string();
-#else
-      std::string word = OLS_BACKEND;
-#ifdef OLS_CUDA_ARCH
-      word += OLS_CUDA_ARCH;
-#endif
-#ifdef OLS_CPU_ISA
-      word += "-" OLS_CPU_ISA;
-#endif
+      // The shape is a fact about the machine as it stands, read from the
+      // engine library that came at start - not from a word stamped when this
+      // binary was compiled. One binary answers for every shape of its
+      // platform; what differs between machines is the library beside it.
+      std::string word = ols::imagegen::engineShape();
+      if (word == "cuda")
+      {
+        const std::string generation = ols::imagegen::engineCardWord();
+        if (!generation.empty())
+          word += generation;
+        return word;
+      }
       if (word == "vulkan")
       {
-        // A vulkan build asks the machine's own loader the highest version its
-        // devices can speak. A loader too old to be asked says nothing, and
-        // the word stands alone rather than invented.
+        // A machine standing on vulkan is asked its own loader the highest
+        // version its devices can speak. A loader too old to be asked says
+        // nothing, and the word stands alone rather than invented.
         uint32_t version = 0;
 #ifdef _WIN32
         const HMODULE loader = LoadLibraryA("vulkan-1.dll");
@@ -3194,7 +3194,6 @@ namespace ols
 #endif
       }
       return word;
-#endif
     }
   } // namespace
 
@@ -3230,35 +3229,11 @@ namespace ols
   {
     nlohmann::json devices = nlohmann::json::array();
     std::vector<std::string> names;
-    // The ggml the image engine links into this binary knows the machine's
-    // devices: it is asked first, so the gpu and its memory are stated with the
-    // numbers the backends themselves see. What it cannot name, the image
-    // service may still list by name, and a device no library names is not drawn.
-    const size_t count = ggml_backend_dev_count();
-    for (size_t i = 0; i < count; ++i)
-    {
-      ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-      const enum ggml_backend_dev_type kind = ggml_backend_dev_type(dev);
-      const std::string name = ggml_backend_dev_name(dev);
-      if (std::find(names.begin(), names.end(), name) == names.end())
-      {
-        nlohmann::json entry = {{"name", name},
-                                {"description", ggml_backend_dev_description(dev)},
-                                {"type", kind == GGML_BACKEND_DEVICE_TYPE_GPU || kind == GGML_BACKEND_DEVICE_TYPE_IGPU
-                                             ? "gpu"
-                                             : (kind == GGML_BACKEND_DEVICE_TYPE_ACCEL ? "accel" : "cpu")}};
-        size_t freeBytes = 0;
-        size_t totalBytes = 0;
-        ggml_backend_dev_memory(dev, &freeBytes, &totalBytes);
-        if (totalBytes > 0)
-        {
-          entry["total_bytes"] = totalBytes;
-          entry["free_bytes"] = freeBytes;
-        }
-        devices.push_back(entry);
-        names.push_back(name);
-      }
-    }
+    // The engine library standing beside this server names the machine's
+    // devices - every backend its ggml knows, one name and description each.
+    // What it does not carry - the card's whole bytes and the machine's own
+    // memory - the probes answer beside it: nvml for the gpu, the system for
+    // the processor. A device no library names is not drawn.
     if (m_image)
     {
       const nlohmann::json extra = nlohmann::json::parse(m_image->devicesJson(), nullptr, false);
@@ -3273,6 +3248,28 @@ namespace ols
             names.push_back(name);
           }
         }
+      }
+    }
+    long long cardTotal = 0;
+    long long cardFree = 0;
+    int cardMajor = -1;
+    int cardMinor = 0;
+    ols::imagegen::cardFacts(cardTotal, cardFree, cardMajor, cardMinor);
+    long long ramTotal = 0;
+    long long ramFree = 0;
+    ols::imagegen::systemMemory(ramTotal, ramFree);
+    for (auto &entry : devices)
+    {
+      if (entry.contains("total_bytes"))
+        continue;
+      const std::string type = entry.value("type", std::string());
+      const bool gpu = type == "gpu" || type == "accel";
+      const long long total = gpu ? cardTotal : ramTotal;
+      const long long free = gpu ? cardFree : ramFree;
+      if (total > 0)
+      {
+        entry["total_bytes"] = static_cast<std::size_t>(total);
+        entry["free_bytes"] = static_cast<std::size_t>(free);
       }
     }
     nlohmann::json out = {{"devices", devices}};
@@ -7458,9 +7455,9 @@ namespace ols
       std::string words;
       const bool taken = ols::deploy::updateHand(
 #ifdef _WIN32
-          "open-local-services.exe", "stable-diffusion.dll",
+          "open-local-services.exe",
 #else
-          "open-local-services", "",
+          "open-local-services",
 #endif
           words);
       nlohmann::json out;

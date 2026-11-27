@@ -1,6 +1,7 @@
 #include "ImageService.h"
 #include "OpenLocalServices.h"
 #include "Common.h"
+#include "EngineLoader.h"
 #include "VerifiedRoom.h"
 
 #include <stable-diffusion.h>
@@ -39,13 +40,6 @@
 #include <nlohmann/json.hpp>
 
 #include "Platform.h"
-
-#ifdef OLS_CUDART_LINKED
-// this build links the CUDA runtime, so its own question about the GPU can be
-// asked directly; the attribute numbers are part of the runtime's stable ABI
-extern "C" int cudaDeviceGetAttribute(int *value, int attr, int device);
-extern "C" int cudaMemGetInfo(std::size_t *free, std::size_t *total);
-#endif
 
 namespace ols
 {
@@ -506,17 +500,17 @@ namespace ols
     static uint64_t gUseTick = 0;
 
     // The card answers two questions about itself - the whole bytes of device
-    // memory it is, and the major of its compute capability - through the CUDA
-    // runtime where this build linked one, and where it linked none (the Windows
-    // builds) through nvml.dll, which stands with the driver on every Windows
-    // machine that runs a CUDA card. Asking nvml costs no CUDA context and no
-    // toolkit; it answers for the card whether or not the engine has opened it.
-    // A machine where neither answers - a card of another maker, no NVIDIA
-    // driver - reads as no card (0, -1) and the engine is left alone. The probe
-    // answering nothing while the engine burns the card anyway is not innocent:
-    // measured on MSI 2026-11-19, the Windows binary asked its 8 GiB card for a
-    // 6.4 GB graph segment against an unlimited budget and died on it, because
-    // both the weight budget and the clip window read this one answer.
+    // memory it is, and the numbers of its compute capability - through the
+    // engine loader's reading of nvml, which stands with the driver on every
+    // machine that runs one of these cards. Asking nvml costs no CUDA context
+    // and no toolkit, and it answers whether or not an engine library stands
+    // or has opened the card. A machine where nothing answers - a card of
+    // another maker, no driver - reads as no card (0, -1) and the engine is
+    // left alone. The probe answering nothing while the engine burns the card
+    // anyway is not innocent: measured on MSI 2026-11-19, the Windows binary
+    // asked its 8 GiB card for a 6.4 GB graph segment against an unlimited
+    // budget and died on it, because both the weight budget and the clip
+    // window read this one answer.
     struct CardAnswer
     {
       long long totalBytes = 0;
@@ -528,54 +522,8 @@ namespace ols
       static const CardAnswer answer = []()
       {
         CardAnswer out;
-#ifdef OLS_CUDART_LINKED
-        std::size_t freeBytes = 0;
-        std::size_t totalBytes = 0;
-        if (cudaMemGetInfo(&freeBytes, &totalBytes) == 0)
-          out.totalBytes = static_cast<long long>(totalBytes);
-        // 75 and 76 are the runtime's compute-capability major/minor attributes, fixed numbers
-        if (cudaDeviceGetAttribute(&out.computeMajor, 75, 0) != 0)
-          out.computeMajor = -1;
-        if (cudaDeviceGetAttribute(&out.computeMinor, 76, 0) != 0)
-          out.computeMinor = 0;
-        if (out.totalBytes > 0 || out.computeMajor >= 0)
-          return out;
-#endif
-#if defined(_WIN32)
-        struct NvmlMemory
-        {
-          unsigned long long total, free, used;
-        };
-        using InitFn = int(__cdecl *)();
-        using CountFn = int(__cdecl *)(unsigned *);
-        using HandleFn = int(__cdecl *)(unsigned, void **);
-        using MemoryFn = int(__cdecl *)(void *, NvmlMemory *);
-        using CapFn = int(__cdecl *)(void *, int *, int *);
-        if (HMODULE nvml = LoadLibraryA("nvml.dll"))
-        {
-          const InitFn init = reinterpret_cast<InitFn>(GetProcAddress(nvml, "nvmlInit_v2"));
-          const CountFn count = reinterpret_cast<CountFn>(GetProcAddress(nvml, "nvmlDeviceGetCount_v2"));
-          const HandleFn handle = reinterpret_cast<HandleFn>(GetProcAddress(nvml, "nvmlDeviceGetHandleByIndex_v2"));
-          const MemoryFn memory = reinterpret_cast<MemoryFn>(GetProcAddress(nvml, "nvmlDeviceGetMemoryInfo"));
-          const CapFn cap = reinterpret_cast<CapFn>(GetProcAddress(nvml, "nvmlDeviceGetCudaComputeCapability"));
-          unsigned devices = 0;
-          void *card = nullptr;
-          if (init && count && handle && memory && init() == 0 && count(&devices) == 0 && devices > 0 &&
-              handle(0, &card) == 0 && card)
-          {
-            NvmlMemory mem{};
-            if (memory(card, &mem) == 0 && mem.total > 0)
-              out.totalBytes = static_cast<long long>(mem.total);
-            int major = -1;
-            int minor = 0;
-            if (cap && cap(card, &major, &minor) == 0)
-            {
-              out.computeMajor = major;
-              out.computeMinor = minor;
-            }
-          }
-        }
-#endif
+        long long freeBytes = 0;
+        cardFacts(out.totalBytes, freeBytes, out.computeMajor, out.computeMinor);
         return out;
       }();
       return answer;
@@ -622,6 +570,169 @@ namespace ols
     // whole machine, two requests refused at the same moment wrote over each
     // other's words while a third was still copying them.
     static thread_local std::string gEngineError;
+
+    // Every ask of the image engine goes through the table the loader filled
+    // from the library standing beside this server (see EngineLoader.h). These
+    // forwarders wear the engine's own names so the work below reads the same
+    // as it always did; what they add is the one honest answer a machine
+    // without a standing library has to give - refused, in words, nowhere a
+    // null jumps through.
+    static bool engineRefused(const char *name)
+    {
+      gEngineError = std::string("no image engine library stands beside this server to answer ") +
+                     name + (engineWords().empty() ? std::string() : " (" + engineWords() + ")");
+      return false;
+    }
+    static sd_ctx_t *new_sd_ctx(const sd_ctx_params_t *params)
+    {
+      if (!engineStands())
+      {
+        engineRefused("new_sd_ctx");
+        return nullptr;
+      }
+      return engineApi().new_sd_ctx(params);
+    }
+    static void free_sd_ctx(sd_ctx_t *ctx)
+    {
+      if (engineStands())
+        engineApi().free_sd_ctx(ctx);
+    }
+    static bool generate_image(sd_ctx_t *ctx, const sd_img_gen_params_t *params,
+                               sd_image_t **images, int *produced)
+    {
+      if (!engineStands())
+        return engineRefused("generate_image");
+      return engineApi().generate_image(ctx, params, images, produced);
+    }
+    static bool generate_video(sd_ctx_t *ctx, const sd_vid_gen_params_t *params,
+                               sd_image_t **frames, int *count, sd_audio_t **audio, int *fps)
+    {
+      if (!engineStands())
+        return engineRefused("generate_video");
+      return engineApi().generate_video(ctx, params, frames, count, audio, fps);
+    }
+    static void sd_cancel_generation(sd_ctx_t *ctx, enum sd_cancel_mode_t mode)
+    {
+      if (engineStands())
+        engineApi().sd_cancel_generation(ctx, mode);
+    }
+    static size_t sd_list_devices(char *buffer, size_t size)
+    {
+      if (!engineStands())
+        return 0;
+      return engineApi().sd_list_devices(buffer, size);
+    }
+    static void sd_set_log_callback(sd_log_cb_t cb, void *data)
+    {
+      if (engineStands())
+        engineApi().sd_set_log_callback(cb, data);
+    }
+    static void sd_set_progress_callback(sd_progress_cb_t cb, void *data)
+    {
+      if (engineStands())
+        engineApi().sd_set_progress_callback(cb, data);
+    }
+    static void sd_ctx_params_init(sd_ctx_params_t *params)
+    {
+      // the parameter records keep the defaults inside the engine's own
+      // headers, so a machine without a standing library still fills the
+      // struct the same way the engine would - the refusal comes at the call.
+      *params = {};
+      if (engineStands())
+        engineApi().sd_ctx_params_init(params);
+    }
+    static void sd_sample_params_init(sd_sample_params_t *params)
+    {
+      *params = {};
+      if (engineStands())
+        engineApi().sd_sample_params_init(params);
+    }
+    static void sd_img_gen_params_init(sd_img_gen_params_t *params)
+    {
+      *params = {};
+      if (engineStands())
+        engineApi().sd_img_gen_params_init(params);
+    }
+    static void sd_vid_gen_params_init(sd_vid_gen_params_t *params)
+    {
+      *params = {};
+      if (engineStands())
+        engineApi().sd_vid_gen_params_init(params);
+    }
+    static enum sample_method_t sd_get_default_sample_method(const sd_ctx_t *ctx)
+    {
+      if (!engineStands())
+      {
+        engineRefused("sd_get_default_sample_method");
+        return EULER_SAMPLE_METHOD;
+      }
+      return engineApi().sd_get_default_sample_method(ctx);
+    }
+    static enum scheduler_t sd_get_default_scheduler(const sd_ctx_t *ctx,
+                                                     enum sample_method_t method)
+    {
+      if (!engineStands())
+      {
+        engineRefused("sd_get_default_scheduler");
+        return DISCRETE_SCHEDULER;
+      }
+      return engineApi().sd_get_default_scheduler(ctx, method);
+    }
+    static void free_sd_audio(sd_audio_t *audio)
+    {
+      if (audio && engineStands())
+        engineApi().free_sd_audio(audio);
+    }
+    static void free_sd_images(sd_image_t *images, int count)
+    {
+      if (images && engineStands())
+        engineApi().free_sd_images(images, count);
+    }
+    static enum sd_type_t str_to_sd_type(const char *text)
+    {
+      // the name lookups answer from tables of words when no engine stands:
+      // the words this machine knows are its own, and a name no engine reads
+      // is refused at the open, as ever.
+      if (engineStands())
+        return engineApi().str_to_sd_type(text);
+      return SD_TYPE_COUNT;
+    }
+    static enum sample_method_t str_to_sample_method(const char *text)
+    {
+      if (engineStands())
+        return engineApi().str_to_sample_method(text);
+      return SAMPLE_METHOD_COUNT;
+    }
+    static enum scheduler_t str_to_scheduler(const char *text)
+    {
+      if (engineStands())
+        return engineApi().str_to_scheduler(text);
+      return SCHEDULER_COUNT;
+    }
+
+    // Every call below wears the qualified name, because the engine's own
+    // header declares these names at the global scope: an unqualified call
+    // would see both this file's forwarder and that header's prototype (the
+    // argument-dependent lookup reaches the global one through the engine's
+    // own types) and stand undecided between them. The header's prototypes
+    // describe a library this binary no longer links; these names go through
+    // the table, and only through the table.
+#define new_sd_ctx ols::imagegen::new_sd_ctx
+#define free_sd_ctx ols::imagegen::free_sd_ctx
+#define generate_image ols::imagegen::generate_image
+#define generate_video ols::imagegen::generate_video
+#define sd_cancel_generation ols::imagegen::sd_cancel_generation
+#define sd_list_devices ols::imagegen::sd_list_devices
+#define sd_set_log_callback ols::imagegen::sd_set_log_callback
+#define sd_set_progress_callback ols::imagegen::sd_set_progress_callback
+#define sd_ctx_params_init ols::imagegen::sd_ctx_params_init
+#define sd_sample_params_init ols::imagegen::sd_sample_params_init
+#define sd_img_gen_params_init ols::imagegen::sd_img_gen_params_init
+#define sd_vid_gen_params_init ols::imagegen::sd_vid_gen_params_init
+#define sd_get_default_sample_method ols::imagegen::sd_get_default_sample_method
+#define sd_get_default_scheduler ols::imagegen::sd_get_default_scheduler
+#define free_sd_audio ols::imagegen::free_sd_audio
+#define free_sd_images ols::imagegen::free_sd_images
 
     // where a running job began, in whole milliseconds: the home page measures
     // a run's steps-per-second against how long it took, and whole seconds of a

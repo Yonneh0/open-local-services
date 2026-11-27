@@ -4,41 +4,23 @@ project(open-local-services LANGUAGES CXX)
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(SD_VENDOR ${ROOT}/vendor/stable-diffusion.cpp)
 
-# The trees the image engine was built in.
-# The image engine's own ggml is linked into this binary beside the image
-# library: it is the machine's device probe, the same library that runs the
-# pictures enumerating the GPU the pages show.
-# Unless an entry point names the image tree as OLS_SD_BUILD, it is the build
-# subfolder inside the engine source itself - the same place on either
-# platform, never a short alias in an unrelated one.
-set(SD_BUILD ${SD_VENDOR}/build)
-foreach(ols_named OLS_SD_BUILD)
+# The image engine is not linked into this binary. The engine and its ggml
+# stand in a library beside the server - stable-diffusion-cuda, -vulkan, or
+# -cpu - opened at start by EngineLoader.cpp; this tree reads the engine's
+# header alone. The engine libraries are built by the same entry-point
+# scripts that build this server, against the engine's own cmake in its own
+# build roots, and put where the server can open them - which is why one CUDA
+# engine library carries every card generation its build was pointed at: the
+# loader inside the library picks the card's own kernels when it is opened.
+# The scripts' shape words - OLS_SD_BUILD, OLS_CUDA, OLS_NO_DEVICE - name the
+# engine libraries the scripts build beside this server, not this binary:
+# they are read here so a hand-configured build hears, in words, that these
+# days they change nothing about the server itself.
+foreach(ols_named OLS_SD_BUILD OLS_CUDA OLS_NO_DEVICE)
   if(DEFINED ${ols_named})
-    string(REPLACE "OLS_" "" ols_root "${ols_named}")
-    set(${ols_root} "${${ols_named}}")
+    message(STATUS "${ols_named} is named: the server links no engine and no backend - the word stands for the engine libraries built beside it")
   endif()
 endforeach()
-
-# The device backend follows the platform - the CUDA device on Linux, the Vulkan
-# device on Windows - unless the build names OLS_CUDA, which asks for the CUDA
-# device on Windows too: a machine whose card is CUDA-first is then built whole
-# on it, the engines with it. The scripts that do this name the build root for
-# the backend, so the two builds of one tree never share a cache. The choice
-# is kept in locals: only the stated shape below reads it.
-set(ols_cuda OFF)
-set(ols_vulkan OFF)
-if(NOT OLS_NO_DEVICE)
-  if(OLS_CUDA)
-    set(ols_cuda ON)
-    message(STATUS "device backend for this build: CUDA, named by -DOLS_CUDA")
-  elseif(MSVC)
-    set(ols_vulkan ON)
-  else()
-    set(ols_cuda ON)
-  endif()
-else()
-  message(STATUS "no device backend in this target: the image engine carries the cpu backend only")
-endif()
 
 # The TLS library the wire speaks through, carried inside this binary like the
 # engines above it. It is a static copy - no dll is shipped - and it keeps its
@@ -209,6 +191,7 @@ add_executable(open-local-services
   # one object, once - the same dress as receive.cpp above.
   SshFetch.cpp
   ImageService.cpp
+  EngineLoader.cpp
   VerifiedRoom.cpp
   Deployment.cpp
   NetworkService.cpp
@@ -221,29 +204,11 @@ add_dependencies(open-local-services build-moment)
 
 set_property(TARGET open-local-services PROPERTY CXX_STANDARD 17)
 
-# The shape this binary is, told to the process as it is compiled: the pages
-# put these words in the browser's tab beside the machine's name, so three
-# open tabs say which machine stands behind each. The device follows the same
-# choice made at the top of this file - CUDA where the build named it, Vulkan
-# on Windows, CUDA elsewhere, and no device at all when the shape asked for
-# none. The cuda architecture is the first one the build was pointed at, which
-# every script here passes as -DCMAKE_CUDA_ARCHITECTURES.
-if(OLS_NO_DEVICE)
-  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ols_cpu_isa)
-  if(ols_cpu_isa STREQUAL "amd64")
-    set(ols_cpu_isa "x86_64")
-  endif()
-  target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="cpu" OLS_CPU_ISA="${ols_cpu_isa}")
-elseif(ols_cuda)
-  set(ols_cuda_arch "")
-  if(CMAKE_CUDA_ARCHITECTURES)
-    list(GET CMAKE_CUDA_ARCHITECTURES 0 ols_cuda_arch)
-    string(REGEX REPLACE "-.*" "" ols_cuda_arch "${ols_cuda_arch}")
-  endif()
-  target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="cuda" OLS_CUDA_ARCH="${ols_cuda_arch}")
-else()
-  target_compile_definitions(open-local-services PRIVATE OLS_BACKEND="vulkan")
-endif()
+# The shape this binary answers as is no longer stamped into it at compile
+# time: it is read from the machine at start - the engine library that came,
+# the card that answered - and spoken by /api/system through those readings
+# (EngineLoader.cpp). One server binary of a platform serves every machine of
+# that platform; what differs between boxes is the library standing beside it.
 
 # The server's own sources are compiled at the strictest warning level this
 # compiler has, so the compiler, and not a reader, states what in them is never
@@ -265,7 +230,6 @@ target_include_directories(open-local-services PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${ROOT}/vendor"
   "${SD_VENDOR}/include"
-  "${SD_VENDOR}/ggml/include"
   "${SD_VENDOR}/thirdparty")
 
 # The version a build names (-DOLS_VERSION: dev in the development scripts, the
@@ -315,56 +279,10 @@ function(pick_library out base name)
   set(${out} "${_plFound}" PARENT_SCOPE)
 endfunction()
 
-pick_library(SD_LIB "${SD_BUILD}" "stable-diffusion")
-
-# The image engine's own ggml is linked in whole, before the image library: the
-# registry names the devices the pages show, and the base and the device
-# libraries its build recorded carry the calls it makes - the probe answers
-# from inside this binary, never from the shared library's copy. The linker
-# reads a list left to right, so the archives sit after the objects that
-# call them and ahead of any library that exports the same names.
-pick_library(GGML_LIB "${SD_BUILD}/ggml/src" "ggml")
-unset(olsGgmlParts)
-unset(olsGgmlCuda)
-foreach(olsGgmlPart ggml-base ggml-cpu ggml-cuda)
-  # a component only where the build recorded one: a cpu shape carries no
-  # cuda library, and asking for one that is not there is not a build error.
-  # where the build kept a component in a folder of its own, its library is
-  # read from there.
-  pick_library_if_present(olsGgmlPartLib "${SD_BUILD}/ggml/src" "${olsGgmlPart}")
-  if(NOT olsGgmlPartLib)
-    pick_library_if_present(olsGgmlPartLib "${SD_BUILD}/ggml/src/${olsGgmlPart}" "${olsGgmlPart}")
-  endif()
-  if(olsGgmlPartLib)
-    list(APPEND olsGgmlParts "${olsGgmlPartLib}")
-    if(olsGgmlPart STREQUAL "ggml-cuda")
-      set(olsGgmlCuda ON)
-    endif()
-  endif()
-endforeach()
-target_link_libraries(open-local-services PRIVATE
-  "${GGML_LIB}"
-  ${olsGgmlParts}
-  "${SD_LIB}")
-
-if(olsGgmlCuda)
-  # the device library the build recorded asks of the CUDA runtime and cuBLAS:
-  # the toolkit's import libraries are named where the toolkit stands, whole -
-  # on Windows cuBLASLt keeps its own import library, unlike the linux side's
-  # one shared runtime.
-  if(CMAKE_CUDA_COMPILER)
-    get_filename_component(cuda_bin "${CMAKE_CUDA_COMPILER}" PATH)
-    get_filename_component(cuda_root "${cuda_bin}" PATH)
-    unset(olsCudaRuntimeLibs)
-    foreach(olsCudaRuntime cudart cublas cublasLt cuda)
-      pick_library_if_present(olsCudaRuntimeLib "${cuda_root}/lib/x64" "${olsCudaRuntime}")
-      if(olsCudaRuntimeLib)
-        list(APPEND olsCudaRuntimeLibs "${olsCudaRuntimeLib}")
-      endif()
-    endforeach()
-    target_link_libraries(open-local-services PRIVATE ${olsCudaRuntimeLibs})
-  endif()
-endif()
+# The engine and its ggml are not in this link at all: the server opens one
+# engine library beside itself at start (EngineLoader.cpp). The engine keeps
+# whatever CUDA, Vulkan, or plain-cpu code it was built with entirely inside
+# its own file, together with the runtime imports its build recorded.
 
 # The TLS library joins the link as one name: the mbedtls target carries its
 # own x509 and crypto archives, and those carry the system libraries they ask
@@ -391,19 +309,6 @@ endif()
 if(NOT MSVC)
   find_package(Threads REQUIRED)
   target_link_libraries(open-local-services PRIVATE pthread)
-  if(CMAKE_CUDA_COMPILER)
-    get_filename_component(cuda_bin "${CMAKE_CUDA_COMPILER}" PATH)
-    get_filename_component(cuda_root "${cuda_bin}" PATH)
-    set(cuda_lib "${cuda_root}/lib64")
-    # this build is a CUDA build, so the api may ask the CUDA runtime at run
-    # time what the GPU actually is; where it cannot ask, it must say so and
-    # leave the engine alone
-    target_compile_definitions(open-local-services PRIVATE OLS_CUDART_LINKED)
-    if(EXISTS "${cuda_lib}/libcudart.so")
-      target_link_options(open-local-services PRIVATE "-Wl,-rpath,${cuda_lib}" "-L${cuda_lib}")
-      target_link_libraries(open-local-services PRIVATE cudart cublas cuda)
-    endif()
-  endif()
   # setup.sh may install the binary and its shared libraries elsewhere.
   target_link_options(open-local-services PRIVATE "-Wl,-rpath,$ORIGIN")
 endif()

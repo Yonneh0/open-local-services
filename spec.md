@@ -542,10 +542,11 @@ the owning module — the module decides which kinds exist and what a name may b
 
 One snapshot document, composed fresh each read:
 
-- `devices[]` — from the ggml linked into this binary first (name, description,
+- `devices[]` — from the engine library opened at start (name, description,
   `type: gpu|accel|cpu`, `total_bytes`/`free_bytes` where the device states
-  them), then anything the image module names that ggml does not, deduped by
-  name. A device no library names is not drawn.
+  them), then anything the image module names that the engine does not, deduped
+  by name. A device no library names is not drawn; an engine that would not
+  open draws none.
 - `cpu` — `cores`, `name`; `load {one,five,fifteen}` where the system keeps
   load averages (Linux); `threads_load[]` — the share of each thread in use
   between two readings of the kernel's per-processor record (Windows; the first
@@ -557,10 +558,12 @@ One snapshot document, composed fresh each read:
   from). The build writes the moment into a file of its own; never `__DATE__`.
 - `hostname` (capitals, so the tab reads a name as a name), `os`
   (`win11`/`win10` from the kernel's own answer; the distribution's name plus
-  `-server` on a headless Linux), `backend` (the build's device word, e.g.
-  `vulkan1.4`, `cuda70-x86-64-v3`; a vulkan build asks the machine's loader the
-  highest version its devices speak, and a loader too old to be asked says
-  nothing).
+  `-server` on a headless Linux), `backend` — the shape of the engine library
+  opened at start, not a word stamped when this binary was compiled: `cuda`
+  plus the card's generation as NVML reads it, `vulkan` plus the highest
+  version the machine's loader says its devices speak (a loader too old to be
+  asked says nothing, and the word stands alone), or `cpu`; empty until an
+  engine stands).
 - `webui_at` (+ `webui_file` when the pages stand outside) — the moment the
   newest page file was written (walked at most once a minute), or the build
   moment for a server standing on the copy inside.

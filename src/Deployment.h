@@ -73,22 +73,32 @@ namespace ols
     // server that stands says the level it stands at.
     std::string managerLevelWords();
 
+    // A setting read from the .env this server walks up from its own folder to
+    // find (the environment of a machine-started server is the machine's, and
+    // the .env lines the config panel writes never reach it). configWord is
+    // the law every such reading uses: the environment first, the file beside
+    // the program next, empty when neither speaks.
+    std::string dotenvValue(const std::string &key);
+    std::string configWord(const std::string &name);
+
     // The update hand: what stands staged in bin/ named for this program moves
     // into its place - the old one set aside under .old first, and put back if
-    // the staged file cannot land - and the new program starts at the level the
-    // machine's manager set (Windows: the scheduled task that already holds
-    // this server is asked to run again once its scheduler calls it Ready -
-    // never ended, for the hand rides under that very task and ending it would
-    // take the hand down; Linux: systemd restarts its unit, the hand having
-    // stood up as a transient unit beside the service so the unit's stop can
-    // sweep nothing away).
+    // the staged file cannot land - together with every engine library staged
+    // under the engine's own name (stable-diffusion-*.dll, libstable-diffusion-*.so),
+    // so the set a box runs moves as one set. The new program starts at the
+    // level the machine's manager set (Windows: the scheduled task that already
+    // holds this server is asked to run again once its scheduler calls it
+    // Ready - never ended, for the hand rides under that very task and ending
+    // it would take the hand down; Linux: systemd restarts its unit, the hand
+    // having stood up as a transient unit beside the service so the unit's
+    // stop can sweep nothing away).
     // With no manager holding this server, the move waits behind a detached
     // helper and the new program comes as this one's own child, at the level
     // this process stands at. The answer returns before anything stops; words
     // name what was staged, what moved, and what starts. Nothing here asks the
     // machine for leave: the rights these roads need are the ones this server
     // already carries.
-    bool updateHand(const std::string &exeName, const std::string &dllName, std::string &words);
+    bool updateHand(const std::string &exeName, std::string &words);
 
     // What this server can truly do: the account it runs as, where its temp
     // lives, whether a file lands in its data room and program folder, and

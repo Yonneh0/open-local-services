@@ -2,17 +2,17 @@
 REM run.sh for Windows: build every part of open-local-services if needed,
 REM then start the server. Same steps as run.sh, with Windows tool discovery.
 REM Pass "build" to build and install without starting the server.
-REM The shape this run builds follows the box. A CUDA card named - the card in
+REM The engine this run builds follows the box. A CUDA card named - the card in
 REM this box as nvidia-smi names it, an arch=<number> word, or the environment -
-REM builds whole on CUDA: every part, the image engine, the server's own device
-REM probe, compiled on nvcc, and nothing of the Vulkan sdk is asked of that
-REM machine. A box that names no card builds
-REM on the Vulkan sdk it carries, in the plain roots; only a box with no card
-REM and no sdk builds with no device backend at all - the shape build-rel.sh
-REM names with -DOLS_NO_DEVICE=1 - and there the engines work where the threads are.
-REM Pass "vulkan" for the sdk's shape - the one that needs the Vulkan sdk and
+REM builds the CUDA engine on nvcc, with kernels for every supported card
+REM generation in the one library; the Vulkan sdk's box builds the Vulkan
+REM engine, and a box with no card and no sdk builds the cpu engine alone.
+REM The server itself builds the same way on every box: it links no engine and
+REM no ggml, and opens the engine library that stands beside it when it starts
+REM (see OLS_ENGINE in the README).
+REM Pass "vulkan" for the sdk's engine - the one that needs the Vulkan sdk and
 REM builds in the plain roots - "cuda" is taken as the default it names, and
-REM "nodevice" forces the device-free shape where a card could be named.
+REM "nodevice" forces the cpu engine where a card could be named.
 REM Optional runtime settings as arguments: key=<access key> rate=<requests per minute>
 REM Everything already built is skipped, and a server that is running is stopped
 REM only after the build below succeeds, right before its binary is replaced.
@@ -292,32 +292,37 @@ if defined CUDA_ON (
     exit /b 1
   )
   echo CUDA toolkit at !CUDA_HOME!, ninja at !NINJA_EXE!, card at sm_!CUDA_ARCH!
+echo the engine library carries the kernels for sm_70, sm_75 and sm_86 in one file: the loader inside it picks this card's own when the server opens it
 )
 rem the manifest waits for the settled shape: only a build that reads Vulkan
 rem through the sdk loader asks the driver store for it.
 if defined VULKAN_WANTED call :find_vk_driver
 if defined VULKAN_WANTED echo Vulkan compute with the SDK at !VULKAN_DIR!, in the plain roots
-if defined NODEVICE echo No device backend: the engines and the server build on the cpu alone
-rem the roots each backend builds in, named for it: always a build subfolder
+if defined NODEVICE echo No device found: the engine builds on the cpu alone, and the server asks nothing of a card
+rem the roots each engine shape builds in, named for it: always a build subfolder
 rem inside the source being built - never a short alias in some unrelated place
 rem - so a source tree keeps its own build and nothing else is scattered. the
-rem CUDA roots - the default - carry the card generation its code is written
-rem for, under the same names build-rel.bat uses, so a release build reuses what
-rem a development build of that card put in place - and the two backends of one
-rem tree never share a cache.
-set SD_ROOT=vendor\stable-diffusion.cpp\build-c!CUDA_ARCH!
-set API_ROOT=build-c!CUDA_ARCH!
-set BACKEND=CUDA sm_!CUDA_ARCH!
+rem CUDA engine carries the code for every generation this project supports
+rem (70, 75, 86) in one library: the loader inside it picks the card's own
+rem kernels when it is opened, so the machine that builds and the machines
+rem that run need no matching of generations - and the two backends of one
+rem tree never share a cache. the server build is shapeless: it links no
+rem engine, so one root serves every machine of its platform.
+set SD_ROOT=vendor\stable-diffusion.cpp\build-cuda
+set ENGINE_SHAPE=cuda
 if defined VULKAN_WANTED (
   set SD_ROOT=vendor\stable-diffusion.cpp\build
-  set API_ROOT=build
-  set BACKEND=Vulkan
+  set ENGINE_SHAPE=vulkan
 )
 if defined NODEVICE (
   set SD_ROOT=vendor\stable-diffusion.cpp\build-nd
-  set API_ROOT=build-nd
-  set BACKEND=cpu, no device backend
+  set ENGINE_SHAPE=cpu
 )
+set ENGINE_NAME=stable-diffusion-!ENGINE_SHAPE!.dll
+set API_ROOT=build
+if defined CUDA_ON set BACKEND=CUDA sm_70/75/86 in one engine library
+if defined VULKAN_WANTED set BACKEND=Vulkan
+if defined NODEVICE set BACKEND=cpu, no device backend
 rem ---- the one incremental path every entry point shares ----
 rem every shape of this path is named at its configure - the card generation and
 rem the cpu instruction sets of the CUDA default, the instruction sets of the
@@ -354,11 +359,6 @@ rem __m512bh type and only compile under gcc - a development tree that asked
 rem for them would not build for reasons of compiler, not of chip.
 set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
 set NOVEC_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
-rem the one word the src build takes for a box with no device backend, the way
-rem build-rel.sh names it: the image engine then carries the cpu backend alone,
-rem and none of the server's device code is compiled.
-set OLS_NODEVICE=
-if defined NODEVICE set OLS_NODEVICE=-DOLS_NO_DEVICE=1
 echo == building the parts, skipping anything already built ==
 
 rem ---- clone the engine sources when they are missing ----
@@ -435,7 +435,7 @@ if not defined SD_DONE (
     rem generation: this shape is asked of it before cmake is, so a run that
     rem asks another of them says so instead of compiling the tree again in full.
     if exist "!SD_ROOT!\CMakeCache.txt" (
-        call :ask_shape "!SD_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH!" "the image engine"
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "70;75;86" "the image engine"
         if errorlevel 1 exit /b 1
         if defined CUDA_ON (
             call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_CUDA "ON" "the image engine"
@@ -447,7 +447,7 @@ if not defined SD_DONE (
     echo Building the image engine as a shared library with !BACKEND! compute
     if defined CUDA_ON (
         call :stand_studio
-        cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH! !OLS_GUARD!
+        cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=70;75;86" !OLS_GUARD!
     ) else if defined NODEVICE (
         call :stand_studio
         cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
@@ -477,54 +477,38 @@ rem ---- build open-local-services: configure once, then a quick incremental bui
 rem this is the development path: the build names its version dev, and the
 rem binary carries the moment the compiler ran beside that word. build-rel.bat
 rem is the one that names a commit, and only after it checked the tree.
+rem the server links no engine and no backend: one server build answers for
+rem every shape of this platform, and the engine library beside it is what
+rem differs between machines.
 if not exist "!API_ROOT!\CMakeCache.txt" (
     echo Configuring the open-local-services build
-    if defined CUDA_ON (
-        call :stand_studio
-        cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!
-    ) else (
-        cmake -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT! !OLS_NODEVICE!
-    )
+    cmake -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev
     if errorlevel 1 exit /b 1
 ) else (
-    rem the cache can hold a name the release path put in it, and the image
-    rem library another target's shape pointed this tree at, so this path
-    rem checks what the cache answers with and touches the cache only when
-    rem it answers with another path's names: reconfiguring is what makes the
+    rem the cache can hold a name the release path put in it, so this path
+    rem checks what the cache answers with and touches the cache only when it
+    rem answers with another path's names: reconfiguring is what makes the
     rem builders re-link everything they hold, and a tree already naming this
-    rem very version and this very image library needs no touch at all. a
-    rem binary never prints a name it was not built from.
+    rem very version needs no touch at all. a binary never prints a name it was
+    rem not built from. a cache left over from the days the server linked the
+    rem engine answers differently too, and the restate below leaves it naming
+    rem nothing of the kind.
     set CACHE_VERSION=
-    set CACHE_SD=
-    rem the names are matched on their prefix, not on a type suffix: these
-    rem defines are read-not-declared on the CMake side, so the cache names
-    rem them with whatever type it likes, and only the name before the colon is stable.
     for /f "usebackq tokens=1,* delims==" %%A in ("!API_ROOT!\CMakeCache.txt") do (
       set CACHE_KEY=%%A
       if /I "!CACHE_KEY:~0,11!"=="OLS_VERSION" set CACHE_VERSION=%%B
-      if /I "!CACHE_KEY:~0,12!"=="OLS_SD_BUILD" set CACHE_SD=%%B
     )
     set NEEDS_RENAME=
     if not "!CACHE_VERSION!"=="dev" set NEEDS_RENAME=1
-    if not "!CACHE_SD!"=="!SD_ROOT!" set NEEDS_RENAME=1
+    rem a cache that still names the engine tree belongs to the old shape of
+    rem this build: it wants restating even when the version already reads dev.
+    findstr /I /C:"OLS_SD_BUILD" "!API_ROOT!\CMakeCache.txt" >nul 2>&1 && set NEEDS_RENAME=1
     if defined NEEDS_RENAME (
-      rem the version and the image library are names the link answers with, so
-      rem restating them re-links what the tree holds; the card generation is
-      rem the shape every object was compiled for, and that is asked before the
-      rem cache is restated - a tree of another shape would be compiled again in
-      rem full, which this path refuses unless fresh-full-rebuild was given.
-      call :ask_shape "!API_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH!" open-local-services
-      if errorlevel 1 exit /b 1
-      if defined CUDA_ON (
-        rem the same names the configure above answers with, restated whole: the
-        rem card generation, the toolkit and the builder are this tree's shape,
-        rem and a restate that names them plainly is the one that cannot quietly
-        rem write a cuda cache with the sdk's names in it.
-        call :stand_studio
-        cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" -DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!
-      ) else (
-        cmake -S src -B !API_ROOT! -DOLS_VERSION=dev -DOLS_SD_BUILD=!SD_ROOT! !OLS_NODEVICE!
-      )
+      rem the version is a name the link answers with, so restating it re-links
+      rem what the tree holds; nothing else about this build is a shape any
+      rem more - the engine library beside it carries all of that.
+      call :stand_studio
+      cmake -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev
       if errorlevel 1 exit /b 1
     )
 )
@@ -565,9 +549,9 @@ if errorlevel 1 (
     echo Could not stage bin\open-local-services.exe - check the folder is writable.
     exit /b 1
 )
-copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
+copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\!ENGINE_NAME!" >nul
 if errorlevel 1 (
-    echo Could not stage bin\stable-diffusion.dll - check the folder is writable.
+    echo Could not stage bin\!ENGINE_NAME! - check the folder is writable.
     exit /b 1
 )
 rem the running server is stopped now, right before its binary is replaced
@@ -587,13 +571,13 @@ if errorlevel 1 (
     echo The fresh pair stands staged in bin\ for the update hand to move.
     exit /b 1
 )
-rem the server carries its own ggml inside it - the device probe answers from it
-rem - so nothing is copied beside it for the server to load as a plugin: a
-rem backend already compiled in is registered twice that way, which is what
-rem MSI's cuda build failed on.
-call :replace "!SD_BIN!\stable-diffusion.dll" "src"
+rem the engine library goes beside the server under the name the server opens
+rem it by - the one library, the one ggml in the process. the server itself
+rem carries neither, which is what keeps a second copy from ever registering
+rem the same card twice - the failure MSI's cuda build died on.
+call :replace "!SD_BIN!\stable-diffusion.dll" "src" "!ENGINE_NAME!"
 if errorlevel 1 (
-    echo Could not replace src\stable-diffusion.dll - the file would not let go.
+    echo Could not replace src\!ENGINE_NAME! - the file would not let go.
     echo The fresh pair stands staged in bin\ for the update hand to move.
     exit /b 1
 )
@@ -816,7 +800,9 @@ goto stop_wait
 
 :replace
 rem %1 = the file the build produced, %2 = the runtime folder that holds it,
-rem named without quotes or trailing backslash.
+rem named without quotes or trailing backslash, %3 = optional name to lay it
+rem under (the engine's build output is one file; the machine asks it by the
+rem shape-name beside the server).
 rem a process that was just stopped can still hold its image for a while -
 rem with the Vulkan and ggml dlls mapped it can take tens of seconds to let
 rem go - so the copy is refused while that image lives. the name is taken
@@ -825,13 +811,15 @@ rem the fresh file is put in its place, so the wait is only for the moment
 rem when even that is refused. The destination is always named whole, as a
 rem folder plus the file's own name: a directory spelled with a trailing
 rem backslash inside quotes escapes its own quote in front of most readers.
+set REPL_NAME=%~nx1
+if not "%~3"=="" set REPL_NAME=%~3
 set TRY=0
 :replace_try
 set /A TRY=TRY+1
-copy /Y "%~1" "%~2\%~nx1" >nul
+copy /Y "%~1" "%~2\!REPL_NAME!" >nul
 if not errorlevel 1 exit /b 0
-del /q "%~2\%~nx1" 2>nul
-copy /Y "%~1" "%~2\%~nx1" >nul
+del /q "%~2\!REPL_NAME!" 2>nul
+copy /Y "%~1" "%~2\!REPL_NAME!" >nul
 if not errorlevel 1 exit /b 0
 if %TRY% geq 20 exit /b 1
 ping -n 5 >nul

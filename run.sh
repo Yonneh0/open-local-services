@@ -99,32 +99,31 @@ if ! command -v cmake >/dev/null 2>&1; then
 fi
 
 # /usr/local/cuda is the newest toolkit, which may carry no nvcc for this GPU;
-# take the newest CUDA toolkit that actually has one.
+# take the newest CUDA toolkit that actually has one. A box with none builds
+# the cpu engine shape instead: the server itself asks nothing of a toolkit,
+# and the engine library beside it is what carries a device.
 NVCC=""
 for D in /usr/local/cuda-*/bin/nvcc /usr/local/cuda/bin/nvcc; do
   [ -x "$D" ] && NVCC="$D"
 done
-if [ -z "$NVCC" ]; then
-  echo "No CUDA toolkit with an nvcc found under /usr/local - this build needs one."
-  exit 1
-fi
-# The GPU in this box decides the compute capability, unless one is stated: the
-# environment and .env come first, so a box whose nvidia-smi cannot name the
-# field still builds for the card its owner named. With neither, CMake probes.
-CUDA_ARCH=$(envval CUDA_ARCH)
-if [ -z "$CUDA_ARCH" ]; then
-  CUDA_ARCH=$(nvidia-smi --query-gpu=compute_capability --format=csv,noheader 2>/dev/null |
-    head -n 1 | tr -cd '0-9')
-fi
-ARCH_OPTS=
-if [ -n "$CUDA_ARCH" ]; then
-  ARCH_OPTS="-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCH"
-  echo "GPU compute capability: $CUDA_ARCH"
+# whether this box takes the card shape or the cpu shape is the nvcc above;
+# the generations the engine carries are named below, not guessed from the
+# card in front of it, so one library answers on the box that built it and on
+# every box of those generations.
+ENGINE_SHAPE=cpu
+if [ -n "$NVCC" ]; then ENGINE_SHAPE=cuda; fi
+# the CUDA engine library carries the kernels for every generation this
+# project supports: the loader inside it picks each card's own when it is
+# opened, so the machine that builds and the machines that run need no
+# matching of generations.
+CUDA_ARCH_LIST="70;75;86"
+if [ "$ENGINE_SHAPE" = cuda ]; then
+  echo "CUDA compiler: $NVCC"
+  echo "engine shape: cuda, kernels for sm_70, sm_75 and sm_86 in one library"
 else
-  echo "GPU capability not queryable; CMake will probe the device"
+  echo "No CUDA toolkit with an nvcc found under /usr/local: the engine builds on the cpu alone"
 fi
 JN=$(nproc)
-echo "CUDA compiler: $NVCC, compute capability: $CUDA_ARCH, parallel jobs: $JN"
 
 RUNTIME=${OLS_RUNTIME_DIR:-.}
 # the comparison below is against an absolute path, so settle this one first
@@ -151,17 +150,19 @@ fi
 CUDA_FLAGS="-include $CUDA_SHIM"
 CUDA_FLAGS_OPT="-DCMAKE_CUDA_FLAGS=$CUDA_FLAGS"
 
-# ---- the roots of this machine's shape, named like build-rel.sh names them ----
-# one build tree holds one backend and one card generation, so the development
-# path takes the same card-named roots the release path uses for that shape —
-# a CUDA box develops in the -c<arch> roots, and its unqualified roots belong
-# to the cpu-only shape alone. Two entry points naming one root with the same
-# defines is what keeps the build incremental: a flipped define changes every
-# compile command in the tree and rebuilds an engine for hours over and over.
-SFX=""
-if [ -n "$CUDA_ARCH" ]; then SFX="-c$CUDA_ARCH"; else SFX="-cprobe"; fi
-SD_BUILD="vendor/stable-diffusion.cpp/build$SFX"
-API_BUILD="build$SFX"
+# ---- the roots the engine shape builds in, named like run.bat names them ----
+# the CUDA engine builds in build-cuda and the cpu engine in build-nd, one tree
+# per backend, so the two never share a cache. the server build is shapeless -
+# it links no engine - so one build root answers for every machine of this
+# platform. Two entry points naming one root with the same defines is what
+# keeps the build incremental: a flipped define changes every compile command
+# in the tree and rebuilds an engine for hours over and over.
+if [ "$ENGINE_SHAPE" = cuda ]; then
+  SD_BUILD="vendor/stable-diffusion.cpp/build-cuda"
+else
+  SD_BUILD="vendor/stable-diffusion.cpp/build-nd"
+fi
+API_BUILD="build"
 
 # the exact vendor commits this code is written against. the release gate is the
 # same test result on both machines, and that only holds while both build the
@@ -300,20 +301,32 @@ OLS_GUARD="-DCMAKE_PROJECT_INCLUDE_BEFORE=$PWD/src/ols-sage-guard.cmake"
 
 # ---- build the image engine, skipping any part already built ----
 if [ ! -f "$SD_BUILD/.built-$PIN_IMAGE" ]; then
-  # a tree that stands here was configured for one backend and one card; asking
-  # this shape of another is a full rebuild, so it is refused before cmake is
-  # asked anything at all.
+  # a tree that stands here was configured for one backend; asking this shape
+  # of another is a full rebuild, so it is refused before cmake is asked
+  # anything at all.
   if [ -f "$SD_BUILD/CMakeCache.txt" ]; then
-    check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH"
-    check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "ON"
     check_shape "$SD_BUILD/CMakeCache.txt" GGML_VULKAN "OFF"
+    if [ "$ENGINE_SHAPE" = cuda ]; then
+      check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH_LIST"
+      check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "ON"
+    else
+      check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "OFF"
+    fi
   fi
-  echo "Building the image engine as a shared library with CUDA compute"
-  cmake -S vendor/stable-diffusion.cpp -B "$SD_BUILD" \
-    $COMMON "$CUDA_FLAGS_OPT" $OLS_GUARD \
-    -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
-    -DGGML_CUDA=ON -DGGML_VULKAN=OFF \
-    -DCMAKE_CUDA_COMPILER=$NVCC $ARCH_OPTS
+  if [ "$ENGINE_SHAPE" = cuda ]; then
+    echo "Building the image engine as a shared library with CUDA compute, kernels for sm_70, sm_75, sm_86"
+    cmake -S vendor/stable-diffusion.cpp -B "$SD_BUILD" \
+      $COMMON "$CUDA_FLAGS_OPT" $OLS_GUARD \
+      -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
+      -DGGML_CUDA=ON -DGGML_VULKAN=OFF \
+      -DCMAKE_CUDA_COMPILER=$NVCC "-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCH_LIST"
+  else
+    echo "Building the image engine as a shared library on the cpu alone"
+    cmake -S vendor/stable-diffusion.cpp -B "$SD_BUILD" \
+      $COMMON $OLS_GUARD \
+      -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
+      -DGGML_CUDA=OFF -DGGML_VULKAN=OFF
+  fi
   cmake --build "$SD_BUILD" -j "$JN" || exit 1
   touch "$SD_BUILD/.built-$PIN_IMAGE"
 fi
@@ -324,30 +337,31 @@ echo ""
 # this is the development path: the build names its version dev, and the binary
 # carries the moment the compiler ran beside that word. build-rel.sh is the one
 # that names a commit, and only after it checked the tree.
+# the server links no engine and no backend: one server build answers for every
+# machine of this platform, and the engine library beside it is what differs.
 if [ ! -f "$API_BUILD/CMakeCache.txt" ]; then
   echo "Configuring the open-local-services build"
   cmake -S src -B "$API_BUILD" \
-    $COMMON "$CUDA_FLAGS_OPT" -DCMAKE_CUDA_COMPILER=$NVCC $ARCH_OPTS \
-    "-DOLS_SD_BUILD=$SD_BUILD" -DOLS_VERSION=dev || exit 1
+    -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev || exit 1
 else
-  # the cache can name a version or an image library another path put in it,
-  # so this path reads what the cache answers with and touches the cache only
-  # when it answers with another path's names: configuring marks everything
-  # the builders hold, and a tree already naming this very version and this
-  # very image library needs no touch at all. the names are read before the
-  # colon - the cache types these defines as it likes, only the name is stable.
+  # the cache can name a version another path put in it, and it can still carry
+  # the names of the days the server linked the engine; this path reads what
+  # the cache answers with and touches the cache only when it answers
+  # differently: configuring marks everything the builders hold, and a tree
+  # already naming this very version needs no touch at all. the names are read
+  # before the colon - the cache types these defines as it likes, only the
+  # name is stable.
   CACHE_VERSION=$(sed -n 's/^OLS_VERSION[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-  CACHE_SD=$(sed -n 's/^OLS_SD_BUILD[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-  if [ "$CACHE_VERSION" != "dev" ] || [ "$CACHE_SD" != "$SD_BUILD" ]; then
-    # the version and the image library are names the link answers with, and
-    # restating them re-links what the tree holds; the card generation and the
-    # backend are the shape every object was compiled for, and those are asked
-    # before cmake is - a tree of another shape would be compiled again in full.
-    check_shape "$API_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH"
-    echo "The build cache names another version or image library; restating it"
+  NEEDS_RENAME=0
+  if [ "$CACHE_VERSION" != "dev" ]; then NEEDS_RENAME=1; fi
+  if grep -q '^OLS_SD_BUILD' "$API_BUILD/CMakeCache.txt" 2>/dev/null; then NEEDS_RENAME=1; fi
+  if [ "$NEEDS_RENAME" != 0 ]; then
+    # the version is a name the link answers with, so restating it re-links
+    # what the tree holds; nothing else about this build is a shape any more -
+    # the engine library beside it carries all of that.
+    echo "The build cache names another version or the old engine link; restating it"
     cmake -S src -B "$API_BUILD" \
-      $COMMON "$CUDA_FLAGS_OPT" -DCMAKE_CUDA_COMPILER=$NVCC $ARCH_OPTS \
-      "-DOLS_SD_BUILD=$SD_BUILD" -DOLS_VERSION=dev || exit 1
+      -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=dev || exit 1
   fi
 fi
 echo "Checking for anything new in src and rebuilding it if needed"
@@ -369,9 +383,12 @@ stop_running() {
   PIDS=$(pidof "$1" 2>/dev/null) || return 0
   [ -n "$PIDS" ] || return 0
   # A server that stands at the manager's level is root's to stop; a plain
-  # person is told so rather than left staring at a failed kill.
+  # person is told so rather than left staring at a failed kill. The probe is
+  # a real no-password ask (sudo -n true), never sudo -n -v: the timestamp
+  # check answers the asking rule even where the policy says NOPASSWD, and a
+  # box that would run the kill is left thinking it would not.
   KILL="kill"
-  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo -n -v >/dev/null 2>&1; then
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     KILL="sudo -n kill"
   fi
   if $KILL $PIDS 2>/dev/null; then
@@ -384,30 +401,44 @@ stop_running() {
 }
 stop_running open-local-services "Stopping the running open-local-services to replace its binary."
 
+# ---- the engine library the server opens, named for its shape ----
+# the server links no engine: the library beside it is what draws pictures,
+# opened by name at start. this box's engine goes beside the server under the
+# name the server asks it by.
+ENGINE_FILE=$(find "$SD_BUILD" -maxdepth 3 -name 'libstable-diffusion.so*' 2>/dev/null |
+  grep -v '\.so\.' | head -n 1)
+[ -n "$ENGINE_FILE" ] || ENGINE_FILE=$(find "$SD_BUILD" -maxdepth 3 -name 'libstable-diffusion.so.*' 2>/dev/null | head -n 1)
+if [ -z "$ENGINE_FILE" ]; then
+  echo "The engine build left no libstable-diffusion.so under $SD_BUILD - something went wrong earlier." >&2
+  exit 1
+fi
+echo "Engine library: $ENGINE_FILE, standing as libstable-diffusion-$ENGINE_SHAPE.so"
+
 # ---- install into the runtime tree when this tree is build input only ----
 if [ "$RUNTIME" != "$PWD" ]; then
-  echo "Installing the server and its libraries into $RUNTIME"
+  echo "Installing the server and its engine library into $RUNTIME"
   INSTALLED_ELSEWHERE=1
   mkdir -p "$RUNTIME/src"
   cp -f "$API_BUILD/open-local-services" "$RUNTIME/src/open-local-services"
-  ldd "$API_BUILD/open-local-services" 2>/dev/null | sed 's/.*=> \([^ ]*\.so[^ ]*\).*/\1/' |
-    while read SO; do
-      case "$SO" in "$PWD"/*) cp -f "$SO" "$RUNTIME/src/" ;; esac
-    done
+  cp -f "$ENGINE_FILE" "$RUNTIME/src/libstable-diffusion-$ENGINE_SHAPE.so"
 else
   # a server the service manager restarts on its own keeps the old file busy
   # while we replace it: write next to it, then rename, which settles the
   # directory entry whatever is executing the old one.
   cp -f "$API_BUILD/open-local-services" src/open-local-services.new
   mv -f src/open-local-services.new src/open-local-services
+  cp -f "$ENGINE_FILE" "src/libstable-diffusion-$ENGINE_SHAPE.so.new"
+  mv -f "src/libstable-diffusion-$ENGINE_SHAPE.so.new" "src/libstable-diffusion-$ENGINE_SHAPE.so"
 fi
 
 # ---- stage for /api/update ----
 # bin/ is the room a running server reads when it is handed over: what stands
-# here named for the program moves into place while the server is down. one
-# staged copy per box - the shape just compiled is the shape this box runs.
+# here named for the program - the binary and every engine library - moves
+# into place while the server is down. one staged set per box: the shape just
+# compiled is the shape this box runs.
 mkdir -p bin
 cp -f "$API_BUILD/open-local-services" bin/open-local-services
+cp -f "$ENGINE_FILE" "bin/libstable-diffusion-$ENGINE_SHAPE.so"
 
 if [ "$MODE" = build ]; then
   echo ""
@@ -442,10 +473,10 @@ echo "by its own machine. The line it prints names which level it stands at. A"
 echo "machine that cannot reach root this way still runs every door; only the"
 echo "manager asks answer differently, and OLS_ELEVATE=off declines the ask."
 echo ""
-# two ggml copies share this process: the one linked into the binary, and the
-# one inside the image library beside it. ggml stops a process that installs
-# its crash handler twice - before it could listen - so no copy here installs
-# one, and the server starts. a crash still prints its own words, in the same
-# line the failing check names.
+# the one ggml lives inside the engine library beside the server; the server
+# itself carries no backend at all, so no copy can register the same device
+# twice. the variable is kept for the engine's own ggml: a crash still prints
+# its own words, in the same line the failing check names, and the server's
+# crash handler stays the single one.
 export GGML_NO_BACKTRACE=1
 exec src/open-local-services

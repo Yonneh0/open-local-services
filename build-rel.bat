@@ -5,33 +5,39 @@ rem
 rem run.bat builds and runs the server on this machine, in the development way:
 rem its version is dev, and the binary carries the moment the compiler ran. this
 rem script builds the portable artifacts that get committed, one folder per
-rem target. every target is a machine's shape, stated at its configure rather
-rem than left to the machine that compiled it:
+rem target. the server itself is one shapeless build - it links no engine and
+rem no backend - and each target ships it beside one engine library, so every
+rem folder is a machine's shape stated at its configure rather than left to
+rem the machine that compiled it:
 rem
-rem   Release\x64-windows\      the cpu backend built up to avx512, with vbmi, vnni
-rem                             and bf16 - for a cpu that reports those, like the
-rem                             one this box sits on.
+rem   Release\x64-windows\      the server and stable-diffusion-cpu-avx512.dll:
+rem                             a cpu engine built up to avx512, with vbmi, vnni
+rem                             and bf16 - for a cpu that reports those, like
+rem                             the one this box sits on. the server opens that
+rem                             library only on a chip that answers those
+rem                             instruction sets.
 rem
 rem   Release\x64-windows-plain\
-rem                             the same server for a cpu that has no avx512 at
-rem                             all: its cpu backend stays at the x64 baseline of
-rem                             avx2, which is what an older laptop cpu runs.
+rem                             the same server and stable-diffusion-cpu.dll,
+rem                             the cpu engine kept at the x64 baseline of avx2
+rem                             - what an older laptop cpu runs, and what the
+rem                             server opens by default for a machine with no
+rem                             card.
 rem
-rem   Release\x64-cuda-70\      the same server whose engines take the CUDA
-rem   Release\x64-cuda-75\      backend, one folder and one binary per card
-rem   Release\x64-cuda-86\      generation: sm_70 for the compute 7.0 cards (a
-rem                             V100), sm_75 for the compute 7.5 cards (an RTX
-rem                             20 series, the card in the laptop down the
-rem                             network), sm_86 for the compute 8.6 cards (an
-rem                             RTX 30 series). one binary answers one card
-rem                             generation rather than carrying code for all of
-rem                             them, which keeps what gets pushed over the
-rem                             network small; the linux side builds the same
-rem                             three, and a card generation outside these is
-rem                             asked for by name rather than assumed.
+rem   Release\x64-cuda\         the same server and stable-diffusion-cuda.dll:
+rem                             one CUDA engine whose kernels cover every card
+rem                             generation this project supports - sm_70 (a
+rem                             V100), sm_75 (an RTX 20 series, the card in the
+rem                             laptop down the network) and sm_86 (an RTX 30
+rem                             series) - the loader inside the library picks
+rem                             each card's own kernels when it opens, so one
+rem                             library answers every one of those machines;
+rem                             the linux side builds the same one.
 rem
-rem each folder holds open-local-services.exe with its device probe inside it, and
-rem the image engine as stable-diffusion.dll next to the server.
+rem each folder holds open-local-services.exe, the one engine library its
+rem machine opens by name, the webui folder, and the runtimes those two really
+rem import - nothing is compiled and nothing is fetched on the machine that
+rem receives it.
 rem
 rem this box compiles every one of those targets, and a machine far down the
 rem network never compiles anything: what is sent there is a finished folder,
@@ -43,10 +49,10 @@ rem     built in the vendor trees this code already keeps, one build root per
 rem     target, and every artifact ends up under Release\<target>\.
 rem   - no source is copied or duplicated anywhere: the release build compiles
 rem     the trees that are here, the ones the running server runs.
-rem   - the engines are compiled into open-local-services.exe. the image engine is the
-rem     one library that stays beside the binary: it carries its own copy of
-rem     ggml, and one executable cannot hold two different ggmls. the same rule
-rem     run.bat and src\CMakeLists.txt follow.
+rem   - the server carries no engine and no ggml of its own. the image engine
+rem     beside it is the one library that carries ggml, and the server opens
+rem     it by name when it starts - which is what keeps one process from ever
+rem     holding two ggmls. the same rule run.bat and src\CMakeLists.txt follow.
 rem   - a build never throws a finished tree away. its roots are kept, so a run
 rem     that changed no source recompiles nothing but the one file that carries
 rem     the version, and a run that changed one file recompiles that file and
@@ -76,9 +82,9 @@ rem usage: build-rel.bat                build every windows target this box can
 rem        build-rel.bat build          the same: this script never starts a server
 rem        build-rel.bat cpu-avx512     only that target
 rem        build-rel.bat cpu-plain      only the target for a cpu with no avx512
-rem        build-rel.bat cuda=70        only the CUDA target for that card arch
-rem        build-rel.bat cuda=75        only the CUDA target for that card arch
-rem        build-rel.bat cuda=86        only the CUDA target for that card arch
+rem        build-rel.bat cuda           only the CUDA target, one library for
+rem                             sm_70, sm_75 and sm_86 (cuda=70 and the like are
+rem                             still accepted and name that one library)
 rem        OLS_MSVC_DIR=<the folder a cl.exe sits in>
 rem                             name the compiler this build uses, the way the
 rem                             Vulkan SDK is named by VULKAN_ROOT_DIR.
@@ -257,12 +263,12 @@ goto :next_arg
 :args_read
 if defined BAD_ARG (
   echo this script does not know a target name - the names are cpu-avx512,
-  echo cpu-plain, and cuda=70, cuda=75, cuda=86 for the card architectures.
+  echo cpu-plain, and cuda (one CUDA engine for sm_70, sm_75 and sm_86).
   exit /b 1
 )
 if not defined REQUESTED (
   set REQUESTED=cpu-avx512 cpu-plain
-  if defined CUDA_HOME if defined NINJA_EXE set "REQUESTED=!REQUESTED! cuda-70 cuda-75 cuda-86"
+  if defined CUDA_HOME if defined NINJA_EXE set "REQUESTED=!REQUESTED! cuda"
 )
 if defined CUDA_ASKED (
   if not defined CUDA_HOME (
@@ -276,26 +282,44 @@ if defined CUDA_ASKED (
   )
 )
 rem the shape this box itself runs, read off the box: the staged room bin\ must
-rem hold what the serve standing here reads. a card answers by its compute
-rem capability; without a card this box runs the plain cpu shape - never the
-rem avx512 one, which asks more of the machine than plain code does.
+rem hold what the serve standing here reads. a card answers with the cuda
+rem shape - the one library covers its generation whatever that generation is;
+rem without a card this box runs the plain cpu shape - never the avx512 one,
+rem which asks more of the machine than plain code does.
 set BOX_CAP=
 for /f "delims=" %%C in ('nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2^>nul') do if not defined BOX_CAP set BOX_CAP=%%C
 if defined BOX_CAP set BOX_CAP=!BOX_CAP:.=!
-if defined BOX_CAP (set BOX_SHAPE=cuda-!BOX_CAP!) else set BOX_SHAPE=cpu-plain
-rem the card architectures this toolkit can write for: the three the project
-rem supports, checked against what nvcc here says it knows rather than assumed,
-rem so a card this toolkit cannot write for is named in this summary rather than
-rem left out of the run quietly.
+if defined BOX_CAP (set BOX_SHAPE=cuda) else set BOX_SHAPE=cpu-plain
+if defined BOX_CAP echo this box runs the cuda shape: its card answers compute !BOX_CAP!, and one cuda library covers it
+rem the card generations this project supports, checked against what nvcc here
+rem says it knows rather than assumed: the one cuda engine carries the kernels
+rem for every one of these the toolkit can write, and a generation it cannot
+rem write for is named in this summary rather than left out quietly.
 set CUDA_WANTED_LIST=70 75 86
+set CUDA_ARCH_LIST=
 set CUDA_HAVE=
 if defined CUDA_HOME for /f "delims=" %%L in ('"!CUDA_HOME!\bin\nvcc.exe" --list-gpu-arch 2^>nul') do set "CUDA_HAVE=!CUDA_HAVE! %%~fL"
-set CUDA_SKIPPED=
 for %%A in (!CUDA_WANTED_LIST!) do (
   echo !CUDA_HAVE! | findstr /L "compute_%%A" >nul
-  if errorlevel 1 set "CUDA_SKIPPED=!CUDA_SKIPPED! cuda-%%A"
+  if not errorlevel 1 (
+    if defined CUDA_ARCH_LIST (set "CUDA_ARCH_LIST=!CUDA_ARCH_LIST!;%%A") else set CUDA_ARCH_LIST=%%A
+  ) else (
+    set "CUDA_MISSING=!CUDA_MISSING! sm_%%A"
+    echo this CUDA toolkit cannot write sm_%%A: that generation will not be in the cuda engine.
+  )
 )
-if defined CUDA_SKIPPED echo this CUDA toolkit cannot write for: !CUDA_SKIPPED!
+if not defined CUDA_ARCH_LIST echo this CUDA toolkit can write none of the supported generations: the cuda target has nothing to carry.
+echo the cuda engine of this run will carry: sm_!CUDA_ARCH_LIST:;.  sm_!
+rem the server builds once for the whole matrix: it links no engine, so no
+rem target changes a single compile command in its tree.
+set SERVER_ROOT=build
+set SERVER_EXE=!SERVER_ROOT!\Release\open-local-services.exe
+if exist "!SERVER_ROOT!\open-local-services.exe" set SERVER_EXE=!SERVER_ROOT!\open-local-services.exe
+call :build_server
+if errorlevel 1 (
+  echo the server itself did not build.
+  exit /b 1
+)
 echo the targets this run builds: !REQUESTED!
 
 for %%T in (!REQUESTED!) do (
@@ -319,25 +343,29 @@ rem what the artifacts carry, in the note the README points at
   echo with cmake and the msvc cl.exe at !MSVC_BIN!, and the vulkan sdk at !VULKAN_DIR!
   echo.
   echo each folder below is one machine shape, built here and started as it arrived:
-  echo   x64-windows: the cpu backend built up to avx512 with vbmi, vnni and bf16,
-  echo     and the Vulkan backend - for a cpu that reports those instruction sets.
-  echo   x64-windows-plain: the same server with the cpu backend kept at the x64
-  echo     baseline of avx2 and the Vulkan backend - for a cpu with no avx512 at all.
-  echo   x64-cuda-70, x64-cuda-75, x64-cuda-86: the same server whose engines
-  echo     take the CUDA backend, one folder and one binary per card generation -
-  echo     sm_70 for the compute 7.0 cards, sm_75 for the compute 7.5 cards - the
-  echo     card in the laptop down the network - and sm_86 for the compute 8.6 cards.
-  echo     one binary answers one card generation, which keeps what gets pushed
-  echo     over the network small; the linux side builds the same three.
-  echo inside each folder: open-local-services.exe with its device probe inside it, and
-  echo the image engine as stable-diffusion.dll next to the server - it carries
-  echo its own ggml, and one executable cannot hold two ggmls.
+  echo   x64-windows: the server with the cpu engine built up to avx512 with vbmi,
+  echo     vnni and bf16 - the engine is stable-diffusion-cpu-avx512.dll, for a
+  echo     cpu that reports those instruction sets.
+  echo   x64-windows-plain: the same server with the cpu engine kept at the x64
+  echo     baseline of avx2 - stable-diffusion-cpu.dll, for a cpu with no
+  echo     avx512 at all.
+  echo   x64-cuda: the same server and one CUDA engine - stable-diffusion-cuda.dll -
+  echo     whose kernels carry every card generation this project supports:
+  echo     sm_70 for the compute 7.0 cards (a V100), sm_75 for the compute 7.5
+  echo     cards (an RTX 20 series, the card in the laptop down the network) and
+  echo     sm_86 for the compute 8.6 cards (an RTX 30 series). the loader inside
+  echo     the library picks each card's own kernels when the server opens it,
+  echo     so one library answers every one of those machines; the linux side
+  echo     builds the same one.
+  echo inside each folder: open-local-services.exe, which links no engine at all,
+  echo and the image engine beside it under the name the server opens it by.
+  echo the engine carries the ggml the pictures are drawn with, and one process
+  echo cannot hold two ggmls - so the server holds none.
   echo the build roots of every target are kept between runs: a run that changed
   echo no source recompiles nothing but the file that carries the version.
-  echo card architectures this CUDA toolkit could not write for: !CUDA_SKIPPED!
-  echo the card architecture inside each cuda binary is read off the artifact,
-  echo not trusted from what was asked, and the run that writes this file prints
-  echo what it reads beside the names of the folders it built.
+  echo card generations this CUDA toolkit could not write: !CUDA_MISSING!
+  echo the card generations read back off the cuda engine are printed by the
+  echo run, not trusted from what was asked, beside the folders it built.
   echo the engines were compiled in the vendor trees this code keeps, on the
   echo pinned commits its .pin files record - no source was copied for this
   echo build. the sources that built every artifact here:
@@ -375,13 +403,54 @@ echo The engine trees are now built the release way; run.bat puts them back the
 echo development way when it runs.
 exit /b 0
 
-rem ---- the shape of one target: its engine build roots are named for it, so
+rem ---- the server, once for the whole matrix ----
+rem it links no engine and no backend, so one tree answers for every target;
+rem the version it carries is the commit this script checked. a cache that
+rem already names this very version needs no touch, and a cache left over from
+rem the days the server linked the engine wants restating too.
+:build_server
+call :stand_studio
+if not exist "!SERVER_ROOT!\CMakeCache.txt" (
+  cmake -S src -B !SERVER_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION!
+  if errorlevel 1 (
+    echo Could not configure the server build.
+    exit /b 1
+  )
+) else (
+  set CACHE_VERSION=
+  for /f "usebackq tokens=1,* delims==" %%A in ("!SERVER_ROOT!\CMakeCache.txt") do (
+    set CACHE_KEY=%%A
+    if /I "!CACHE_KEY:~0,11!"=="OLS_VERSION" set CACHE_VERSION=%%B
+  )
+  set NEEDS_RENAME=
+  if not "!CACHE_VERSION!"=="!CODE_VERSION!" set NEEDS_RENAME=1
+  findstr /I /C:"OLS_SD_BUILD" "!SERVER_ROOT!\CMakeCache.txt" >nul 2>&1 && set NEEDS_RENAME=1
+  if defined NEEDS_RENAME (
+    echo the server cache names another version or the old engine link; restating it
+    cmake -S src -B !SERVER_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION!
+    if errorlevel 1 (
+      echo Could not configure the server build.
+      exit /b 1
+    )
+  )
+)
+cmake --build !SERVER_ROOT! --config Release --parallel
+if errorlevel 1 (
+  echo The server build failed.
+  exit /b 1
+)
+if not exist "!SERVER_EXE!" (
+  echo open-local-services.exe is not there - the server build above did not produce it.
+  exit /b 1
+)
+exit /b 0
+
+rem ---- the shape of one engine target: its build roots are named for it, so
 rem two shapes of one engine tree never share a cache, and its instruction
 rem sets and its backend are stated here rather than taken from the machine
-rem that built it. the src build tree is named once per backend and shared with the
-rem development path's root beside it: the server's own code does not change
-rem with a cpu shape - only the image library it links does, named per target
-rem with OLS_SD_BUILD, a define on a cache already configured ----
+rem that built it. the engine library it produces is named for its shape: the
+rem server opens it by that name, so a box can hold more than one and the
+rem engine it runs is a choice the machine makes at start ----
 :pick_target
 set SD=vendor\stable-diffusion.cpp
 rem the pinned image engine declares rsqrt as a device function where the CUDA 12.9
@@ -404,17 +473,17 @@ rem eight thousand characters cmd draws the line at - the release of a whole
 rem matrix died on exactly that. a ninja builder needs no PATH entry either:
 rem the configure lines hand it over whole by -DCMAKE_MAKE_PROGRAM, and the
 rem build reads that absolute name from the cache.
-set API_ROOT=
 set SD_ROOT=
 set OUT=
+set ENGINE_NAME=
 set CPU_FLAGS=
 set AVX512_WANT=
 set CUDA_ARCH=
 set CUDA_ON=
 if /I "!TARGET!"=="cpu-avx512" (
   set SD_ROOT=vendor\stable-diffusion.cpp\build
-  set API_ROOT=build
   set OUT=%REL%\x64-windows
+  set ENGINE_NAME=stable-diffusion-cpu-avx512.dll
   rem the instruction-set ceiling for this shape: everything the newest machines
   rem carry except avx512-bf16, which is not a CPU question at all - the bf16
   rem kernels of the vendored engines cast through MSVC's strict __m512bh type
@@ -422,52 +491,58 @@ if /I "!TARGET!"=="cpu-avx512" (
   remaining question; this only says what the compiler here is able to answer.
   set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
   set AVX512_WANT=ON
-  set BACKEND=Vulkan
+  set BACKEND=cpu up to avx512
   exit /b 0
 )
 if /I "!TARGET!"=="cpu-plain" (
   set SD_ROOT=vendor\stable-diffusion.cpp\build-p
-  rem the server binary carries the image engine's ggml inside it, and that ggml
-  rem writes the target's instruction sets into the objects it compiles - so the
-  rem plain shape cannot share a build tree with the avx512 one, and its root
-  takes the same -p name the image engine's plain root has always carried.
-  set API_ROOT=build-p
+  rem this engine's ggml writes the target's instruction sets into the objects it
+  rem compiles - so the plain shape cannot share a build tree with the avx512
+  rem one, and its root takes the same -p name the image engine's plain root has
+  rem always carried.
   set OUT=%REL%\x64-windows-plain
+  set ENGINE_NAME=stable-diffusion-cpu.dll
   set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
   set AVX512_WANT=OFF
-  set BACKEND=Vulkan
+  set BACKEND=cpu at the x64 baseline
   exit /b 0
 )
-if not "!TARGET:~0,5!"=="cuda-" exit /b 1
-set CUDA_ARCH=!TARGET:~5!
-if not defined CUDA_ARCH exit /b 1
-set SD_ROOT=vendor\stable-diffusion.cpp\build-c!CUDA_ARCH!
-set API_ROOT=build-c!CUDA_ARCH!
-set OUT=%REL%\x64-cuda-!CUDA_ARCH!
+if /I not "!TARGET!"=="cuda" (
+  rem the old per-generation names still arrive - cuda-70 and the like - and all
+  rem of them name the one CUDA engine this project builds.
+  if not "!TARGET:~0,5!"=="cuda-" exit /b 1
+  echo cuda-!TARGET:~5! names the one cuda engine: it carries sm_70, sm_75 and sm_86.
+)
+set SD_ROOT=vendor\stable-diffusion.cpp\build-cuda
+set OUT=%REL%\x64-cuda
+set ENGINE_NAME=stable-diffusion-cuda.dll
 set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
 set CUDA_ON=1
-set BACKEND=CUDA sm_!CUDA_ARCH!
+set BACKEND=CUDA sm_!CUDA_ARCH_LIST:;. sm_!
 exit /b 0
 
 :build_target
 echo.
-echo == !TARGET!: building the image engine as a shared library ==
-rem a root that stands here holds one backend and one card generation, so this
-rem target's shape is asked of it before cmake is: asking another would rewrite
-rem the compile commands of everything the tree holds.
+echo == !TARGET!: building the image engine as a shared library, !BACKEND! ==
+rem a root that stands here holds one backend - and for the cuda engine one
+rem set of card generations - so this target's shape is asked of it before
+rem cmake is: asking another would rewrite the compile commands of everything
+rem the tree holds.
 if exist "!SD_ROOT!\CMakeCache.txt" (
-    call :shape_ok "!SD_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH!"
-    if errorlevel 1 (
-        if not defined FRESH_FULL (
-            call :refuse_full_rebuild "the image engine" CMAKE_CUDA_ARCHITECTURES
-            exit /b 1
+    if defined CUDA_ON (
+        call :shape_ok "!SD_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH_LIST!"
+        if errorlevel 1 (
+            if not defined FRESH_FULL (
+                call :refuse_full_rebuild "the image engine" CMAKE_CUDA_ARCHITECTURES
+                exit /b 1
+            )
+            echo fresh-full-rebuild was given: restating the shape on this tree.
         )
-        echo fresh-full-rebuild was given: restating the shape on this tree.
     )
 )
 if defined CUDA_ON (
   call :stand_studio
-  cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!" !OLS_GUARD!
+  cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH_LIST!" !OLS_GUARD!
 ) else (
   call :stand_studio
   cmake !ENGINE_GEN! -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
@@ -482,104 +557,36 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo.
-echo == !TARGET!: building open-local-services ==
-rem this build names the version the binaries carry: the commit it checked
-rem above. the version is one generated file, so a build that changed no source
-rem recompiles nothing but it; the rest of the tree is only recompiled for the
-rem source that actually changed. a cache that already names this very version
-rem and this very image library needs no touch at all - reconfiguring is what
-rem makes the builders re-link everything they hold, so it is done only when
-rem the cache answers with another path's names.
-set CACHE_VERSION=
-set CACHE_SD=
-set CACHE_NATIVE=
-set CACHE_AVX512=
-set CACHE_BF16=
-rem the names are matched on their prefix, not on a type suffix: these
-rem defines are read-not-declared on the CMake side, so the cache types
-rem them as it likes, and only the name before the colon is stable.
-for /f "usebackq tokens=1,* delims==" %%A in ("!API_ROOT!\CMakeCache.txt") do (
-  set CACHE_KEY=%%A
-  if /I "!CACHE_KEY:~0,11!"=="OLS_VERSION" set CACHE_VERSION=%%B
-  if /I "!CACHE_KEY:~0,12!"=="OLS_SD_BUILD" set CACHE_SD=%%B
-  if /I "!CACHE_KEY:~0,12!"=="GGML_NATIVE:" set CACHE_NATIVE=%%B
-  if /I "!CACHE_KEY:~0,12!"=="GGML_AVX512:" set CACHE_AVX512=%%B
-  if /I "!CACHE_KEY:~0,17!"=="GGML_AVX512_BF16:" set CACHE_BF16=%%B
-)
-set NEEDS_RENAME=
-if not "!CACHE_VERSION!"=="!CODE_VERSION!" set NEEDS_RENAME=1
-if not "!CACHE_SD!"=="!SD_ROOT!" set NEEDS_RENAME=1
-rem the instruction sets this target names are part of what the binary is: the
-rem release asks the cache them too, so a tree the development path left native
-rem is restated for the release rather than released under a name it does not
-rem hold. a tree that carries no answer for a name is a tree that was never
-rem configured, and the configure below is what it needs anyway. the bf16
-rem ceiling is asked by name as well: it moved to off for windows with the
-rem compiler that cannot type it, and a cache holding yesterday's answer is a
-rem cache that would rebuild nothing and release yesterday's ceiling.
-if defined AVX512_WANT if not "!CACHE_NATIVE!"=="OFF" set NEEDS_RENAME=1
-if defined AVX512_WANT if not "!CACHE_AVX512!"=="!AVX512_WANT!" set NEEDS_RENAME=1
-if defined AVX512_WANT if not "!CACHE_BF16!"=="OFF" set NEEDS_RENAME=1
-if defined NEEDS_RENAME (
-  rem the version and the image library are names the link answers with; the card
-  rem generation is the shape every object was compiled for, and that is asked
-  rem before the cache is restated.
-  call :shape_ok "!API_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH!"
-  if errorlevel 1 (
-    if not defined FRESH_FULL (
-      call :refuse_full_rebuild "open-local-services for !TARGET!" CMAKE_CUDA_ARCHITECTURES
-      exit /b 1
-    )
-    echo fresh-full-rebuild was given: restating the shape on this tree.
-  )
-  if defined CUDA_ON (
-    call :stand_studio
-    cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_CUDA=ON -DOLS_SD_BUILD=!SD_ROOT! "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH!" !CPU_FLAGS!
-  ) else (
-    cmake -S src -B !API_ROOT! -DCMAKE_BUILD_TYPE=Release -DOLS_VERSION=!CODE_VERSION! -DOLS_SD_BUILD=!SD_ROOT! !CPU_FLAGS!
-  )
-  if errorlevel 1 (
-    echo Could not configure the src build for !TARGET!.
-    exit /b 1
-  )
-)
-cmake --build !API_ROOT! --config Release --parallel
-if errorlevel 1 (
-  echo The src build failed for !TARGET!.
-  exit /b 1
-)
-
 rem ---- collect the artifacts and the libraries they really need ----
-rem the built files are read from where either project builder puts them: the
-rem Visual Studio one under a bin\Release folder, ninja a plain bin\ - and the
-rem server exe sits under a Release folder for one builder and loose at the
-rem root for the other.
-set API_EXE=!API_ROOT!\Release\open-local-services.exe
-if not exist "!API_EXE!" set API_EXE=!API_ROOT!\open-local-services.exe
+rem the engine is read from where either project builder puts it: the Visual
+rem Studio one under a bin\Release folder, ninja a plain bin\. the server exe
+rem came from the one shapeless server build above; it goes into every folder
+rem whole, and the engine beside it is what makes this folder a machine shape.
 set SD_BIN=!SD_ROOT!\bin\Release
 if not exist "!SD_BIN!\stable-diffusion.dll" set SD_BIN=!SD_ROOT!\bin
 if not exist "!OUT!" mkdir "!OUT!"
-copy /Y "!API_EXE!" "!OUT!\open-local-services.exe" >nul
+copy /Y "!SERVER_EXE!" "!OUT!\open-local-services.exe" >nul
 if not exist "!OUT!\open-local-services.exe" (
-  echo open-local-services.exe is not there - the build above did not produce it.
+  echo open-local-services.exe is not there - the server build above did not produce it.
   exit /b 1
 )
-copy /Y "!SD_BIN!\stable-diffusion.dll" "!OUT!\" >nul
-if not exist "!OUT!\stable-diffusion.dll" (
-  echo stable-diffusion.dll is not there - the image engine build did not produce it.
+copy /Y "!SD_BIN!\stable-diffusion.dll" "!OUT!\!ENGINE_NAME!" >nul
+if not exist "!OUT!\!ENGINE_NAME!" (
+  echo !ENGINE_NAME! is not there - the image engine build did not produce it.
   exit /b 1
 )
-rem the staged room, bin\, holds one shape: the one this box runs. the last
-rem target of a full sweep is not necessarily that shape, so staging asks the
-rem box's own shape alone; a person rebuilding this box builds here, posts the
-rem hand, and the running server moves in what stands staged while it is down.
+rem the staged room, bin\, holds what this box runs: the server and the engine
+rem of its shape. the last target of a full sweep is not necessarily that
+rem shape, so staging asks the box's own shape alone; a person rebuilding this
+rem box builds here, posts the hand, and the running server moves in what
+rem stands staged while it is down - the binary and every engine library named
+rem for the engine, together.
 if not exist "bin" mkdir "bin"
 if /I "!TARGET!"=="!BOX_SHAPE!" (
-  copy /Y "!API_EXE!" "bin\open-local-services.exe" >nul
-  rem the server's own ggml is inside it - the device probe answers from it - so
-  rem no ggml library is laid beside the server.
-  copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\stable-diffusion.dll" >nul
+  copy /Y "!SERVER_EXE!" "bin\open-local-services.exe" >nul
+  rem the server carries no ggml of its own; the engine library it will open
+  goes beside it under its shape-name.
+  copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\!ENGINE_NAME!" >nul
   echo staged into bin\ for /api/update: the shape of this box, !TARGET!.
 ) else (
   echo !TARGET! is not the shape this box runs \(!BOX_SHAPE!\): bin\ is left as it is.
@@ -599,11 +606,11 @@ rem moment a finished picture is handed over, which reads as a fault in the code
 rem rather than in the flags a build was configured with. So the runtime is read
 rem off the artifact here - the same way the card architecture below is - and a
 rem debug-shaped image library stops the release rather than shipping in it.
-"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\open-local-services.exe" > "!API_ROOT!\ols-deps.txt" 2>nul
-"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\stable-diffusion.dll" >> "!API_ROOT!\ols-deps.txt" 2>nul
-findstr /L /C:"ucrtbased.dll" "!API_ROOT!\ols-deps.txt" >nul
+"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\open-local-services.exe" > "!SD_ROOT!\ols-deps.txt" 2>nul
+"!MSVC_BIN!\dumpbin.exe" /DEPENDENTS "!OUT!\!ENGINE_NAME!" >> "!SD_ROOT!\ols-deps.txt" 2>nul
+findstr /L /C:"ucrtbased.dll" "!SD_ROOT!\ols-deps.txt" >nul
 if not errorlevel 1 (
-  echo stable-diffusion.dll in !OUT! was built for debugging: it imports ucrtbased.dll.
+  echo !ENGINE_NAME! in !OUT! was built for debugging: it imports ucrtbased.dll.
   echo the image engine build must name -DCMAKE_BUILD_TYPE=Release; its build root is !SD_ROOT!,
   echo whose CMakeCache.txt states the build type that root was last configured with.
   exit /b 1
@@ -615,9 +622,9 @@ rem toolkit can supply is laid beside the server, once each, as it is named.
 rem the driver's own cuda.dll belongs to the machine that owns the card and is
 rem never carried.
 if defined CUDA_ON (
-  set RUNTIME_SEEN=!API_ROOT!\ols-runtime.txt
+  set RUNTIME_SEEN=!SD_ROOT!\ols-runtime.txt
   if exist "!RUNTIME_SEEN!" del "!RUNTIME_SEEN!"
-  for /f "usebackq tokens=*" %%L in ("!API_ROOT!\ols-deps.txt") do (
+  for /f "usebackq tokens=*" %%L in ("!SD_ROOT!\ols-deps.txt") do (
     for %%W in (%%L) do (
       if /I "%%~xW"==".dll" (
         rem the toolkit lays its runtime dlls in bin and its import libraries in
@@ -686,38 +693,24 @@ if defined CUDA_ON for %%R in ("cudart64_12.dll" "cublas64_12.dll" "cublasLt64_1
     exit /b 1
   )
 )
-rem what card architecture a cuda binary really holds is read back off it
+rem what card generations a cuda engine really holds is read back off it
 rem rather than trusted from what was asked: the tool that reads it sits beside
 rem nvcc in the same toolkit, and it names every embedded cubin as
 rem <name>.<n>.sm_<arch>.cubin - so the list is written to a file first,
 rem since a command quoted inside a loop reads as nothing, and the distinct
-rem architectures are collected from those names, each one stated once.
+rem generations are collected from those names, each one stated once. the
+rem server itself holds no kernels - only the engine can answer this.
 if defined CUDA_ON (
-  echo the card architecture read back from the artifacts of this target:
-  for %%F in ("!OUT!\open-local-services.exe" "!OUT!\stable-diffusion.dll") do (
-    set ARCH_READ=
-    set SEEN_SM70=
-    set SEEN_SM75=
-    set SEEN_SM86=
-    "!CUDA_HOME!\bin\cuobjdump.exe" -lelf "%%~fF" > "!API_ROOT!\ols-elf-list.txt" 2>nul
-    for /f "usebackq tokens=2 delims=:" %%L in ("!API_ROOT!\ols-elf-list.txt") do (
-      for /f "tokens=3 delims=." %%S in ("%%L") do (
-        if "%%S"=="sm_70" if not defined SEEN_SM70 (
-          set SEEN_SM70=1
-          set "ARCH_READ=!ARCH_READ! sm_70"
-        )
-        if "%%S"=="sm_75" if not defined SEEN_SM75 (
-          set SEEN_SM75=1
-          set "ARCH_READ=!ARCH_READ! sm_75"
-        )
-        if "%%S"=="sm_86" if not defined SEEN_SM86 (
-          set SEEN_SM86=1
-          set "ARCH_READ=!ARCH_READ! sm_86"
-        )
-      )
+  echo the card generations read back from the engine of this folder:
+  set ARCH_READ=
+  "!CUDA_HOME!\bin\cuobjdump.exe" -lelf "!OUT!\!ENGINE_NAME!" > "!SD_ROOT!\ols-elf-list.txt" 2>nul
+  for /f "usebackq tokens=2 delims=:" %%L in ("!SD_ROOT!\ols-elf-list.txt") do (
+    for /f "tokens=3 delims=." %%S in ("%%L") do (
+      echo !ARCH_READ! | findstr /L /C:"%%S" >nul 2>nul
+      if errorlevel 1 set "ARCH_READ=!ARCH_READ! %%S"
     )
-    echo %%~nF: !ARCH_READ!
   )
+  echo   !ENGINE_NAME!:!ARCH_READ!
 )
 
 rem the release of this target is one archive: the folder just above, named for
@@ -735,8 +728,8 @@ if errorlevel 1 (
   exit /b 1
 )
 set ARCH_HASH=
-certutil -hashfile "!ARCHIVE!" SHA256 2>nul | findstr /R "^[0-9A-Fa-f][0-9A-Fa-f]*$" > "!API_ROOT!\ols-hash.txt"
-for /f "usebackq delims=" %%H in ("!API_ROOT!\ols-hash.txt") do set ARCH_HASH=%%H
+certutil -hashfile "!ARCHIVE!" SHA256 2>nul | findstr /R "^[0-9A-Fa-f][0-9A-Fa-f]*$" > "!SD_ROOT!\ols-hash.txt"
+for /f "usebackq delims=" %%H in ("!SD_ROOT!\ols-hash.txt") do set ARCH_HASH=%%H
 if not defined ARCH_HASH (
   echo could not read the sha256 of !ARCHIVE! - certutil answered with nothing.
   exit /b 1
@@ -782,8 +775,15 @@ if /I "%A%"=="cpu-plain" (
   set "REQUESTED=!REQUESTED! cpu-plain"
   exit /b 0
 )
+if /I "%A%"=="cuda" (
+  set "REQUESTED=!REQUESTED! cuda"
+  set CUDA_ASKED=1
+  exit /b 0
+)
 if /I "%A:~0,5%"=="cuda=" (
-  set "REQUESTED=!REQUESTED! cuda-%A:~5%"
+  rem the per-generation names from the old matrix: they all name the one CUDA
+  rem engine now, which carries every supported generation.
+  set "REQUESTED=!REQUESTED! cuda"
   set CUDA_ASKED=1
   exit /b 0
 )
@@ -824,7 +824,7 @@ exit /b 1
 :refuse_full_rebuild
 rem %1 = what the tree builds, %2 = the name whose values did not match.
 echo !TARGET!: this tree holds the shape of another build - its cache names
-echo   %2 = !SHAPE_HAS! and this run asks for !CUDA_ARCH!.
+echo   %2 = !SHAPE_HAS! and this run asks for !CUDA_ARCH_LIST!.
 echo Restating it would recompile everything the tree holds, a full rebuild,
 echo which this path does not do silently. Nothing here clears a tree.
 echo To rebuild that shape on purpose, run again with fresh-full-rebuild.

@@ -456,10 +456,10 @@ int main(int argc, char **argv)
   // tls room: auto makes them on first start, on refuses to start without
   // them, and the clear face never looks at the folder at all.
   api->setTls(tlsWord.empty() ? "off" : tlsWord, dataDir + "/tls");
-  // the image engine's ggml, linked into this binary, is asked for the
-  // machine's devices before anything else does; there is nothing to load
-  // here - the ask only takes the one-time trouble of finding the card out
-  // of the first page read.
+  // the engine library beside this server - cuda, vulkan, or cpu, as the
+  // machine answers - is opened here, before the port is taken: the card is
+  // read once, the one library of the kind found is loaded, and the words it
+  // answers with are printed as this server starts.
   api->preloadBackends();
   // The network sampler starts before the doors: by the time the first page is
   // read, the bandwidth history behind it already has a few seconds of real

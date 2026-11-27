@@ -6,16 +6,18 @@
 # script builds the portable artifacts that get committed to the repo, one
 # folder per target:
 #
-#   Release/linux-x86_64/   native on this box: the cpu backend alone, since
-#                           this script names no Vulkan library for linux
-#   Release/linux-x86_64-cuda-70/
-#   Release/linux-x86_64-cuda-75/   one folder and one binary per card
-#   Release/linux-x86_64-cuda-86/   generation: the compute 7.0 cards (a
-#                           V100), the compute 7.5 cards (an RTX 20 series),
-#                           the compute 8.6 cards (an RTX 30 series). the
-#                           windows side builds the same three, so a card on
-#                           either side of the network gets a binary written
-#                           for its own generation.
+#   Release/linux-x86_64/   native on this box: the server with the cpu engine
+#                           beside it, since this script names no Vulkan
+#                           library for linux
+#   Release/linux-x86_64-cuda/
+#                           the same server with one CUDA engine beside it -
+#                           kernels for every card generation this project
+#                           supports: sm_70 (a V100), sm_75 (an RTX 20 series,
+#                           the card in the laptop down the network) and sm_86
+#                           (an RTX 30 series). the loader inside the library
+#                           picks each card's own kernels when the server
+#                           opens it, so one library answers every one of
+#                           those machines; the windows side builds the same.
 #   Release/linux-arm64/    cross-built for 64-bit arm with the aarch64
 #                           toolchain (installed through the package manager if
 #                           it is not here; see the note at the bottom of the
@@ -24,11 +26,12 @@
 # what the artifacts guarantee, and what they do not:
 #   - nothing is generated in the folder this script sits in, and no source is
 #     copied or duplicated: the engines are built in the vendor trees this code
-#     keeps. the roots are named for each shape: the cpu target takes the
-#     unqualified roots, a card generation takes the -c<arch> roots beside them
-#     - the same ones run.sh develops in on a box of that shape - and the
-#     cross target takes the -arm64 roots, because one build tree holds one
-#     backend and one card generation, never two shapes one after the other.
+#     keeps. the roots are named for each backend: the cpu engine takes the
+#     unqualified roots - the same ones run.sh develops in - the cuda engine
+#     takes the -cuda roots beside them, and the cross engine takes the
+#     -arm64 roots, because one build tree holds one backend, never two
+#     shapes one after the other. the server build is shapeless: it links no
+#     engine, so one native tree answers for every native target.
 #   - the version every artifact here carries is the commit its code stands on,
 #     which this script reads only after checking that the code is committed.
 #   - the cpu backend is built for the baseline ISA of its architecture and
@@ -36,20 +39,10 @@
 #     machine that built an artifact is therefore not the machine that has to
 #     run it, and a cpu without avx512 is not broken by an artifact compiled on
 #     one that has it.
-#   - the cuda kernels are written for one card generation per binary: sm_70
-#     (the compute 7.0 cards, a V100), sm_75 (the compute 7.5 cards, an RTX 20
-#     series, the card in the laptop down the network) and sm_86 (the compute
-#     8.6 cards, an RTX 30 series). each generation gets its own folder and its
-#     own binary rather than one binary carrying code for all of them, which is
-#     what keeps the artifacts small enough to push over the network. a
-#     generation outside these is asked for by name rather than assumed, and a
-#     toolkit that cannot write for one says so in the summary rather than
-#     leaving it out quietly. the windows side builds the same three, and the
-#     architecture inside a binary is read back off it and printed, never
-#     assumed.
-#   - the image engine stays a shared library beside the binary, and the binary's
-#     other runtime libraries are copied beside it: one executable cannot hold
-#     two different copies of ggml, and the image engine has its own - the same
+#   - the server links no engine and no ggml of its own. the image engine
+#     beside it is the one library that carries ggml, and the server opens it
+#     by name when it starts - stable-diffusion-cpu.so or its cuda twin -
+#     which is what keeps one process from ever holding two ggmls. the same
 #     rule run.sh and src/CMakeLists.txt follow.
 #   - the arm64 artifact carries the cpu backend only: this box has no CUDA
 #     runtime for arm64 and no Vulkan library for it, and that is stated rather
@@ -86,9 +79,10 @@
 # usage: build-rel.sh            every linux target this box can build
 #        build-rel.sh x86        the cpu one only
 #        build-rel.sh arm64      the cross-built one only
-#        build-rel.sh cuda=70    only the target for that card generation
-#        build-rel.sh cuda=75    only the target for that card generation
-#        build-rel.sh cuda=86    only the target for that card generation
+#        build-rel.sh cuda       the CUDA target only - one engine for every
+#                             supported generation; cuda=70 and the like still
+#                             arrive and narrow that engine to the generations
+#                             named (what the toolkit cannot write is said)
 cd "$(dirname "$0")"
 
 REL=Release
@@ -176,6 +170,7 @@ for opt in "$@"; do
     x86|x86_64) WANT="cpu $WANT" ;;
     arm64|aarch64) WANT="arm64 $WANT" ;;
     all) WANT="cpu arm64" ; WANT_CUDA="70 75 86" ;;
+    cuda) WANT_CUDA="70 75 86" ; CUDA_ASKED=1 ;;
     cuda=*) WANT_CUDA="${WANT_CUDA} ${opt#cuda=}" ; CUDA_ASKED=1 ;;
     fresh-full-rebuild | --fresh-full-rebuild) FRESH_FULL=1 ;;
   esac
@@ -247,19 +242,6 @@ mkdir -p "$PWD/data"
 printf '%s\n' '#pragma once' '#ifdef __CUDACC__' \
   'extern "C" __device__ float rsqrtf(float);' '#endif' > "$CUDA_SHIM"
 
-# one place adds this box's cuda to a configure, quoted as it goes: the flags
-# argument carries a space, and an unquoted expansion would cut it in two.
-configure_engine() {
-  if [ "$CUDA" = on ]; then
-    cmake "$@" \
-      "-DCMAKE_CUDA_COMPILER=$NVCC" \
-      "-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCH" \
-      "-DCMAKE_CUDA_FLAGS=-include $CUDA_SHIM"
-  else
-    cmake "$@"
-  fi
-}
-
 # a cross build cannot ask a cross compiler for the ISA of the machine doing the
 # building, and one engine adds exactly that flag to its release flags. the
 # engine's own source is not touched - it stays the pinned source it is - so the
@@ -310,27 +292,28 @@ build_one() {
   TARGET=$1
   KIND=$2
   CUDA=$3
-  CUDA_ARCH=$4
   OUT=$REL/$TARGET
 
   rm -rf "$OUT"
   mkdir -p "$OUT"
 
-  # the native target builds in the roots run.sh uses; a cross target and a
-  # card generation cannot share a build tree with it, or with each other, so
-  # their roots stand beside them under a name that says which architecture,
-  # and which card generation, they hold.
+  # the engine's roots are named for its backend - the cpu engine builds where
+  # run.sh develops it, the cuda engine in its own multi-generation tree, a
+  # cross engine beside them under its architecture's name - because one build
+  # tree holds one backend, never two shapes one after the other. the server
+  # build is shapeless: it links no engine, so the same x86_64 tree answers
+  # for the cpu target and the cuda target, and only the cross server stands
+  # apart.
   SUFFIX=""
   COMP_OPTS=""
-  # a card generation names its roots - the same -c<arch> names run.sh uses
-  # for the development shape of that card - because one build tree holds one
-  # backend and one card generation, never two shapes one after the other.
+  ENGINE_SHAPE=cpu
   if [ "$CUDA" = on ]; then
-    SUFFIX="-c$CUDA_ARCH"
+    SUFFIX="-cuda"
+    ENGINE_SHAPE=cuda
   fi
   if [ "$KIND" = cross ]; then
     SUFFIX="-arm64"
-    # telling cmake the target architecture is what makes the engines take the
+    # telling cmake the target architecture is what makes the engine take the
     # arm branches: ggml picks its cpu backend from the target cmake is told
     # about, and a cross compiler left unnamed still reports the host's. the
     # C++ compiler is the filter written above, which stands under the
@@ -342,7 +325,12 @@ build_one() {
 
   SD=vendor/stable-diffusion.cpp
   SD_BUILD="$SD/build$SUFFIX"
-  API_BUILD="build$SUFFIX"
+  if [ "$KIND" = cross ]; then API_BUILD="build-arm64"; else API_BUILD="build"; fi
+  ENGINE_OUT_NAME="libstable-diffusion-$ENGINE_SHAPE.so"
+  # the generations the cuda engine carries, as one semicolon list for cmake:
+  # the loader inside the library picks each card's own kernels when the
+  # server opens it, so this one file answers every card of these generations.
+  CUDA_LIST=$(echo "$CUDA_OK" | tr ' ' ';')
 
   # the guard that steps the pinned image engine's rsqrt wrapper aside where the
   # box's CUDA header maps that name (see src/ols-sage-guard.cmake) - asked of
@@ -351,10 +339,10 @@ build_one() {
   OLS_GUARD="-DCMAKE_PROJECT_INCLUDE_BEFORE=$(pwd)/src/ols-sage-guard.cmake"
 
   # the build trees of this target are kept, never cleared: they were named
-  # for this target from the start - its own architecture, its own card
-  # generation - and a release configure asks the same questions every time, so
-  # what did not change is not recompiled. a build that rebuilt unchanged code
-  # was a defect, and a no-change run of the development path reads 25 seconds
+  # for this target from the start - its own architecture, its own backend -
+  # and a release configure asks the same questions every time, so what did
+  # not change is not recompiled. a build that rebuilt unchanged code was a
+  # defect, and a no-change run of the development path reads 25 seconds
   # against 482 from a tree thrown away. the source trees are untouched.
 
   # the cpu backend of every engine is built for the baseline of its
@@ -370,66 +358,61 @@ build_one() {
   # folder they were built in: an artifact unpacked on a machine that never
   # held this tree has no build roots to fall back on, so every library gets
   # a run path of its own folder - and every runtime library it needs is
-  # carried into that folder beside it, below. the server binary names the
-  # image library's build folder too, so the development path still finds it
-  # in the tree it was built in.
+  # carried into that folder beside it, below. the server needs no run path
+  # of the engine at all: it opens the library by name when it starts, and
+  # the loader looks in the folder the server itself stands in.
   RPATH_SD="-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=\$ORIGIN"
-  RPATH_API="-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=\$ORIGIN;$(pwd)/$SD_BUILD/bin"
+  RPATH_API="-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH=\$ORIGIN"
 
   CUDA_FLAG=OFF
   [ "$CUDA" = on ] && CUDA_FLAG=ON
 
   # the image engine keeps its own ggml, so it is built as a library.
-  # a tree that stands here was configured for one backend and one card
-  # generation: this shape is asked of it before cmake is, so a target that
-  # asks another of them says so instead of recompiling the tree in full.
+  # a tree that stands here was configured for one backend - and the cuda
+  # tree for one set of card generations: this shape is asked of it before
+  # cmake is, so a target that asks another of them says so instead of
+  # recompiling the tree in full.
   if [ -f "$SD_BUILD/CMakeCache.txt" ]; then
-    check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH" || return 1
+    if [ "$CUDA" = on ]; then
+      check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_LIST" || return 1
+    fi
     check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "$CUDA_FLAG" || return 1
   fi
-  if ! configure_engine -S "$SD" -B "$SD_BUILD" $COMMON $RPATH_SD $COMP_OPTS $OLS_GUARD \
+  if [ "$CUDA" = on ]; then
+    if ! cmake -S "$SD" -B "$SD_BUILD" $COMMON $RPATH_SD $COMP_OPTS $OLS_GUARD \
+      -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
+      -DGGML_CUDA=ON -DGGML_VULKAN=OFF \
+      "-DCMAKE_CUDA_COMPILER=$NVCC" \
+      "-DCMAKE_CUDA_ARCHITECTURES=$CUDA_LIST" \
+      "-DCMAKE_CUDA_FLAGS=-include $CUDA_SHIM"; then
+      echo "[$TARGET] could not configure the image engine"; return 1
+    fi
+  elif ! cmake -S "$SD" -B "$SD_BUILD" $COMMON $RPATH_SD $COMP_OPTS $OLS_GUARD \
     -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
-    -DGGML_CUDA=$CUDA_FLAG -DGGML_VULKAN=OFF; then
+    -DGGML_CUDA=OFF -DGGML_VULKAN=OFF; then
     echo "[$TARGET] could not configure the image engine"; return 1
   fi
   echo "[$TARGET] building the image engine"
   cmake --build "$SD_BUILD" -j "$JN" || { echo "[$TARGET] the image engine build failed"; return 1; }
 
-  # the src build reads the engine roots of this tree; a cross target's engines
-  # stand in the roots named for its architecture, so it names them here. a
-  # target whose engines have no device backend says that too, and the src
-  # carries the cpu backend alone.
-  # the src build carries the image engine's ggml inside it, so it takes the
-  # same release flags the other engines do: the cpu backend of that ggml is
-  # built for the baseline of its architecture with the run-time feature
-  # detection that goes with it, and not for the machine doing the building.
-  API_OPTS="-DOLS_VERSION=$CODE_VERSION"
-  if [ "$KIND" = cross ]; then
-    API_OPTS="$API_OPTS -DOLS_NO_DEVICE=1"
-  fi
-  API_OPTS="$API_OPTS -DOLS_SD_BUILD=$SD_BUILD"
-  # the same gate run.sh and the .bat paths use: the src build is configured
-  # only when its cache answers with another version or another image library
-  # than this target's names; a tree already naming this very version and
-  # library needs no touch at all. names are read before the colon, the one
-  # stable part - the cache types these defines as it likes.
+  # the server links no engine and no backend: one configure answers for every
+  # x86_64 target of this run, and the version is the only name it carries.
+  # the same gate run.sh and the .bat paths use: the server is configured only
+  # when its cache answers with another version - or with the old engine link
+  # this build no longer has - than this run names; a tree already naming this
+  # very version needs no touch at all. names are read before the colon, the
+  # one stable part - the cache types these defines as it likes.
   NEEDS_RENAME=1
   if [ -f "$API_BUILD/CMakeCache.txt" ]; then
-    check_shape "$API_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH" || return 1
     CACHE_VERSION=$(sed -n 's/^OLS_VERSION[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-    CACHE_SD=$(sed -n 's/^OLS_SD_BUILD[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-    # the instruction sets the binary carries are part of what it is: the
-    # image engine's ggml is inside this one executable, and a tree the
-    # development path left native must be restated for the release rather
-    # than released under a name it does not hold.
-    CACHE_NATIVE=$(sed -n 's/^GGML_NATIVE:[^=]*=\(.*\)/\1/p' "$API_BUILD/CMakeCache.txt" | head -n 1)
-    if [ "$CACHE_VERSION" = "$CODE_VERSION" ] && [ "$CACHE_SD" = "$SD_BUILD" ] &&
-       [ "$CACHE_NATIVE" = "OFF" ]; then
+    if [ "$CACHE_VERSION" = "$CODE_VERSION" ] &&
+       ! grep -q '^OLS_SD_BUILD' "$API_BUILD/CMakeCache.txt" 2>/dev/null; then
       NEEDS_RENAME=""
     fi
   fi
   if [ -n "$NEEDS_RENAME" ]; then
-    if ! configure_engine -S src -B "$API_BUILD" $COMP_OPTS $API_OPTS $COMMON $RPATH_API; then
+    if ! cmake -S src -B "$API_BUILD" $COMP_OPTS -DCMAKE_BUILD_TYPE=Release \
+      "-DOLS_VERSION=$CODE_VERSION" $RPATH_API; then
       echo "[$TARGET] could not configure open-local-services"; return 1
     fi
   fi
@@ -438,18 +421,29 @@ build_one() {
 
   # the binary and every library it really needs, nothing else
   cp -f "$API_BUILD/open-local-services" "$OUT/open-local-services"
-  # the staged room, bin/, holds one shape: the one this box runs. the last
-  # target of a full list is not necessarily that shape, so staging asks the
-  # box's own shape alone - and a person rebuilding this box builds here,
-  # posts the hand, and the running server moves in what stands staged while
-  # it is down.
+  # the staged room, bin/, holds what this box runs: the server and the engine
+  # of its shape. the last target of a full list is not necessarily that
+  # shape, so staging asks the box's own shape alone - and a person rebuilding
+  # this box builds here, posts the hand, and the running server moves in what
+  # stands staged while it is down.
   mkdir -p bin
   if [ "$TARGET" = "$BOX_SHAPE" ]; then
     cp -f "$API_BUILD/open-local-services" bin/open-local-services
   fi
-  for SO in "$SD_BUILD"/*.so "$SD_BUILD"/bin/*.so; do
-    [ -f "$SO" ] && cp -f "$SO" "$OUT/"
-  done
+  # the engine library goes beside the server under the name the server opens
+  # it by; the collection reads it from where the engine build put it.
+  ENGINE_FILE=$(find "$SD_BUILD" -maxdepth 3 -name 'libstable-diffusion.so*' ! -name '*.so.*' 2>/dev/null | head -n 1)
+  [ -n "$ENGINE_FILE" ] || ENGINE_FILE=$(find "$SD_BUILD" -maxdepth 3 -name 'libstable-diffusion.so.*' 2>/dev/null | head -n 1)
+  if [ -z "$ENGINE_FILE" ]; then
+    echo "[$TARGET] the engine build left no libstable-diffusion.so under $SD_BUILD"
+    return 1
+  fi
+  cp -f "$ENGINE_FILE" "$OUT/$ENGINE_OUT_NAME"
+  # the engine's own engine-name stands in its build folder; the server never
+  # sees that name, and neither does the release.
+  if [ "$TARGET" = "$BOX_SHAPE" ]; then
+    cp -f "$ENGINE_FILE" "bin/$ENGINE_OUT_NAME"
+  fi
   # the pages travel with the binary: a webui folder beside the server is
   # served from disk, so the release folder holds the live structure the
   # development folder holds, and the copy embedded in the binary answers
@@ -487,9 +481,13 @@ say_target() {
   echo "== $OUT: what the binary actually carries =="
   file "$OUT/open-local-services" 2>/dev/null
   readelf -h "$OUT/open-local-services" 2>/dev/null | grep -i 'machine\|type'
-  echo "runtime libraries it asks for, beyond the system ones:"
-  ldd "$OUT/open-local-services" 2>/dev/null | grep -E 'stable-diffusion|cudart|cublas|libcuda' ||
-    echo "  none: the engines are inside the binary"
+  echo "runtime libraries the folder really asks for, beyond the system ones:"
+  ldd "$OUT/open-local-services" 2>/dev/null | grep -E 'cudart|cublas|libcuda' || true
+  for SO in "$OUT"/libstable-diffusion-*.so; do
+    [ -f "$SO" ] || continue
+    echo "  engine $(basename "$SO"):"
+    ldd "$SO" 2>/dev/null | grep -E 'cudart|cublas|libcuda' | sed 's/^/    /'
+  done
   # the newest glibc any part of this asks a symbol from is the floor of
   # systems it can run on: stated off the binaries, never assumed. built on a
   # box of the same ubuntu release as its landing machine, it reads as that
@@ -498,14 +496,15 @@ say_target() {
   FLOOR=$(objdump -T "$OUT/open-local-services" "$OUT"/lib* 2>/dev/null |
           sed -n 's/.*\(GLIBC_[0-9][0-9.]*\).*/\1/p' | sort -uV | tail -n 1)
   [ -n "$FLOOR" ] && echo "the newest glibc symbol any of it asks for: $FLOOR"
-  if [ -n "$NVCC" ]; then
-    echo "cuda architectures the tools read back from the binaries:"
-    for T in open-local-services; do
-      printf '  %s: ' "$T"
+  if [ "$CUDA" = on ] && [ -n "$NVCC" ]; then
+    echo "cuda generations the tool reads back from the engine:"
+    for SO in "$OUT"/libstable-diffusion-*.so; do
+      [ -f "$SO" ] || continue
+      printf '  %s: ' "$(basename "$SO")"
       if [ -n "$CU" ]; then
-        "$CU" -lelf "$OUT/$T" 2>/dev/null | grep -o 'sm_[0-9]*' | sort -u | tr '\n' ' '
+        "$CU" -lelf "$SO" 2>/dev/null | grep -o 'sm_[0-9]*' | sort -u | tr '\n' ' '
       else
-        echo "the tool that reads them is not in this toolkit; the compile asked for sm_$CUDA_ARCH"
+        echo "the tool that reads them is not in this toolkit; the compile asked for sm_$(echo $CUDA_OK | tr ' ' ';')"
       fi
       echo ""
     done
@@ -514,18 +513,18 @@ say_target() {
 }
 
 # the plan: one line per target this run builds, its name, how it is built,
-# whether it takes a device backend, and the card generation its binary is
-# written for.
+# and whether its engine takes a device backend. the cuda target is one
+# engine carrying every supported generation, not one per generation.
 PLAN=""
 for T in $WANT; do
   case "$T" in
-    cpu) PLAN="$PLAN linux-x86_64:host:off:none" ;;
-    arm64) PLAN="$PLAN linux-arm64:cross:off:none" ;;
+    cpu) PLAN="$PLAN linux-x86_64:host:off" ;;
+    arm64) PLAN="$PLAN linux-arm64:cross:off" ;;
   esac
 done
-for A in $CUDA_OK; do
-  PLAN="$PLAN linux-x86_64-cuda-$A:host:on:$A"
-done
+if [ -n "$CUDA_OK" ]; then
+  PLAN="$PLAN linux-x86_64-cuda:host:on"
+fi
 
 FAILED=""
 # the shape this box itself runs, read off the box: the staged room bin/ must
@@ -536,20 +535,18 @@ BOX_SHAPE=linux-x86_64
 [ "$(uname -m)" = aarch64 ] && BOX_SHAPE=linux-aarch64
 BOX_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d .)
 if [ -n "$BOX_CAP" ] && [ "$(uname -m)" = x86_64 ]; then
-  BOX_SHAPE=linux-x86_64-cuda-$BOX_CAP
+  BOX_SHAPE=linux-x86_64-cuda
 fi
 for SPEC in $PLAN; do
   TARGET=${SPEC%%:*}
   REST=${SPEC#*:}
   KIND=${REST%%:*}
-  REST2=${REST#*:}
-  CUDA=${REST2%%:*}
-  CUDA_ARCH=${REST2#*:}
+  CUDA=${REST#*:}
   case "$TARGET" in
     linux-x86_64)
-      KIND=host; CUDA=; CUDA_ARCH=none
+      KIND=host; CUDA=
       echo ""
-      echo "== linux-x86_64, this box, the cpu backend =="
+      echo "== linux-x86_64, this box, the cpu engine =="
       ;;
     linux-arm64)
       if [ -z "$CROSS_GXX" ]; then
@@ -560,18 +557,17 @@ for SPEC in $PLAN; do
         FAILED="$FAILED linux-arm64"
         continue
       fi
-      KIND=cross; CUDA=; CUDA_ARCH=none
+      KIND=cross; CUDA=
       echo ""
       echo "== linux-arm64, cross-built with $CROSS_GXX =="
       ;;
-    linux-x86_64-cuda-*)
-      CUDA_ARCH=${TARGET#linux-x86_64-cuda-}
+    linux-x86_64-cuda)
       KIND=host; CUDA=on
       echo ""
-      echo "== linux-x86_64-cuda-$CUDA_ARCH, this box, code written for sm_$CUDA_ARCH =="
+      echo "== linux-x86_64-cuda, this box: one CUDA engine with kernels for sm_$(echo $CUDA_OK | tr ' ' ';') =="
       ;;
   esac
-  build_one "$TARGET" "$KIND" "$CUDA" "$CUDA_ARCH" || FAILED="$FAILED $TARGET"
+  build_one "$TARGET" "$KIND" "$CUDA" || FAILED="$FAILED $TARGET"
   say_target "$TARGET"
   # the release of this target is one archive: the folder just above it,
   # named for the commit its binary carries. that file is what gets committed
@@ -617,20 +613,21 @@ done
   for SPEC in $PLAN; do
     N=${SPEC%%:*}
     case "$N" in
-      linux-x86_64) CUDA="the cpu backend alone";;
-      linux-arm64) CUDA="the cpu backend only: this box has no CUDA runtime for arm64 and no Vulkan library for it, so those backends are not in this artifact";;
-      linux-x86_64-cuda-*) CUDA="the cpu backend and the CUDA backend, with the device code written for sm_${N#linux-x86_64-cuda-}";;
+      linux-x86_64) CUDA="the cpu engine alone (the instruction sets are reached through runtime detection, never baked for the machine that built it)";;
+      linux-arm64) CUDA="the cpu engine only: this box has no CUDA runtime for arm64 and no Vulkan library for it, so those backends are not in this artifact";;
+      linux-x86_64-cuda) CUDA="the CUDA engine, one library with device kernels for sm_$(echo $CUDA_OK | tr ' ' ';') - the loader inside it picks each card's own when the server opens it";;
     esac
     if [ -f "$REL/$N/open-local-services" ]; then
-      echo "$N: open-local-services - backends: $CUDA"
-      echo "  the image engine is libstable-diffusion.so beside the binaries;"
-      echo "  one executable cannot hold the two ggmls the engines each carry."
+      echo "$N: open-local-services - engine: $CUDA"
+      echo "  the image engine stands beside the server as libstable-diffusion-cpu.so"
+      echo "  or libstable-diffusion-cuda.so; the server links no engine and no ggml,"
+      echo "  and opens the library by name when it starts."
     else
       echo "$N: not built - see the lines above"
     fi
   done
   if [ -n "$CUDA_SKIPPED" ]; then
-    echo "card generations this toolkit could not write for: $CUDA_SKIPPED"
+    echo "card generations this toolkit could not write: $CUDA_SKIPPED"
   fi
   for N in $FAILED; do echo "$N did not finish"; done
 } > "$REL/build-info.txt"

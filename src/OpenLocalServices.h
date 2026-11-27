@@ -146,12 +146,12 @@ namespace ols
     // copies carried inside this binary, as json text a page can state.
     std::string servedPagesJson() const;
 
-    // Ask the image engine's ggml, linked into this binary, for the machine's
-    // devices, now rather than on the first page read, and on Windows name the
-    // live Vulkan driver manifest so the device report and the engines agree on
-    // the gpu. No plugin library is loaded: the backend this build was asked
-    // for is compiled in, and loading a second copy of it registers the same
-    // card twice.
+    // Open the engine library beside this server - the one whose kind the
+    // machine answers with - now rather than on the first page read, and on
+    // Windows name the live Vulkan driver manifest so the device report and
+    // the engine agree on the gpu. Exactly one engine library is opened: the
+    // server itself carries no ggml, and loading a second copy of one
+    // registers the same card twice.
     void preloadBackends();
     // The key is written through the config door while every connection thread
     // reads it, so it is never edited in place: a whole immutable copy is
