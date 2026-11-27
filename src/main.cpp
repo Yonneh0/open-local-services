@@ -140,18 +140,10 @@ static int rateLimit(const std::string &requested)
 // raised does not stand at all: 2026-11-20 a whole evening was lost to plain
 // servers that started gladly, served every page, and died at the first manager
 // ask - a half-armed machine pretending to be armed. Now: raised, or refused
-// loudly with a failing exit. OLS_ELEVATE=off declines the prompt; it does not
-// buy permission to serve unelevated.
+// loudly with a failing exit. There is no way to decline the law: OLS_ELEVATE=off
+// declines the prompt, which lands on the refusal below, not on serving anyway.
 static bool askedForElevation()
 {
-  // A scratch instance names its port and declines the level ask with it: a
-  // server answering another port than the manager's own is nobody's boot
-  // entry, so the law - raised or refused loudly - does not apply to it. The
-  // live door keeps the law in full. OLS_SCRATCH=1 states that intent; naming
-  // any other port alone does not, because a boot entry could be built wrong.
-  if (const char *scratch = std::getenv("OLS_SCRATCH"))
-    if (trimText(scratch) == "1")
-      return false;
   if (const char *named = std::getenv("OLS_ELEVATE"))
     return trimText(named) != "off";
   // The same fact can be set in the file the config panel writes. This entry
@@ -167,11 +159,68 @@ static bool askedForElevation()
 }
 
 #ifdef _WIN32
+// The administrator group's SID (S-1-5-32-544), spelled out in bytes instead
+// of asked of the machine. AllocateAndInitializeSid is left out on purpose:
+// the on-disk header and the preprocessed output both show one canonical
+// __stdcall 11-parameter declaration, yet cl rejected 0, 9 and 10 arguments
+// against it in a row, pointing at that same line each time. A well-known
+// constant SID needs no API - revision 1, two sub-authorities, the NT
+// authority (00-00-00-00-00-05), then 32 and 544, little-endian.
+static PSID LocalGroupSid()
+{
+  static unsigned char kAdmins[] = {
+      0x01, 0x02,                          // revision 1, two sub-authorities
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x05,  // SECURITY_NT_AUTHORITY
+      0x20, 0x00, 0x00, 0x00,              // 32   - builtin domain
+      0x20, 0x02, 0x00, 0x00               // 544  - Administrators
+  };
+  return reinterpret_cast<PSID>(kAdmins);
+}
+
 // The machine's own way of saying whether this process carries the leave its
-// manager needs: an account without it answers "Access is denied".
+// manager needs. Read off the token, not out of a child command: `net session`
+// was walked first and it answers 0 even for a process that holds no elevation
+// at all - a law built on it lets every plain server through, which is exactly
+// the half-armed machine the law exists to refuse. The elevated token carries
+// both the administrator group (S-1-5-32-544) and the High mandatory label; a
+// plain one carries neither, whatever its account's name promises.
 static bool alreadyElevated()
 {
-  return std::system("net session >nul 2>&1") == 0;
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    return false;
+  bool armed = false;
+  DWORD needed = 0;
+  GetTokenInformation(token, TokenGroups, nullptr, 0, &needed);
+  if (needed > 0)
+  {
+    std::vector<char> groups(needed);
+    if (GetTokenInformation(token, TokenGroups, groups.data(),
+                            static_cast<DWORD>(groups.size()), &needed))
+    {
+      const auto *list = reinterpret_cast<const TOKEN_GROUPS *>(groups.data());
+      const PSID admins = LocalGroupSid();
+      for (DWORD i = 0; i < list->GroupCount && !armed; ++i)
+        if (EqualSid(list->Groups[i].Sid, admins))
+          armed = true;
+    }
+  }
+  bool highEnough = false;
+  needed = 0;
+  GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &needed);
+  if (needed > 0)
+  {
+    std::vector<char> label(needed);
+    if (GetTokenInformation(token, TokenIntegrityLevel, label.data(),
+                            static_cast<DWORD>(label.size()), &needed))
+    {
+      const auto *ml = reinterpret_cast<const TOKEN_MANDATORY_LABEL *>(label.data());
+      const DWORD rid = *GetSidSubAuthority(ml->Label.Sid, 0);
+      highEnough = rid >= SECURITY_MANDATORY_HIGH_RID;
+    }
+  }
+  CloseHandle(token);
+  return armed && highEnough;
 }
 
 // The program this server is running as, read off the machine rather than
@@ -286,11 +335,6 @@ static void ensureElevated(int argc, char **argv)
   if (askedForElevation() && !alreadyElevated())
     standRaised(argc, argv);
   if (alreadyElevated())
-    return;
-  // A scratch instance that declined the level ask stands on its own: it is
-  // nobody's boot entry and asks nothing of the manager. The law above -
-  // raised or refused loudly - still answers for every server that asked.
-  if (!askedForElevation())
     return;
   // One law on every machine, checked once and after every road the raise could
   // have taken: a server that does not stand at the manager's level does not
