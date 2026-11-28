@@ -3151,7 +3151,10 @@ main.monitor {
 }
 
 /* the seven bars: pointed at both ends along their own length, which is what
-   makes a seven-segment digit read as machined rather than typed. */
+   makes a seven-segment digit read as machined rather than typed. The point is
+   stated in pixels, at half the bar's thickness, so the tip is a true 45°: a
+   percentage of the bar's own LENGTH was what a bar 13 by 4 made 0.8 px deep,
+   which is a rectangle with the corners flinched and nothing machined about it. */
 .clock7 .c7s {
   position: absolute;
   background: var(--c7-ghost);
@@ -3164,7 +3167,7 @@ main.monitor {
   left: 1px;
   width: 13px;
   height: 4px;
-  clip-path: polygon(6% 0%, 94% 0%, 100% 50%, 94% 100%, 6% 100%, 0% 50%);
+  clip-path: polygon(2px 0, calc(100% - 2px) 0, 100% 50%, calc(100% - 2px) 100%, 2px 100%, 0 50%);
 }
 
 .clock7 .c7a {
@@ -3185,7 +3188,7 @@ main.monitor {
 .clock7 .c7c {
   width: 4px;
   height: 10px;
-  clip-path: polygon(0% 6%, 50% 0%, 100% 6%, 100% 94%, 50% 100%, 0% 94%);
+  clip-path: polygon(0 2px, 50% 0, 100% 2px, 100% calc(100% - 2px), 50% 100%, 0 calc(100% - 2px));
 }
 
 .clock7 .c7f {
