@@ -331,12 +331,30 @@ namespace ols
       }
 
       // Reading the task scheduler, which is where a console server is set to start
-      // when the machine does. /xml is read rather than /fo LIST: LIST has no
-      // machine-readable field for what the task is started by - and /nh cannot
-      // even be asked of LIST, so the listing this used before was refused outright,
-      // which left an entry that stood being read as nothing standing. The document
-      // names the three facts that matter: the task's state, what starts it, and
-      // the command the machine would run.
+      // What an entry is doing, read off the one line of schtasks's listing that
+      // says so: `Status:` then Ready, Running, Queued or Disabled. The listing is
+      // the only place either fact stands - the exported document carries no state
+      // and no disabled mark at all, measured here on entries the listing called
+      // Ready, Running and Disabled in turn.
+      std::string statusOf(const std::string &listing)
+      {
+        std::istringstream in{listing};
+        std::string line;
+        while (std::getline(in, line))
+        {
+          const std::string cut = trim(line);
+          if (cut.size() > 7 && sameFold(cut.substr(0, 7), "status:"))
+            return trim(cut.substr(7));
+        }
+        return std::string();
+      }
+
+      // when the machine does. /xml is read for what the entry IS - the trigger
+      // that starts it and the command the machine would run - because LIST has no
+      // machine-readable field for either, and /nh cannot even be asked of LIST, so
+      // the listing this used before was refused outright, which left an entry that
+      // stood being read as nothing standing. What the entry IS DOING is not in
+      // that document at all, so it is asked of the listing beside it.
       bool readTask(State &state, bool &refused)
 
       {
@@ -354,9 +372,11 @@ namespace ols
         // The scheduler writes its states in title case - Ready, Running, Queued,
         // Disabled - and a reading that demanded upper case called every running
         // task a stopped one, which is how one door came within one ask of
-        // starting a second copy of a live server.
-        const std::string taskState = tagValue(query.text, "State");
-        state.running = sameFold(taskState, "running");
+        // starting a second copy of a live server. The state is not in the
+        // document above: this process asks the same entry its own listing.
+        const std::string listed =
+            statusOf(ask("schtasks /query /tn \"" + state.name + "\" /fo LIST").text);
+        state.running = sameFold(listed, "running");
         // What starts a task is written in this document as the name of its
         // trigger element: BootTrigger for the machine's own start, LogonTrigger
         // for a person signing in, TimeTrigger and CalendarTrigger for a date or
@@ -383,7 +403,20 @@ namespace ols
           startedBy = "as soon as it is registered";
         else if (holdsFold(query.text, "<CalendarTrigger") || holdsFold(query.text, "<TimeTrigger"))
           startedBy = "at a date or an hour the scheduler names";
-        if (sameFold(taskState, "disabled"))
+        // Whether the entry demands the machine's highest privileges stands in its
+        // own document, and it decides what label the next run of this entry
+        // carries. X1 measured that difference the hard way: the same task, run by
+        // hand from an elevated shell, stood its server at integrity System; the
+        // same task asked to run by the update hand a minute later came up with a
+        // Low label on the very same account, and the elevation law refused the
+        // start - the hand had already moved the new binary into place, so the box
+        // stood with a server that could not get up. An entry that pins its level
+        // answers alike for whoever asks, so an entry that leaves the label to the
+        // caller is named wherever this entry is described.
+        const bool pinned = holdsFold(query.text, "<RunLevel>HighestAvailable</RunLevel>");
+        // An entry the machine was told to leave alone answers `Disabled` in that
+        // same listing - the document says nothing of it either way.
+        if (sameFold(listed, "disabled"))
           state.startup = "disabled";
         else if (atBoot)
           state.startup = "automatic";
@@ -398,7 +431,10 @@ namespace ols
         state.detail = "task \"" + state.name + "\" stands; " +
                        (startedBy.empty()
                             ? "the reading above does not know the scheduler's words for what starts it"
-                            : "the scheduler starts it " + startedBy);
+                            : "the scheduler starts it " + startedBy) +
+                       (pinned ? std::string()
+                               : "; the entry asks no highest privileges, so the label its next run "
+                                 "carries is the caller's to give");
         return true;
       }
 #else
@@ -890,14 +926,30 @@ namespace ols
                "  ping -n 2 127.0.0.1 >nul\r\n"
                "  goto :again\r\n"
                ")\r\n"
-               "move /y \"%ROOT%\\bin\\" << exeName << "\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
+               "copy /y \"%ROOT%\\bin\\" << exeName << "\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
                "if errorlevel 1 (\r\n"
                "  echo [%DATE% %TIME%] the staged binary would not take the old one's place: putting the old one back>>\"%LOG%\"\r\n"
                "  move /y \"%PROG%\\" << exeName << ".old\" \"%PROG%\\" << exeName << "\" >nul 2>&1\r\n"
                "  echo [%DATE% %TIME%] the old one stands again and is started>>\"%LOG%\"\r\n"
                "  goto :restart\r\n"
                ")\r\n";
-        // The engine libraries move beside the binary as a set: every library
+        // The binary is copied into its place rather than moved into it, and that is
+         // what its first run on X1 cost. A move on one volume is a rename: the
+         // file keeps the descriptor it was born with, and that descriptor carries
+         // the mandatory label of the folder it came from. This project's root
+         // wears a Low label, inherited down into bin\ and build\Release\ and onto
+         // every artifact a build lays down, and Windows starts a process no higher
+         // than the label on its own image - so the moved binary brought the
+         // machine's task up at Low whatever the entry was registered to do, and
+         // the elevation law refused the server the hand had just installed. A copy
+         // makes the file where it stands, out of that folder's own defaults: the
+         // runtime folder wears no label, so the program the task starts is
+         // unconfined. The run script's replace step lays the file the same way.
+         // The engine libraries keep the move: a library's label does not cap a
+         // process, only the image's own does, and the library the server runs on
+         // is open without share-write, so a copy onto it is refused where a
+         // rename of it is allowed.
+         // The engine libraries move beside the binary as a set: every library
         // staged under the engine's own name crosses, and a library that will
         // not move leaves the old one standing - named in the log, not lost.
         // The set is asked for only where one stands: a `for` over a pattern
@@ -1386,6 +1438,52 @@ namespace ols
         CloseHandle(token);
         return read;
       }
+
+      // The label written on the file this process was started from, or 0 when it
+      // wears none or the reading is refused. Windows starts a process no higher
+      // than the label on its own image, so a binary marked Low answers at Low
+      // even when the machine's manager stands at System - and that looks, from
+      // the outside, exactly like a task registered without the highest
+      // privileges. It is not: X1's whole build tree wears a Low label inherited
+      // from the project root, and every server started from an artifact there
+      // came up confined while the task's own reading said nothing of it.
+      DWORD imageLabelRid()
+      {
+        char path[4096] = {0};
+        const DWORD len = GetModuleFileNameA(nullptr, path, static_cast<DWORD>(sizeof(path) - 1));
+        if (len == 0 || len >= sizeof(path) - 1)
+          return 0;
+        // The label rides in the file's own security descriptor; a stack buffer is
+        // more than a label ever needs, and this reading never writes it back.
+        char room[2048] = {0};
+        SECURITY_DESCRIPTOR *sd = reinterpret_cast<SECURITY_DESCRIPTOR *>(room);
+        DWORD needed = 0;
+        if (!GetFileSecurityA(path, LABEL_SECURITY_INFORMATION, sd,
+                              static_cast<DWORD>(sizeof(room)), &needed) ||
+            !IsValidSecurityDescriptor(sd))
+          return 0;
+        DWORD rid = 0;
+        PACL listed = nullptr;
+        BOOL present = FALSE, defaulted = FALSE;
+        if (GetSecurityDescriptorSacl(sd, &present, &listed, &defaulted) && present && listed)
+        {
+          for (DWORD i = 0; i < listed->AceCount && rid == 0; ++i)
+          {
+            void *entry = nullptr;
+            if (!GetAce(listed, i, &entry) || entry == nullptr)
+              continue;
+            const ACE_HEADER *head = static_cast<const ACE_HEADER *>(entry);
+            if (head->AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE)
+              continue;
+            SYSTEM_MANDATORY_LABEL_ACE *ml = static_cast<SYSTEM_MANDATORY_LABEL_ACE *>(entry);
+            SID *sid = reinterpret_cast<SID *>(&ml->SidStart);
+            const BYTE parts = *GetSidSubAuthorityCount(sid);
+            if (parts > 0)
+              rid = *GetSidSubAuthority(sid, parts - 1);
+          }
+        }
+        return rid;
+      }
     } // namespace
 
     bool carriesManagerLevel()
@@ -1399,8 +1497,11 @@ namespace ols
       // the tree it serves (folders carry an explicit no-write-up for Low),
       // cannot stand a task, cannot hand - a manager in name only. So the
       // machine answers for itself at the labels the machine actually works
-      // at, medium and above, and only the scheduler's misregistration meets
-      // the refusal now.
+      // at, medium and above. Two things hand out that low label, and X1 has
+      // now met both: a task registered without the highest privileges, and a
+      // program file that wears a low mandatory label itself - the second one
+      // confines the process however the entry was registered, because the
+      // image's label caps it. The words beside this reading name which.
       if (read.machine)
         return read.labelRead && read.rid >= SECURITY_MANDATORY_MEDIUM_RID;
       return read.admins && read.labelRead &&
@@ -1419,6 +1520,15 @@ namespace ols
         words += ", no administrators group";
       if (read.machine)
         words += ", the machine account itself";
+      // The token is half the truth: what started this process was capped by the
+      // file it was started from, and a reader who is not told that chases the
+      // machine's entry for a label the build folder wrote.
+      const DWORD image = imageLabelRid();
+      if (image != 0 && image < SECURITY_MANDATORY_MEDIUM_RID)
+        words += "; the program file itself wears a " + integrityName(image) +
+                 " label and Windows starts a process no higher than that, so this"
+                 " reading says nothing of how the task was registered - lay the"
+                 " binary as a fresh copy in the runtime folder to shed it";
       return words;
     }
 #else

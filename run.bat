@@ -842,6 +842,16 @@ if not "%~3"=="" set REPL_NAME=%~3
 set TRY=0
 :replace_try
 set /A TRY=TRY+1
+rem Every attempt makes the destination away first and lays a fresh file after
+rem it, never a file over one that stands: a copy onto an existing file keeps
+rem that file's own descriptor, and with it the mandatory label of whatever
+rem folder the old one was born in. This tree's root wears a Low label, and
+rem Windows starts a process no higher than the label on its image - so a
+rem server laid over a Low-labelled file comes up confined however the
+rem machine's entry was registered, which is what one update hand on X1 cost.
+rem A fresh file takes the runtime folder's defaults, and the runtime folder
+rem wears no label. The update hand copies for the same reason.
+del /q "%~2\!REPL_NAME!" 2>nul
 copy /Y "%~1" "%~2\!REPL_NAME!" >nul
 if not errorlevel 1 exit /b 0
 del /q "%~2\!REPL_NAME!" 2>nul
