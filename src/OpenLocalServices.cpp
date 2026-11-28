@@ -292,24 +292,12 @@ namespace ols
              word == "yes" || word == "no" || word == "on" || word == "off";
     }
 
-    // A leading ~ is the home this process was started in: HOME where a shell
-    // states one, USERPROFILE where only Windows states one. A path that does not
-    // start with ~ is taken as it stands.
-    std::string expandHomePath(const std::string &path)
-    {
-      if (path.empty() || path[0] != '~')
-        return path;
-      const char *home = std::getenv("HOME");
-      if (!home || !*home)
-        home = std::getenv("USERPROFILE");
-      if (!home || !*home)
-        return path;
-      std::string out(home);
-      while (!out.empty() && (out.back() == '/' || out.back() == '\\'))
-        out.pop_back();
-      out += path.substr(1);
-      return out;
-    }
+    // A leading ~ would be the home this process was started in, but nothing on
+    // this road takes a path a person typed with a ~ in it: the config values
+    // that name a folder are written by the panel with the machine's own paths.
+    // The helper that did the expanding stood here unused on every platform, so
+    // the compiler could name it - it is gone rather than waiting for a caller
+    // that never came.
 
     // list of algorithm names: the key material is the long base64 field, and the
     // word that names the algorithm is the field that starts with it. A line can
