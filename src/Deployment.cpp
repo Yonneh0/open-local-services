@@ -949,14 +949,30 @@ namespace ols
          // process, only the image's own does, and the library the server runs on
          // is open without share-write, so a copy onto it is refused where a
          // rename of it is allowed.
-         // The engine libraries move beside the binary as a set: every library
-        // staged under the engine's own name crosses, and a library that will
-        // not move leaves the old one standing - named in the log, not lost.
-        // The set is asked for only where one stands: a `for` over a pattern
-        // that matches nothing still runs its body once, with the pattern as
-        // the file's name, and the log then blames a move that was never owed.
+         // The engine libraries cross beside the binary as a set: every library
+        // staged under the engine's own name is asked over, and the set is asked
+        // for only where one stands - a `for` over a pattern that matches nothing
+        // still runs its body once, with the pattern as the file's name, and the
+        // log then blamed a move that was never owed. Each one is taken aside
+        // under its own name before the new one is moved into the place it left,
+        // exactly as the binary is: the first round on X1 logged "the staged
+        // engine library would not move: the old one stands", because renaming
+        // OVER a library the server has mapped is refused while renaming the
+        // mapped file aside is allowed - which is the same thing the run script's
+        // replace step has always known. A library that still will not cross puts
+        // the old one back and says so, so an update never ends up running a new
+        // server against half its libraries. (Linux needs none of this: rename()
+        // replaces a mapped file without complaint, which is why its hand moves
+        // and this one has to step aside first.)
         out << "if exist \"%ROOT%\\bin\\stable-diffusion-*.dll\" for %%F in (\"%ROOT%\\bin\\stable-diffusion-*.dll\") do (\r\n"
-            << "  move /y \"%%F\" \"%PROG%\\%%~nxF\" >nul 2>&1 || echo [%DATE% %TIME%] the staged engine library %%~nxF would not move: the old one stands>>\"%LOG%\"\r\n"
+            << "  if exist \"%PROG%\\%%~nxF\" move /y \"%PROG%\\%%~nxF\" \"%PROG%\\%%~nxF.old\" >nul 2>&1\r\n"
+            << "  move /y \"%%F\" \"%PROG%\\%%~nxF\" >nul 2>&1\r\n"
+            << "  if errorlevel 1 (\r\n"
+            << "    echo [%DATE% %TIME%] the staged engine library %%~nxF would not cross: the old one goes back>>\"%LOG%\"\r\n"
+            << "    move /y \"%PROG%\\%%~nxF.old\" \"%PROG%\\%%~nxF\" >nul 2>&1\r\n"
+            << "  ) else (\r\n"
+            << "    echo [%DATE% %TIME%] the staged engine library %%~nxF crossed>>\"%LOG%\"\r\n"
+            << "  )\r\n"
             << ")\r\n";
         out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n"
                ":restart\r\n";
