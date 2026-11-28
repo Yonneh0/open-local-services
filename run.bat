@@ -843,11 +843,20 @@ rem (run.sh, c27f115), where a build's kill left the unit inactive (dead) until
 rem it was started by hand two minutes later.
 set "MANAGED_TASK="
 if not defined OLS_SERVICE_NAME set "OLS_SERVICE_NAME=open-local-services"
-schtasks /query /tn "%OLS_SERVICE_NAME%" /fo LIST 2>nul | findstr /I /C:"Status" | findstr /I /C:"Running" >nul
+tasklist /FI "IMAGENAME eq %1" | findstr /I "%1" >nul
+if errorlevel 1 exit /b 1
+rem Asked by name, not by a Status word: the listing of a task another account
+rem owns is refused to this shell outright - measured on x1, where the task the
+rem serve runs under answers this shell with "Access is denied" - and a task's
+rem own Status can read Ready while its process is standing. So: the image has
+rem to be there to stop at all, and a task of this name is enough to ask its
+rem scheduler. If asking is refused too, the wait below says so and nothing is
+rem replaced.
+schtasks /query /tn "%OLS_SERVICE_NAME%" >nul 2>nul
 if errorlevel 1 goto stop_by_name
 set "MANAGED_TASK=%OLS_SERVICE_NAME%"
 schtasks /end /tn "%OLS_SERVICE_NAME%" >nul 2>nul
-echo !MANAGED_TASK! belongs to this machine's scheduler, so its scheduler stopped it (schtasks /end).
+echo !MANAGED_TASK! belongs to this machine's scheduler, so its scheduler was asked to end it (schtasks /end).
 set LEFT=0
 :stop_task_wait
 tasklist /FI "IMAGENAME eq %1" | findstr /I "%1" >nul
