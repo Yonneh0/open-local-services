@@ -46,15 +46,15 @@ FRESH_FULL=
 # starting, key= and rate= are the same two settings run.bat takes, and
 # fresh-full-rebuild (or --fresh-full-rebuild) is the one word that lets this
 # path restate a tree's shape - see the shape check below, which refuses to
-# rebuild a whole tree from scratch without it. cuda, cpu and cpu-avx512 name
-# an engine shape; without one the machine chooses, as below.
+# rebuild a whole tree from scratch without it. cuda, vulkan, cpu and cpu-avx512
+# name an engine shape; without one the machine chooses, as below.
 SHAPE_WANTED=
 for opt in "$@"; do
   case "$opt" in
     build) MODE=build ;;
-    cuda | cpu | cpu-avx512)
+    cuda | vulkan | cpu | cpu-avx512)
       if [ -n "$SHAPE_WANTED" ]; then
-        echo "cuda, cpu and cpu-avx512 name three shapes: name one of them, or none."
+        echo "cuda, vulkan, cpu and cpu-avx512 name four shapes: name one of them, or none."
         exit 1
       fi
       SHAPE_WANTED=$opt
@@ -130,6 +130,21 @@ if [ -n "$SHAPE_WANTED" ]; then
     echo "cuda was named; no nvcc under /usr/local answers. The cpu shapes are what this box can build."
     exit 1
   fi
+  if [ "$SHAPE_WANTED" = vulkan ]; then
+    # the vulkan engine is written by the compiler's own shader tools at build
+    # time: ggml's shader generator asks cmake for the Vulkan package with its
+    # glslc component and compiles every compute shader through it, so a box
+    # without the loader's headers or that compiler cannot build this shape at
+    # all. It says so rather than configuring a tree that dies halfway.
+    VK_MISSING=""
+    command -v glslc >/dev/null 2>&1 || VK_MISSING="$VK_MISSING glslc"
+    [ -f /usr/include/vulkan/vulkan.h ] || VK_MISSING="$VK_MISSING libvulkan-dev"
+    if [ -n "$VK_MISSING" ]; then
+      echo "vulkan was named and this box cannot build it: no$VK_MISSING."
+      echo "Install what is named above, or name another shape."
+      exit 1
+    fi
+  fi
   ENGINE_SHAPE=$SHAPE_WANTED
 fi
 # the CUDA engine library carries the kernels for every generation this
@@ -140,6 +155,8 @@ CUDA_ARCH_LIST="70;75;86"
 if [ "$ENGINE_SHAPE" = cuda ]; then
   echo "CUDA compiler: $NVCC"
   echo "engine shape: cuda, kernels for sm_70, sm_75 and sm_86 in one library"
+elif [ "$ENGINE_SHAPE" = vulkan ]; then
+  echo "engine shape: vulkan, the card's compute shaders compiled here by glslc, standing as libstable-diffusion-vulkan.so"
 elif [ "$ENGINE_SHAPE" = cpu-avx512 ]; then
   echo "engine shape: cpu-avx512, standing as libstable-diffusion-cpu-avx512.so for a chip that answers avx512"
 else
@@ -186,6 +203,8 @@ CUDA_FLAGS_OPT="-DCMAKE_CUDA_FLAGS=$CUDA_FLAGS"
 # over.
 if [ "$ENGINE_SHAPE" = cuda ]; then
   SD_BUILD="vendor/stable-diffusion.cpp/build-cuda"
+elif [ "$ENGINE_SHAPE" = vulkan ]; then
+  SD_BUILD="vendor/stable-diffusion.cpp/build-vulkan"
 elif [ "$ENGINE_SHAPE" = cpu-avx512 ]; then
   SD_BUILD="vendor/stable-diffusion.cpp/build-avx512"
 else
@@ -373,9 +392,16 @@ NOVEC_FLAGS="-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -D
 SD_AVX512_FLAGS="-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON"
 COMMON="-DCMAKE_BUILD_TYPE=Release"
 AVX512_WANT=OFF
+VULKAN_WANT=OFF
 if [ "$ENGINE_SHAPE" = cpu-avx512 ]; then
   COMMON="$COMMON $SD_AVX512_FLAGS"
   AVX512_WANT=ON
+elif [ "$ENGINE_SHAPE" = vulkan ]; then
+  # the card does the math; the host code under it is still this fleet's floor,
+  # which is why the vulkan shape asks for the same NOVEC claims as the plain
+  # cpu one and not the avx512 ones run.bat used to hand it
+  COMMON="$COMMON $NOVEC_FLAGS"
+  VULKAN_WANT=ON
 else
   COMMON="$COMMON $NOVEC_FLAGS"
 fi
@@ -394,7 +420,7 @@ if [ -f "$SD_BUILD/CMakeCache.txt" ]; then
   # a tree that stands here was configured for one backend; asking this shape
   # of another is a full rebuild, so it is refused before cmake is asked
   # anything at all.
-  check_shape "$SD_BUILD/CMakeCache.txt" GGML_VULKAN "OFF"
+  check_shape "$SD_BUILD/CMakeCache.txt" GGML_VULKAN "$VULKAN_WANT"
   # the instruction-set claim this shape makes, asked of the tree that stands:
   # a tree built without avx512 is not the tree the cpu-avx512 shape wants, and
   # the other way round, and neither is fixed by nursing it - see the flags
@@ -420,6 +446,12 @@ if [ ! -f "$SD_BUILD/.configured-$PIN_IMAGE" ]; then
       -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
       -DGGML_CUDA=ON -DGGML_VULKAN=OFF \
       -DCMAKE_CUDA_COMPILER=$NVCC "-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCH_LIST"
+  elif [ "$ENGINE_SHAPE" = vulkan ]; then
+    echo "Building the image engine as a shared library with the vulkan card backend"
+    cmake -S vendor/stable-diffusion.cpp -B "$SD_BUILD" \
+      $COMMON $OLS_GUARD \
+      -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
+      -DGGML_CUDA=OFF -DGGML_VULKAN=ON
   else
     echo "Building the image engine as a shared library on the cpu alone"
     cmake -S vendor/stable-diffusion.cpp -B "$SD_BUILD" \
