@@ -523,6 +523,24 @@ fi
 # A failed build exited long before this point, so downtime stays tiny. ----
 stop_running() {
   # %1 = process name, %2 = what to say when the stop belongs to someone else
+  # Where the machine's manager owns this server, the manager does the stopping.
+  # A kill by pid succeeds - and leaves the unit inactive (dead), because
+  # systemd does not raise a service that its own stop was never asked for - so
+  # the door that builds would take the machine out of service while reporting a
+  # clean stop. Measured on the nuc, 2026-11-27: a finished build left the unit
+  # dead, nothing bringing it back.
+  UNIT="${OLS_SERVICE_NAME:-$1}.service"
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+    MANAGED_STOP=1
+    if systemctl stop "$UNIT" 2>/dev/null || sudo -n systemctl stop "$UNIT" 2>/dev/null; then
+      echo "$1 belongs to this machine's manager, so its manager stopped it (systemctl stop $UNIT)."
+      return 0
+    fi
+    echo "$1 is running under a manager this user cannot reach; the new binary"
+    echo "is in place but still not the one answering. Restart it through that"
+    echo "manager (for a systemd unit: sudo systemctl restart $UNIT) before testing."
+    return 0
+  fi
   PIDS=$(pidof "$1" 2>/dev/null) || return 0
   [ -n "$PIDS" ] || return 0
   # A server that stands at the manager's level is root's to stop; a plain
@@ -582,6 +600,27 @@ fi
 mkdir -p bin
 cp -f "$API_BUILD/open-local-services" bin/open-local-services
 cp -f "$ENGINE_FILE" "bin/libstable-diffusion-$ENGINE_SHAPE.so"
+
+# ---- what this door stopped through the manager goes back through the manager:
+# a box that was serving when the build started serves again when it ends, with
+# the new binary answering. In run mode this terminal is the one that serves
+# next, so the unit stays down and the words say who holds the port now and how
+# to hand it back.
+if [ "${MANAGED_STOP:-0}" = 1 ]; then
+  UNIT="${OLS_SERVICE_NAME:-open-local-services}.service"
+  if [ "$MODE" = build ]; then
+    if systemctl start "$UNIT" 2>/dev/null || sudo -n systemctl start "$UNIT" 2>/dev/null; then
+      echo "$UNIT is up again through its manager, answering from the binary just installed."
+    else
+      echo "$UNIT was stopped to replace its binary and could not be started back."
+      echo "Start it with: sudo systemctl start $UNIT"
+    fi
+  else
+    echo "$UNIT was stopped to replace its binary; this terminal's server is the"
+    echo "one that answers now. Hand it back to the machine's manager with:"
+    echo "  sudo systemctl start $UNIT"
+  fi
+fi
 
 if [ "$MODE" = build ]; then
   echo ""
