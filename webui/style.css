@@ -3147,14 +3147,21 @@ main.monitor {
 .clock7 .c7num {
   position: relative;
   width: 15px;
-  height: 26px;
+  height: 28px;
 }
 
 /* the seven bars: pointed at both ends along their own length, which is what
-   makes a seven-segment digit read as machined rather than typed. The point is
-   stated in pixels, at half the bar's thickness, so the tip is a true 45°: a
-   percentage of the bar's own LENGTH was what a bar 13 by 4 made 0.8 px deep,
-   which is a rectangle with the corners flinched and nothing machined about it. */
+   makes a seven-segment digit read as machined rather than typed. Two things
+   the face had wrong, both measured off the served page at device ratio 1.
+   The point: a clip-path stated in percentages of each bar's own LENGTH made a
+   tip 0.78 px deep on a bar 13 by 4 - a rectangle with the corners flinched. A
+   tip is half the bar's THICKNESS, so it is stated in pixels and is a true 45°.
+   The lay: the old cell made a vertical bar 10 px tall cross the 7 px gap
+   between the 4 px bands, so its tip ended on the middle bar's centre line and
+   the two 45° cuts intersected - doubled in the 9 % ghosts, which is the seam
+   that reads as a lean. The cell is 28 now, the bands sit at 0, 12, 24, and a
+   vertical bar is 8 px standing in one gap, tip to tip, so the cuts meet the
+   bands at their edges and no bar crosses another. All whole pixels. */
 .clock7 .c7s {
   position: absolute;
   background: var(--c7-ghost);
@@ -3175,11 +3182,11 @@ main.monitor {
 }
 
 .clock7 .c7g {
-  top: 11px;
+  top: 12px;
 }
 
 .clock7 .c7d {
-  top: 22px;
+  top: 24px;
 }
 
 .clock7 .c7f,
@@ -3187,37 +3194,37 @@ main.monitor {
 .clock7 .c7e,
 .clock7 .c7c {
   width: 4px;
-  height: 10px;
+  height: 8px;
   clip-path: polygon(0 2px, 50% 0, 100% 2px, 100% calc(100% - 2px), 50% 100%, 0 calc(100% - 2px));
 }
 
 .clock7 .c7f {
   left: 0;
-  top: 3px;
+  top: 4px;
 }
 
 .clock7 .c7b {
   left: 11px;
-  top: 3px;
+  top: 4px;
 }
 
 .clock7 .c7e {
   left: 0;
-  top: 13px;
+  top: 16px;
 }
 
 .clock7 .c7c {
   left: 11px;
-  top: 13px;
+  top: 16px;
 }
 
 .clock7 .c7col {
   width: 4px;
-  height: 26px;
+  height: 28px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .clock7 .c7dot {
