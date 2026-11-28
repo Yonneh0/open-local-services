@@ -299,26 +299,6 @@ namespace ols
     // the compiler could name it - it is gone rather than waiting for a caller
     // that never came.
 
-    // list of algorithm names: the key material is the long base64 field, and the
-    // word that names the algorithm is the field that starts with it. A line can
-    // be answered with as its whole self, as algorithm plus material, as the
-    // material alone, or - when a person wrote a name at its end - by that name,
-    // which is what a reader types instead of a page of characters. Option fields
-    // and comments carry no key of their own.
-    bool base64Field(const std::string &field)
-    {
-      if (field.size() < 32)
-        return false;
-      for (const char c : field)
-      {
-        const bool word = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-                          c == '+' || c == '/' || c == '=';
-        if (!word)
-          return false;
-      }
-      return true;
-    }
-
     bool configValueShapeOk(const std::string &key, const std::string &value)
     {
       if (value.find('\r') != std::string::npos || value.find('\n') != std::string::npos)
@@ -745,13 +725,6 @@ namespace ols
     std::string idJson(const std::string &id)
     {
       return nlohmann::json{{"job_id", id}}.dump();
-    }
-
-    std::string idFieldJson(const std::string &key, const std::string &id)
-    {
-      nlohmann::json out;
-      out[key] = id;
-      return out.dump();
     }
 
     // Seconds an answer for this path may be reused. The API states this on
