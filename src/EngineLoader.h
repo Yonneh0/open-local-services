@@ -78,6 +78,11 @@ namespace ols
     // means no card answered.
     void cardFacts(long long &totalBytes, long long &freeBytes, int &computeMajor,
                    int &computeMinor);
+    // What the card's own driver states about its memory, for a card with no
+    // nvml to ask (the amdgpu records under /sys/class/drm). Says false, with
+    // no bytes, when no driver answers. This describes the card to the pages;
+    // the working-set ceiling does not ask it - see the words where it is read.
+    bool cardBytesFromDriver(long long &totalBytes, long long &freeBytes);
     // The card's generation in the word the pages show ("86"), empty when no
     // card answers.
     std::string engineCardWord();

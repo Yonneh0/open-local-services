@@ -4,11 +4,14 @@
 #include "Deployment.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -546,6 +549,19 @@ namespace ols
         }
         std::cout << gLoaded.words << std::endl;
       }
+
+      // One number, alone in a file the kernel wrote.
+      bool readNumberFile(const std::filesystem::path &path, long long &out)
+      {
+        std::ifstream in(path);
+        if (!in)
+          return false;
+        long long value = -1;
+        if (!(in >> value) || value < 0)
+          return false;
+        out = value;
+        return true;
+      }
     } // namespace
 
     void warmEngine() { std::call_once(gWarmOnce, warmNow); }
@@ -565,6 +581,66 @@ namespace ols
       freeBytes = gCard.freeBytes;
       computeMajor = gCard.major;
       computeMinor = gCard.minor;
+    }
+
+    // What a card answers when there is no nvml to ask it. The driver that owns
+    // the silicon keeps its own books: amdgpu writes the card's VRAM, whole and
+    // in use, under that card's folder in /sys/class/drm, so a machine whose
+    // engine library names a Vulkan card can still say what the card holds and
+    // what stands free. A driver that states nothing is answered with nothing -
+    // false, and no bytes invented.
+    //
+    // This is how the pages describe a card. It is deliberately not what the
+    // working-set ceiling asks for, and that stays with nvml on purpose: the
+    // nvml road is the one that pins weights into the card's own heap, and a
+    // ceiling drawn from these records would refuse the very model the vulkan
+    // engine carries from system memory - measured on the nuc, 6.9 GB of
+    // weights standing resident on a 4 GB card.
+    bool cardBytesFromDriver(long long &totalBytes, long long &freeBytes)
+    {
+      totalBytes = 0;
+      freeBytes = 0;
+#ifdef _WIN32
+      return false;
+#else
+      std::error_code ec{};
+      const std::filesystem::path drm("/sys/class/drm");
+      if (!std::filesystem::is_directory(drm, ec))
+        return false;
+      long long bestTotal = 0;
+      long long bestUsed = 0;
+      for (const auto &entry : std::filesystem::directory_iterator(drm, ec))
+      {
+        if (ec)
+          break;
+        // the cards are "cardN"; "cardN-DP-1" and friends are its connectors
+        const std::string name = entry.path().filename().string();
+        if (name.compare(0, 4, "card") != 0)
+          continue;
+        size_t digits = 4;
+        while (digits < name.size() && std::isdigit(static_cast<unsigned char>(name[digits])))
+          ++digits;
+        if (digits == 4 || digits != name.size())
+          continue;
+        long long total = 0;
+        if (!readNumberFile(entry.path() / "device" / "mem_info_vram_total", total) || total <= 0)
+          continue;
+        long long used = 0;
+        readNumberFile(entry.path() / "device" / "mem_info_vram_used", used);
+        // where more than one card keeps such books, the one the pages call the
+        // card is the one that can carry the most
+        if (total > bestTotal)
+        {
+          bestTotal = total;
+          bestUsed = used;
+        }
+      }
+      if (bestTotal <= 0)
+        return false;
+      totalBytes = bestTotal;
+      freeBytes = bestTotal > bestUsed ? bestTotal - bestUsed : 0;
+      return true;
+#endif
     }
 
     std::string engineCardWord()
@@ -588,13 +664,46 @@ namespace ols
         freeBytes = static_cast<long long>(status.ullAvailPhys);
       }
 #else
-      const long pages = sysconf(_SC_PHYS_PAGES);
-      const long freePages = sysconf(_SC_AVPHYS_PAGES);
-      const long pageSize = sysconf(_SC_PAGE_SIZE);
-      if (pages > 0 && pageSize > 0)
-        totalBytes = static_cast<long long>(pages) * pageSize;
-      if (freePages > 0 && pageSize > 0)
-        freeBytes = static_cast<long long>(freePages) * pageSize;
+      // Two different things go by "free memory" here. The kernel's counter of
+      // untouched pages can sit near zero on a box that has just copied a few
+      // hundred gigabytes past them, because the page cache holds those pages
+      // until someone asks - and it hands them right back. MemAvailable is the
+      // kernel's own sum of what a process could still be given, cache and all,
+      // so that is the number the pages show; sysconf answers only where the
+      // file cannot be read. Measured on the nuc, 2026-11-27: mid-transfer the
+      // untouched count said 0.5 GiB while MemAvailable said 29.9 GiB.
+      long long totalKb = 0;
+      long long availKb = 0;
+      std::ifstream meminfo("/proc/meminfo");
+      std::string line;
+      while (std::getline(meminfo, line))
+      {
+        std::istringstream words(line);
+        std::string key;
+        long long kb = 0;
+        if (!(words >> key >> kb))
+          continue;
+        if (key == "MemTotal:")
+          totalKb = kb;
+        else if (key == "MemAvailable:")
+          availKb = kb;
+        if (totalKb > 0 && availKb > 0)
+          break;
+      }
+      if (totalKb > 0)
+        totalBytes = totalKb * 1024LL;
+      if (availKb > 0)
+        freeBytes = availKb * 1024LL;
+      if (totalBytes <= 0 || freeBytes <= 0)
+      {
+        const long pages = sysconf(_SC_PHYS_PAGES);
+        const long freePages = sysconf(_SC_AVPHYS_PAGES);
+        const long pageSize = sysconf(_SC_PAGE_SIZE);
+        if (totalBytes <= 0 && pages > 0 && pageSize > 0)
+          totalBytes = static_cast<long long>(pages) * pageSize;
+        if (freeBytes <= 0 && freePages > 0 && pageSize > 0)
+          freeBytes = static_cast<long long>(freePages) * pageSize;
+      }
 #endif
     }
 

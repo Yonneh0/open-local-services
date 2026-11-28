@@ -3264,8 +3264,13 @@ namespace ols
         continue;
       const std::string type = entry.value("type", std::string());
       const bool gpu = type == "gpu" || type == "accel";
-      const long long total = gpu ? cardTotal : ramTotal;
-      const long long free = gpu ? cardFree : ramFree;
+      long long total = gpu ? cardTotal : ramTotal;
+      long long free = gpu ? cardFree : ramFree;
+      // a card with no nvml is not a card with no memory: where the green
+      // library stays silent, the driver that owns this silicon answers from
+      // its own records
+      if (gpu && total <= 0)
+        ols::imagegen::cardBytesFromDriver(total, free);
       if (total > 0)
       {
         entry["total_bytes"] = static_cast<std::size_t>(total);
