@@ -51,9 +51,10 @@ src/open-local-services.exe
 # one - it names it under .old, to be moved back if the new one will not start,
 # and cleared by the next hand or by a person. generated state like every other
 # built byte; and left untracked it would refuse the release gate, which reads
-# the tree with git status, after any update at all.
-src/open-local-services.old
-src/open-local-services.exe.old
+# the tree with git status, after any update at all. The set-aside wears the
+# name of whatever crossed, so the rule is the folder's whole `.old` shelf: the
+# binary and every engine library the hand moved in behind it.
+src/*.old
 weights/
 data/
 /vendor/
