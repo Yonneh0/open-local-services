@@ -387,8 +387,9 @@ function paintModelCard(model) {
   addFact(box, 'model', model.name + ' (' + model.id + ')');
   addFact(box, 'good at', model.specialty ? String(model.specialty) : 'its card states no specialty');
   const live = loadedSet.has(model.id);
-  const where = live ? 'in memory' : (model.on_disk ? 'ready on disk'
-    : (model.unchecked === true ? 'here · not checked' : 'not downloaded'));
+  const where = live ? 'in memory' : (model.card_holds === false ? 'beyond this card'
+    : (model.on_disk ? 'ready on disk'
+    : (model.unchecked === true ? 'here · not checked' : 'not downloaded')));
   // One size, stated the way the card states it: bytes the machine holds in
   // memory answer for what a run would need, and bytes that only lie here are
   // named as such - a card that states neither says so rather than guessing.
@@ -554,10 +555,15 @@ function renderModels() {
     // Three states, not two. Bytes that sit on this machine and have never been
     // read are not the sentence "not downloaded", and until today the page had no
     // way to say the first and so said the second.
-    const state = live ? 'in memory' : (model.on_disk ? 'ready on disk'
-      : (model.unchecked === true ? 'here · not checked' : 'not downloaded'));
-    fingers.appendChild(ui.finger(state, live ? 'loaded' : (model.on_disk ? 'ok' : 'warn'),
-      'What this model is right now: open in memory, kept on disk, or not fetched yet.', 'state'));
+    const state = live ? 'in memory' : (model.card_holds === false ? 'beyond this card'
+      : (model.on_disk ? 'ready on disk'
+      : (model.unchecked === true ? 'here · not checked' : 'not downloaded')));
+    fingers.appendChild(ui.finger(state, live ? 'loaded' : (model.card_holds === false ? 'warn'
+      : (model.on_disk ? 'ok' : 'warn')),
+      model.card_holds === false
+        ? 'The math these weights are made of is more than this card can carry, and the ' +
+          'machine says so up front instead of opening them and crawling on the cpu for an hour.'
+        : 'What this model is right now: open in memory, kept on disk, or not fetched yet.', 'state'));
     if (inUse) {
       fingers.appendChild(ui.finger('in use', 'ok',
         'The model a run would draw with now — this card is the one with the heavier border. ' +

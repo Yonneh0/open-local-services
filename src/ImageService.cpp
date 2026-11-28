@@ -56,6 +56,12 @@ namespace ols
       std::string negative;
       std::string sigmas;
       std::string wtype;
+      // A row that stands wholly on int8-convrot weights carries its denoiser
+      // math on INT8 GEMM, which this engine's CUDA backend answers only from
+      // compute 7.5 up - below that the engine places every matmul of the run
+      // on the cpu. The row says it here so the card can be asked before the
+      // weights are ever opened.
+      bool int8_convrot = false;
       std::string prompt;
       std::string specialty;
       bool edit = false;
@@ -281,7 +287,8 @@ namespace ols
                             float guidance, const std::string &prompt, const std::string &negative,
                             const std::string &sigmas, int civitaiVersion,
                             const std::vector<std::pair<std::string, std::string>> &files,
-                            const std::string &wtype = std::string())
+                            const std::string &wtype = std::string(),
+                            bool int8_convrot = false)
         {
           ImageModelDef def;
           def.id = id;
@@ -290,6 +297,7 @@ namespace ols
           def.negative = negative;
           def.sigmas = sigmas;
           def.wtype = wtype;
+          def.int8_convrot = int8_convrot;
           def.prompt = prompt;
           def.steps = steps;
           def.guidance = guidance;
@@ -315,7 +323,8 @@ namespace ols
             "", "", 0,
             {{"diffusion_model", "split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors"},
              {"vae", "split_files/vae/ae.safetensors"},
-             {"llm", "hf:unsloth/Qwen3-4B-Instruct-2507-GGUF/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"}});
+             {"llm", "hf:unsloth/Qwen3-4B-Instruct-2507-GGUF/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"}},
+             std::string(), true);
         add(out, "qwen-image-2.1", "Qwen Image 2.1", "Comfy-Org/Qwen-Image-2.1", 25, 6.0f,
             "a grey tabby cat sitting upright holding a small handwritten card that reads "
             "'qwen2.1' with one paw, plain warm-grey studio backdrop, soft side light, the "
@@ -323,7 +332,8 @@ namespace ols
             "", "", 0,
             {{"diffusion_model", "diffusion_models/qwen_image_2.1_int8_convrot.safetensors"},
              {"vae", "vae/qwen_image_2.1_vae_bf16.safetensors"},
-             {"llm", "text_encoders/qwen3vl_8b_int8_convrot.safetensors"}});
+             {"llm", "text_encoders/qwen3vl_8b_int8_convrot.safetensors"}},
+             std::string(), true);
         add(out, "qwen-image-2.1-turbo", "Qwen Image 2.1 Turbo", "Comfy-Org/Qwen-Image-2.1", 8,
             1.0f, "a brass telescope on a velvet-draped table beside a small upright card that "
                   "reads 'qwen2.1 turbo', one warm lamp light, dark quiet background, the words "
@@ -333,7 +343,8 @@ namespace ols
             "1.0,0.978453,0.95418,0.926626,0.89508,0.845148,0.704534,0.414568,0.0", 0,
             {{"diffusion_model", "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors"},
              {"vae", "vae/qwen_image_2.1_vae_bf16.safetensors"},
-             {"llm", "text_encoders/qwen3vl_8b_int8_convrot.safetensors"}});
+             {"llm", "text_encoders/qwen3vl_8b_int8_convrot.safetensors"}},
+             std::string(), true);
         add(out, "sdxl-turbo", "SDXL Turbo", "stabilityai/sdxl-turbo", 4, 0.0f,
             "a single red apple centered on a rustic wooden table, macro photo, one soft window "
             "light from the left, dark neutral background, shallow depth of field, no other "
@@ -1844,6 +1855,9 @@ namespace ols
       // the slots this form stands files under, and the files: a name a page
       // offers, and what opening it would load.
       std::vector<std::pair<std::string, std::string>> files;
+      // whether this form's files carry their denoiser math as int8-convrot
+      // weights - the row's own fact, kept true of the form that stands it.
+      bool int8_convrot = false;
     };
     static const std::vector<std::pair<std::string, std::vector<ModelForm>>> &
     kQuantOffers()
@@ -1862,6 +1876,20 @@ namespace ols
                 std::string("hf:unsloth/flux-3-image-klein-GGUF/flux-3-image-klein-") + name + ".gguf"}}});
         }
         out.push_back({"flux-3-klein", klein});
+        // Z-Image Turbo comes from Comfy-Org in two precisions of the same
+        // denoiser: int8_convrot, whose math rides INT8 GEMM (the engine's CUDA
+        // backend answers it only from compute 7.5 up), and bf16, which answers
+        // on any card that can hold the weights. Both forms are named so the
+        // machine can drive the one its card carries - and say, when it cannot,
+        // exactly which form to fetch instead.
+        out.push_back({"z-image-turbo",
+                       {ModelForm{"int8_convrot",
+                                  {{"diffusion_model",
+                                    "split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors"}},
+                                   true},
+                        ModelForm{"bf16",
+                                  {{"diffusion_model",
+                                    "split_files/diffusion_models/z_image_turbo_bf16.safetensors"}}}}});
         // MiniMax H3 comes in forms that move one of two separate checkpoints. The
         // denoiser rungs are unsloth's own uniform ones - its table names
         // minimax_h3_fl2va_pruned-{Q2_K,Q3_K,Q4_K,Q5_0,Q6_K,Q8_0} and more, and the
@@ -1995,6 +2023,35 @@ namespace ols
       {
         if (const ModelForm *form = formNamed(def->id, wanted))
           return form;
+      }
+      // A card that cannot carry the math of the row's quantization takes the
+      // first offered form it can carry - even when the row's own files stand
+      // on disk: the machine drives the road that ends somewhere rather than
+      // standing on the one that does not. A held choice above still wins: a
+      // machine that was told what it runs stays told.
+      if (def->int8_convrot)
+      {
+        const CardAnswer &card = cardAnswer();
+        if (card.computeMajor >= 0 &&
+            (card.computeMajor < 7 || (card.computeMajor == 7 && card.computeMinor < 5)))
+        {
+          for (const ModelForm &form : *offers)
+          {
+            if (form.int8_convrot)
+              continue;
+            bool here = true;
+            for (const auto &file : form.files)
+            {
+              if (!slotOnDisk(def, file.second))
+              {
+                here = false;
+                break;
+              }
+            }
+            if (here)
+              return &form;
+          }
+        }
       }
       bool baseHere = true;
       for (const auto &file : def->files)
@@ -2387,6 +2444,46 @@ namespace ols
       }
       const std::string device = onCpu ? std::string("cpu") : card;
       params.backend = device.c_str();
+      // The denoiser math of an int8-convrot form rides INT8 GEMM, which this
+      // engine's CUDA backend answers only from compute 7.5 up (the turing gate
+      // in its ggml): below that the engine places every matmul of the run on
+      // the cpu, and a picture that costs seconds on a Turing card crawls with
+      // the card idle - seen on a compute-7.0 machine on 2026-11-27, where an
+      // eight-step run burned 42 minutes of cpu across its 26-minute life, the
+      // card at 0 percent and the journal silent from the first graph line,
+      // until a person stopped it. The form resolution above already steers a
+      // card below that floor onto a form it can carry; a refusal arrives only
+      // when no such form is on disk (or a held choice insists), and it names
+      // the form the weights room can fetch.
+      const bool runConvrot = form ? form->int8_convrot : def->int8_convrot;
+      if (runConvrot && !onCpu && kCard.computeMajor >= 0 &&
+          (kCard.computeMajor < 7 || (kCard.computeMajor == 7 && kCard.computeMinor < 5)))
+      {
+        std::string carryable;
+        if (const auto offers = findOffers(def->id))
+        {
+          for (const ModelForm &offer : *offers)
+          {
+            if (offer.int8_convrot)
+              continue;
+            if (!carryable.empty())
+              carryable += ", ";
+            carryable += offer.label;
+          }
+        }
+        std::fprintf(stderr, "[image] %s: card compute %d.%d cannot carry int8-convrot math; the run is refused before opening\n",
+                     def->id.c_str(), kCard.computeMajor, kCard.computeMinor);
+        std::fflush(stderr);
+        error = def->name + " would open as int8-convrot weights, whose math needs a compute-7.5 card or newer; "
+                            "this card is compute " +
+                std::to_string(kCard.computeMajor) + "." + std::to_string(kCard.computeMinor) +
+                (carryable.empty()
+                     ? std::string(". No other form of these weights is known here; the cpu road remains for an ask "
+                                   "made knowingly.")
+                     : std::string(" - but this card carries them as ") + carryable +
+                           ", which the weights room offers to fetch. The cpu road remains for an ask made knowingly.");
+        return nullptr;
+      }
       // A clip's weights ask the card first like every other model: the steps
       // and the weights standing on the same part of the machine is what makes
       // the steps fast, and one machine's card is another machine's whole
@@ -5032,6 +5129,17 @@ namespace ols
                        {"sampler", def.sampler},
                        {"scheduler", def.scheduler},
                        {"cache", def.cache},
+                       // Whether this machine's card can carry the math these
+                       // weights are made of: int8-convrot below compute 7.5
+                       // means weights the card cannot run at a usable speed,
+                       // and a page should say that plainly rather than call an
+                       // hour-long crawl ready. A machine with no cuda card to
+                       // answer (the cpu shape) holds its own road.
+                       {"int8_convrot", def.int8_convrot},
+                       {"card_holds",
+                        !(def.int8_convrot && cardAnswer().computeMajor >= 0 &&
+                          (cardAnswer().computeMajor < 7 ||
+                           (cardAnswer().computeMajor == 7 && cardAnswer().computeMinor < 5)))},
                        {"clip_skip", def.clip_skip},
                        {"flow_shift", def.flow_shift == INFINITY ? -1.0f : def.flow_shift},
                        {"prompt", def.prompt},

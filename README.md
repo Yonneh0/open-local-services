@@ -443,6 +443,18 @@ still name `tiling` itself and overrule the card.
 pipe, plus a 44 s tiled decode. The slowest still image this machine draws,
 and it draws it honestly.
 
+z-image-turbo, qwen-image-2.1 and qwen-image-2.1-turbo come as int8-convrot
+weights: their whole denoiser math rides INT8 GEMM, which the engine's CUDA
+backend answers only from compute 7.5 up (its ggml gates on Turing) - the
+rows above ran them over the vulkan road, which carries its own convrot
+shaders. On a CUDA card below that floor the engine would place every matmul
+on the cpu and an eight-step picture would crawl with the card idle; the
+room now offers these models in every precision their source publishes, and
+a card below the floor takes the form it can carry as soon as one stands on
+disk. When only an uncarryable form is there, the open names the pairing and
+refuses before the engine sees it - the weights room card reads *beyond this
+card*, and the answer names the form to fetch.
+
 cyberrealistic-xl costs more per step than its XL siblings because its card
 runs the dpm++2m_sde_bt ancestral sampler, the most expensive sampler in the
 house on this driver.
