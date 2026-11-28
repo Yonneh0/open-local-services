@@ -287,7 +287,7 @@ rem shape - the one library covers its generation whatever that generation is;
 rem without a card this box runs the plain cpu shape - never the avx512 one,
 rem which asks more of the machine than plain code does.
 set BOX_CAP=
-for /f "delims=" %%C in ('nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2^>nul') do if not defined BOX_CAP set BOX_CAP=%%C
+for /f "delims=" %%C in ('nvidia-smi --query-gpu=compute_cap "--format=csv,noheader" 2^>nul') do if not defined BOX_CAP set BOX_CAP=%%C
 if defined BOX_CAP set BOX_CAP=!BOX_CAP:.=!
 if defined BOX_CAP (set BOX_SHAPE=cuda) else set BOX_SHAPE=cpu-plain
 if defined BOX_CAP echo this box runs the cuda shape: its card answers compute !BOX_CAP!, and one cuda library covers it
@@ -484,7 +484,10 @@ set AVX512_WANT=
 set CUDA_ARCH=
 set CUDA_ON=
 if /I "!TARGET!"=="cpu-avx512" (
-  set SD_ROOT=vendor\stable-diffusion.cpp\build
+  rem this is the shape run.bat's cpu512 word builds, so it takes that road's root
+  rem and nothing else stands there: one tree, one shape, and neither entry point
+  rem restates what the other left.
+  set SD_ROOT=vendor\stable-diffusion.cpp\build-nd
   set OUT=%REL%\x64-windows
   set ENGINE_NAME=stable-diffusion-cpu-avx512.dll
   rem the instruction-set ceiling for this shape: everything the newest machines
@@ -492,6 +495,9 @@ if /I "!TARGET!"=="cpu-avx512" (
   rem kernels of the vendored engines cast through MSVC's strict __m512bh type
   rem and only compile under gcc. the runtime dispatch still asks the CPU every
   rem remaining question; this only says what the compiler here is able to answer.
+  rem no vulkan, and the loader's carry check below holds that promise: a cpu
+  rem engine that imported vulkan-1.dll would be refused by the machine this
+  rem folder is sent to, which is the machine with no card to answer it.
   set CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
   set AVX512_WANT=ON
   set BACKEND=cpu up to avx512
@@ -533,14 +539,25 @@ rem cmake is: asking another would rewrite the compile commands of everything
 rem the tree holds.
 if exist "!SD_ROOT!\CMakeCache.txt" (
     if defined CUDA_ON (
-        call :shape_ok "!SD_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH_LIST!"
-        if errorlevel 1 (
-            if not defined FRESH_FULL (
-                call :refuse_full_rebuild "the image engine" CMAKE_CUDA_ARCHITECTURES
-                exit /b 1
-            )
-            echo fresh-full-rebuild was given: restating the shape on this tree.
-        )
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_CUDA "ON" "the image engine"
+        if errorlevel 1 exit /b 1
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_VULKAN "OFF" "the image engine"
+        if errorlevel 1 exit /b 1
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "!CUDA_ARCH_LIST!" "the image engine"
+        if errorlevel 1 exit /b 1
+    ) else (
+        rem a cpu engine is a cpu engine: no cuda, no vulkan, and the instruction
+        rem sets named for its shape. every one of these is a shape the tree
+        rem cannot change under it without recompiling everything it holds, and a
+        rem cpu engine configured with the vulkan backend compiled in carries an
+        rem import for vulkan-1.dll that the machine this folder is sent to has no
+        rem way to answer.
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_CUDA "OFF" "the image engine"
+        if errorlevel 1 exit /b 1
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_VULKAN "OFF" "the image engine"
+        if errorlevel 1 exit /b 1
+        call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_AVX512 "!AVX512_WANT!" "the image engine"
+        if errorlevel 1 exit /b 1
     )
 )
 if defined CUDA_ON (
@@ -548,7 +565,7 @@ if defined CUDA_ON (
   cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=!CUDA_ARCH_LIST!" !OLS_GUARD!
 ) else (
   call :stand_studio
-  cmake !ENGINE_GEN! -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
+  cmake !ENGINE_GEN! -S "%SD%" -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
 )
 if errorlevel 1 (
   echo Could not configure the image engine for !TARGET!.
@@ -588,7 +605,7 @@ if not exist "bin" mkdir "bin"
 if /I "!TARGET!"=="!BOX_SHAPE!" (
   copy /Y "!SERVER_EXE!" "bin\open-local-services.exe" >nul
   rem the server carries no ggml of its own; the engine library it will open
-  goes beside it under its shape-name.
+  rem goes beside it under its shape-name.
   copy /Y "!SD_BIN!\stable-diffusion.dll" "bin\!ENGINE_NAME!" >nul
   echo staged into bin\ for /api/update: the shape of this box, !TARGET!.
 ) else (
@@ -617,6 +634,23 @@ if not errorlevel 1 (
   echo the image engine build must name -DCMAKE_BUILD_TYPE=Release; its build root is !SD_ROOT!,
   echo whose CMakeCache.txt states the build type that root was last configured with.
   exit /b 1
+)
+rem a cpu folder carries no device backend of any kind. an import for
+rem vulkan-1.dll in the engine here is a tree configured with the vulkan backend
+rem compiled in, and the machine this folder is sent to - one with no card, which
+rem is exactly why it was sent the cpu shape - is the machine with no vulkan
+rem loader to answer it: the server would open that folder and find no engine at
+rem all. The check reads the artifact, so it answers what the file really imports
+rem rather than what the flags above were meant to say.
+if not defined CUDA_ON (
+  findstr /L /I /C:"vulkan-1.dll" "!SD_ROOT!\ols-deps.txt" >nul
+  if not errorlevel 1 (
+    echo !ENGINE_NAME! in !OUT! is not the cpu engine this target names: it imports vulkan-1.dll.
+    echo its build root !SD_ROOT! stands configured with the vulkan backend on, and this
+    echo target asks it off. Restate that tree - run again with fresh-full-rebuild - rather
+    echo than shipping a cpu engine a machine with no card cannot open.
+    exit /b 1
+  )
 )
 rem a cuda artifact that resolves its runtime from this box's toolkit is not a
 rem release yet: the machine down the network holds a driver and nothing else.
@@ -808,6 +842,22 @@ if not "!PINNED!"=="%~2" (
 )
 exit /b 0
 
+:ask_shape
+rem %1 = a CMakeCache.txt, %2 = the name a shape is decided by, %3 = the value
+rem this shape asks for, %4 = what the tree builds. one law with run.bat's
+rem subroutine of the same name: a tree whose cache answers another value was
+rem configured for another shape, and restating it recompiles everything the
+rem tree holds - so this answers 0 when the tree already holds the shape asked
+rem of it, or when fresh-full-rebuild was given, and 1 when the run must stop.
+call :shape_ok %1 %2 %3
+if not errorlevel 1 exit /b 0
+if defined FRESH_FULL (
+  echo fresh-full-rebuild was given: restating %~2 on this tree.
+  exit /b 0
+)
+call :refuse_full_rebuild %4 %~2 %3
+exit /b 1
+
 :shape_ok
 rem %1 = a CMakeCache.txt, %2 = the name a shape is decided by, %3 = the value
 rem this shape asks for. the shape is asked before cmake is, so a tree of
@@ -825,9 +875,11 @@ if "%SHAPE_HAS%"=="%~3" exit /b 0
 exit /b 1
 
 :refuse_full_rebuild
-rem %1 = what the tree builds, %2 = the name whose values did not match.
+rem %1 = what the tree builds, %2 = the name whose values did not match,
+rem %3 = the value this run asks for - named so the words say the shape asked
+rem of the tree, whatever name that shape is decided by.
 echo !TARGET!: this tree holds the shape of another build - its cache names
-echo   %2 = !SHAPE_HAS! and this run asks for !CUDA_ARCH_LIST!.
+echo   %~2 = !SHAPE_HAS! and this run asks for %~3.
 echo Restating it would recompile everything the tree holds, a full rebuild,
 echo which this path does not do silently. Nothing here clears a tree.
 echo To rebuild that shape on purpose, run again with fresh-full-rebuild.

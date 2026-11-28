@@ -3,6 +3,7 @@
 
 #include "Deployment.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -205,6 +206,215 @@ namespace ols
         return order;
       }
 
+      // The CUDA runtime the engine library asks for by bare name, found on this
+      // machine and put in this process's way - once, and only after an engine
+      // has already been refused. Every road that starts this server is entitled
+      // to know nothing about toolkits: run.bat carries the CUDA bin room in its
+      // own PATH, and a machine's scheduled task or systemd unit starts this
+      // program directly, with no such thought behind it. A box that resolves
+      // cuBLAS happily is never disturbed by any of this, because none of it
+      // runs until a load has been refused.
+#ifdef _WIN32
+      bool holdsCublas(const std::filesystem::path &folder)
+      {
+        std::error_code ec{};
+        if (!std::filesystem::is_directory(folder, ec))
+          return false;
+        for (const auto &entry : std::filesystem::directory_iterator(folder, ec))
+        {
+          const std::string name = entry.path().filename().string();
+          if (name.rfind("cublas", 0) == 0 && name.size() > 4 &&
+              name.compare(name.size() - 4, 4, ".dll") == 0)
+            return true;
+        }
+        return false;
+      }
+
+      // Where a CUDA toolkit of this machine stands, read from the machine: the
+      // folders its own registry records, the environment's own names, and the
+      // folder every toolkit installs under when nobody says otherwise.
+      std::vector<std::string> toolkitRooms()
+      {
+        std::vector<std::string> rooms;
+        const auto addRoom = [&rooms](const std::string &home) {
+          if (home.empty())
+            return;
+          std::error_code ec{};
+          std::filesystem::path trimmed(home);
+          while (!trimmed.string().empty() && (trimmed.string().back() == '\\' ||
+                                               trimmed.string().back() == '/'))
+            trimmed = trimmed.parent_path();
+          const std::filesystem::path bin = trimmed / "bin";
+          if (holdsCublas(bin))
+            rooms.push_back(bin.string());
+          else if (holdsCublas(trimmed))
+            rooms.push_back(trimmed.string());
+        };
+        for (const char *named : {"CUDA_PATH", "CUDA_HOME"})
+          if (const char *value = std::getenv(named))
+            addRoom(value);
+        const HKEY roots[] = {HKEY_LOCAL_MACHINE};
+        const char *keys[] = {"SOFTWARE\\NVIDIA Corporation\\GPU Computing Toolkit\\CUDA",
+                              "SOFTWARE\\WOW6432Node\\NVIDIA Corporation\\GPU Computing Toolkit\\CUDA"};
+        for (HKEY root : roots)
+        {
+          for (const char *key : keys)
+          {
+            HKEY toolkits = nullptr;
+            if (RegOpenKeyExA(root, key, 0, KEY_READ | KEY_WOW64_64KEY, &toolkits) != ERROR_SUCCESS)
+              continue;
+            for (DWORD index = 0;; ++index)
+            {
+              char version[256];
+              DWORD versionLen = sizeof(version);
+              if (RegEnumKeyExA(toolkits, index, version, &versionLen, nullptr, nullptr, nullptr,
+                                nullptr) != ERROR_SUCCESS)
+                break;
+              HKEY one = nullptr;
+              if (RegOpenKeyExA(toolkits, version, 0, KEY_READ | KEY_WOW64_64KEY, &one) !=
+                  ERROR_SUCCESS)
+                continue;
+              char folder[1024];
+              DWORD folderLen = sizeof(folder);
+              DWORD kind = 0;
+              if (RegQueryValueExA(one, "InstallDir", nullptr, &kind,
+                                   reinterpret_cast<LPBYTE>(folder), &folderLen) == ERROR_SUCCESS &&
+                  (kind == REG_SZ || kind == REG_EXPAND_SZ))
+                addRoom(std::string(folder, folderLen > 0 ? folderLen - 1 : 0));
+              RegCloseKey(one);
+            }
+            RegCloseKey(toolkits);
+          }
+        }
+        const char *underPrograms = "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA";
+        std::error_code ec{};
+        if (std::filesystem::is_directory(underPrograms, ec))
+        {
+          std::vector<std::string> found;
+          for (const auto &entry : std::filesystem::directory_iterator(underPrograms, ec))
+            if (entry.is_directory())
+              found.push_back(entry.path().string());
+          // Newest version first: a box with two toolkits is asked to run the one
+          // its engine was compiled against, and the run scripts look the same way.
+          std::sort(found.begin(), found.end(),
+                    [](const std::string &a, const std::string &b) { return a > b; });
+          for (const std::string &home : found)
+            addRoom(home);
+        }
+        return rooms;
+      }
+
+      // The machine speaks its paths in wide letters; these roads read them in
+      // the narrow ones the rest of the server carries.
+      std::wstring toWide(const std::string &text)
+      {
+        if (text.empty())
+          return std::wstring();
+        const int needed = MultiByteToWideChar(CP_ACP, 0, text.c_str(),
+                                               static_cast<int>(text.size()), nullptr, 0);
+        if (needed <= 0)
+          return std::wstring();
+        std::wstring out(static_cast<size_t>(needed), L'\0');
+        MultiByteToWideChar(CP_ACP, 0, text.c_str(), static_cast<int>(text.size()), &out[0],
+                            needed);
+        return out;
+      }
+
+      bool carryRuntimeOnce()
+      {
+        static const bool widened = [] {
+          const std::vector<std::string> rooms = toolkitRooms();
+          if (rooms.empty())
+            return false;
+          // The documented way to widen a process's own search: the default
+          // directories stay in it - the program's folder, the system's, and any
+          // room added here - and only this process is affected.
+          if (!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
+                                        LOAD_LIBRARY_SEARCH_USER_DIRS))
+            return false;
+          bool any = false;
+          for (const std::string &room : rooms)
+          {
+            const std::wstring wide = toWide(room);
+            if (!wide.empty() && AddDllDirectory(wide.c_str()))
+              any = true;
+          }
+          return any;
+        }();
+        return widened;
+      }
+#else
+      bool holdsCublas(const std::filesystem::path &folder)
+      {
+        std::error_code ec{};
+        if (!std::filesystem::is_directory(folder, ec))
+          return false;
+        for (const auto &entry : std::filesystem::directory_iterator(folder, ec))
+        {
+          const std::string name = entry.path().filename().string();
+          if (name.rfind("libcublas", 0) == 0 && name.find(".so") != std::string::npos)
+            return true;
+        }
+        return false;
+      }
+
+      // The families an engine of this shape names in its own list, taken by the
+      // soname it would ask for - the shortest name the folder offers for each.
+      void openRuntimeFamily(const std::filesystem::path &room, const char *family)
+      {
+        std::error_code ec{};
+        std::string shortest;
+        for (const auto &entry : std::filesystem::directory_iterator(room, ec))
+        {
+          const std::string name = entry.path().filename().string();
+          if (name.rfind(family, 0) != 0 || name.find(".so") == std::string::npos)
+            continue;
+          if (shortest.empty() || name.size() < shortest.size())
+            shortest = name;
+        }
+        if (!shortest.empty())
+          dlopen((room / shortest).string().c_str(), RTLD_LAZY | RTLD_GLOBAL);
+      }
+
+      bool carryRuntimeOnce()
+      {
+        static const bool widened = [] {
+          std::vector<std::string> rooms;
+          if (const char *value = std::getenv("CUDA_HOME"))
+            rooms.push_back(std::string(value) + "/lib64");
+          std::error_code ec{};
+          if (std::filesystem::is_directory("/usr/local", ec))
+          {
+            std::vector<std::string> found;
+            for (const auto &entry : std::filesystem::directory_iterator("/usr/local", ec))
+            {
+              if (!entry.is_directory())
+                continue;
+              const std::string name = entry.path().filename().string();
+              if (name.rfind("cuda", 0) == 0)
+                found.push_back((entry.path() / "lib64").string());
+            }
+            std::sort(found.begin(), found.end(),
+                      [](const std::string &a, const std::string &b) { return a > b; });
+            for (const std::string &room : found)
+              rooms.push_back(room);
+          }
+          bool any = false;
+          for (const std::string &room : rooms)
+          {
+            if (!holdsCublas(room))
+              continue;
+            for (const char *family :
+                 {"libcublasLt.", "libcublas.", "libcudart.", "libcufft.", "libnvrtc."})
+              openRuntimeFamily(room, family);
+            any = true;
+          }
+          return any;
+        }();
+        return widened;
+      }
+#endif
+
       // Open one shape. The file's own name says which shape the machine asked
       // for; nothing here guesses at what the file holds.
       bool tryShape(const std::string &shape, std::vector<std::string> &tries)
@@ -217,6 +427,15 @@ namespace ols
         for (const std::string &path : candidates(file))
         {
           Library library = openLibrary(path);
+          if (!library && carryRuntimeOnce())
+          {
+            // The refusal may name nothing but a runtime this road did not
+            // carry. Ask the same file once more with the machine's own CUDA
+            // rooms in the way; where there was nothing to add, this line is
+            // never reached, and where there was, the second answer is the
+            // loader's own.
+            library = openLibrary(path);
+          }
           if (!library)
           {
             tries.push_back(file + ": " + libraryWords());

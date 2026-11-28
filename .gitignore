@@ -46,6 +46,14 @@ src/open-local-services.new
 src/stable-diffusion*.dll
 src/libstable-diffusion*.so*
 src/open-local-services.exe
+# what the update hand sets aside when it moves the new binary in: a running
+# program keeps its own file until it is gone, so the hand cannot delete the old
+# one - it names it under .old, to be moved back if the new one will not start,
+# and cleared by the next hand or by a person. generated state like every other
+# built byte; and left untracked it would refuse the release gate, which reads
+# the tree with git status, after any update at all.
+src/open-local-services.old
+src/open-local-services.exe.old
 weights/
 data/
 /vendor/

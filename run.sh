@@ -151,16 +151,17 @@ CUDA_FLAGS="-include $CUDA_SHIM"
 CUDA_FLAGS_OPT="-DCMAKE_CUDA_FLAGS=$CUDA_FLAGS"
 
 # ---- the roots the engine shape builds in, named like run.bat names them ----
-# the CUDA engine builds in build-cuda and the cpu engine in build-nd, one tree
-# per backend, so the two never share a cache. the server build is shapeless -
-# it links no engine - so one build root answers for every machine of this
-# platform. Two entry points naming one root with the same defines is what
-# keeps the build incremental: a flipped define changes every compile command
-# in the tree and rebuilds an engine for hours over and over.
+# the CUDA engine builds in build-cuda and the cpu engine in the unqualified
+# build, one tree per backend, so the two never share a cache - and the same
+# roots build-rel.sh builds the same shapes in, which is what keeps a release
+# build and a development build of one shape the same incremental tree. Two
+# entry points naming one root with the same defines is what keeps the build
+# incremental: a flipped define changes every compile command in the tree and
+# rebuilds an engine for hours over and over.
 if [ "$ENGINE_SHAPE" = cuda ]; then
   SD_BUILD="vendor/stable-diffusion.cpp/build-cuda"
 else
-  SD_BUILD="vendor/stable-diffusion.cpp/build-nd"
+  SD_BUILD="vendor/stable-diffusion.cpp/build"
 fi
 API_BUILD="build"
 
@@ -210,8 +211,6 @@ check_shape() {
   fi
   return 0
 }
-PIN_IMAGE=b13a48219d5cdf408edcb93da6cd69b612ed03d3        # leejet/stable-diffusion.cpp
-PIN_IMAGE_GGML=dc998771e700d49bbdf9a39cede22bb5b3311767   # leejet/ggml (image engine)
 
 # ---- fetch missing vendor sources ----
 if [ ! -f vendor/nlohmann/json.hpp ]; then
@@ -322,20 +321,28 @@ fi
 COMMON="-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON -DGGML_FMA=ON -DGGML_F16C=ON"
 OLS_GUARD="-DCMAKE_PROJECT_INCLUDE_BEFORE=$PWD/src/ols-sage-guard.cmake"
 
-# ---- build the image engine, skipping any part already built ----
-if [ ! -f "$SD_BUILD/.built-$PIN_IMAGE" ]; then
+# ---- build the image engine: asked for on every run, as run.bat asks it ----
+# an engine root that stands here is asked for anything new on every run, the
+# way the src build below is asked: the engine's sources belong to this tree,
+# and an edit no build ever reads is an edit that never happened. cmake answers
+# that ask with a no-op when nothing changed, so asking costs the seconds it
+# takes to look. This is the same ask build-rel.bat makes of the same root, so
+# neither entry point leaves the other a tree it must build again from scratch.
+# What is not asked twice is the configure, and the shape checks decide whether
+# the tree that stands is the tree this shape wants at all.
+if [ -f "$SD_BUILD/CMakeCache.txt" ]; then
   # a tree that stands here was configured for one backend; asking this shape
   # of another is a full rebuild, so it is refused before cmake is asked
   # anything at all.
-  if [ -f "$SD_BUILD/CMakeCache.txt" ]; then
-    check_shape "$SD_BUILD/CMakeCache.txt" GGML_VULKAN "OFF"
-    if [ "$ENGINE_SHAPE" = cuda ]; then
-      check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH_LIST"
-      check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "ON"
-    else
-      check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "OFF"
-    fi
+  check_shape "$SD_BUILD/CMakeCache.txt" GGML_VULKAN "OFF"
+  if [ "$ENGINE_SHAPE" = cuda ]; then
+    check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH_LIST"
+    check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "ON"
+  else
+    check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "OFF"
   fi
+fi
+if [ ! -f "$SD_BUILD/.configured-$PIN_IMAGE" ]; then
   if [ "$ENGINE_SHAPE" = cuda ]; then
     echo "Building the image engine as a shared library with CUDA compute, kernels for sm_70, sm_75, sm_86"
     cmake -S vendor/stable-diffusion.cpp -B "$SD_BUILD" \
@@ -350,9 +357,11 @@ if [ ! -f "$SD_BUILD/.built-$PIN_IMAGE" ]; then
       -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_EXAMPLES=OFF -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF \
       -DGGML_CUDA=OFF -DGGML_VULKAN=OFF
   fi
-  cmake --build "$SD_BUILD" -j "$JN" || exit 1
-  touch "$SD_BUILD/.built-$PIN_IMAGE"
+  # the stamp names what it records: the configure this file stands for, not a
+  # build, which is asked again every run.
+  touch "$SD_BUILD/.configured-$PIN_IMAGE"
 fi
+cmake --build "$SD_BUILD" -j "$JN" || exit 1
 
 echo ""
 

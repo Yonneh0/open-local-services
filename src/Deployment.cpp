@@ -129,6 +129,43 @@ namespace ols
         return haystack.find(needle) != std::string::npos;
       }
 
+      // The machine's own words are read without regard to their case, because
+      // the same fact is spelled differently by different hands: the scheduler
+      // writes its states in title case, and a comparison that demanded upper
+      // case read a running task as a stopped one.
+      bool sameFold(const std::string &left, const std::string &right)
+      {
+        if (left.size() != right.size())
+          return false;
+        for (size_t i = 0; i < left.size(); ++i)
+          if (std::tolower(static_cast<unsigned char>(left[i])) !=
+              std::tolower(static_cast<unsigned char>(right[i])))
+            return false;
+        return true;
+      }
+
+      bool holdsFold(const std::string &haystack, const std::string &needle)
+      {
+        if (needle.empty() || haystack.size() < needle.size())
+          return false;
+        const std::string low = [&needle] {
+          std::string out;
+          for (const char c : needle)
+            out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+          return out;
+        }();
+        for (size_t i = 0; i + low.size() <= haystack.size(); ++i)
+        {
+          size_t j = 0;
+          for (; j < low.size(); ++j)
+            if (std::tolower(static_cast<unsigned char>(haystack[i + j])) != low[j])
+              break;
+          if (j == low.size())
+            return true;
+        }
+        return false;
+      }
+
       // One ask of the machine's own manager, with its answer kept whole. These
       // commands write nothing on their own: sc, schtasks and systemctl are the
       // machine's, and what they say back is what a page ends up showing. A
@@ -293,22 +330,6 @@ namespace ols
         return out;
       }
 
-      // A whole element of the scheduler's document, kept as the scheduler wrote
-      // it: where a task's start is named in a way the reading below does not
-      // know, the scheduler's own words are said again rather than guessed at.
-      std::string tagBlock(const std::string &text, const std::string &tag)
-      {
-        const std::string open = "<" + tag + ">";
-        const std::string::size_type from = text.find(open);
-        if (from == std::string::npos)
-          return std::string();
-        const std::string close = "</" + tag + ">";
-        const std::string::size_type end = text.find(close, from);
-        if (end == std::string::npos)
-          return std::string();
-        return text.substr(from, end + close.size() - from);
-      }
-
       // Reading the task scheduler, which is where a console server is set to start
       // when the machine does. /xml is read rather than /fo LIST: LIST has no
       // machine-readable field for what the task is started by - and /nh cannot
@@ -330,16 +351,39 @@ namespace ols
         }
         state.installed = true;
         state.manager = "the task scheduler";
+        // The scheduler writes its states in title case - Ready, Running, Queued,
+        // Disabled - and a reading that demanded upper case called every running
+        // task a stopped one, which is how one door came within one ask of
+        // starting a second copy of a live server.
         const std::string taskState = tagValue(query.text, "State");
-        state.running = taskState == "RUNNING" || holds(query.text, "<State>RUNNING");
-        // ONSTART is the one word the scheduler's own document uses for a task the
-        // machine starts when the machine itself starts; the other kinds name what
-        // starts a task - a person signing in, the machine unlocking, a date, an
-        // hour, idleness. The word is read wherever the document puts it rather
-        // than at one nesting depth, which is what keeps this honest across the
-        // shapes the scheduler writes.
-        const bool atBoot = holds(query.text, "ONSTART");
-        if (taskState == "DISABLED" || holds(query.text, "<State>DISABLED"))
+        state.running = sameFold(taskState, "running");
+        // What starts a task is written in this document as the name of its
+        // trigger element: BootTrigger for the machine's own start, LogonTrigger
+        // for a person signing in, TimeTrigger and CalendarTrigger for a date or
+        // an hour, and the rest for idleness, registration, an event, a change of
+        // session. ONSTART is a word of schtasks's listing, not of its document,
+        // so a reading that looked for it here called every boot task a manual
+        // one - and said nothing at all about what started it.
+        bool atBoot = false;
+        std::string startedBy;
+        if (holdsFold(query.text, "<BootTrigger"))
+        {
+          atBoot = true;
+          startedBy = "when the machine starts";
+        }
+        else if (holdsFold(query.text, "<LogonTrigger"))
+          startedBy = "when a person signs in";
+        else if (holdsFold(query.text, "<SessionStateChangeTrigger"))
+          startedBy = "at a change of session";
+        else if (holdsFold(query.text, "<EventTrigger"))
+          startedBy = "at an event the scheduler names";
+        else if (holdsFold(query.text, "<IdleTrigger"))
+          startedBy = "when the machine stands idle";
+        else if (holdsFold(query.text, "<RegistrationTrigger"))
+          startedBy = "as soon as it is registered";
+        else if (holdsFold(query.text, "<CalendarTrigger") || holdsFold(query.text, "<TimeTrigger"))
+          startedBy = "at a date or an hour the scheduler names";
+        if (sameFold(taskState, "disabled"))
           state.startup = "disabled";
         else if (atBoot)
           state.startup = "automatic";
@@ -351,18 +395,10 @@ namespace ols
           std::string args = tagValue(query.text, "Arguments");
           state.target = args.empty() ? command : command + " " + args;
         }
-        if (atBoot)
-          state.detail = "task \"" + state.name + "\" starts when the machine starts";
-        else
-        {
-          // The scheduler's own block is said again where its words for what
-          // starts the task are not understood, rather than a guess about them.
-          const std::string startBlock = oneLine(tagBlock(query.text, "Start"));
-          state.detail = "task \"" + state.name + "\" stands; " +
-                         (startBlock.empty()
-                              ? "the reading above does not know the scheduler's words for what starts it"
-                              : "the scheduler's words for what starts it: " + startBlock);
-        }
+        state.detail = "task \"" + state.name + "\" stands; " +
+                       (startedBy.empty()
+                            ? "the reading above does not know the scheduler's words for what starts it"
+                            : "the scheduler starts it " + startedBy);
         return true;
       }
 #else
@@ -511,6 +547,52 @@ namespace ols
         return true;
       }
 
+      // The hand's own one-shot entry, for the machine that will not let a child
+      // leave the job it was born in. The entry runs the hand's script by its
+      // short name, so no inner quote has to survive the scheduler's parser, and
+      // it names itself `entry` - the word under which the script deletes this
+      // entry as its last act. The scheduler holds this entry beside the job of
+      // the task that started the server, never inside it, which is the whole
+      // reason the hand can finish a move its parent was cut off from.
+      constexpr const char *kHandEntry = "ols-update-hand";
+
+      bool standsHandEntry(const std::string &script, std::string &why)
+      {
+        std::string runScript = script;
+        char shortBuf[1024];
+        if (GetShortPathNameA(script.c_str(), shortBuf, sizeof(shortBuf)))
+          runScript = shortBuf;
+        else if (script.find(' ') != std::string::npos)
+        {
+          // The entry's action line is read twice - once by this command and
+          // once by the scheduler, which puts the action together again from one
+          // string - and a path with a space in it is two words to that second
+          // reading. The short name is what makes one word of it; where the
+          // volume keeps no short names, standing the entry would leave a task
+          // that names a file no one asked for, so this says so instead.
+          why = "the hand's script stands where this volume keeps no short name for it, and "
+                "its path holds a space the scheduler would read as two words";
+          return false;
+        }
+        const std::string create = "schtasks /create /f /tn " + std::string(kHandEntry) +
+                                   " /tr \"cmd /c " + runScript + " entry\""
+                                   " /sc once /st 00:00 /ru SYSTEM /rl HIGHEST";
+        const Answer made = ask(create);
+        if (made.code != 0)
+        {
+          why = "schtasks /create said: " + oneLine(made.text);
+          return false;
+        }
+        const Answer started = ask("schtasks /run /tn " + std::string(kHandEntry));
+        if (started.code != 0)
+        {
+          why = "schtasks /run said: " + oneLine(started.text);
+          ask("schtasks /delete /tn " + std::string(kHandEntry) + " /f");
+          return false;
+        }
+        return true;
+      }
+
       // One door that shows what this server can actually do, for when its
       // refusals need reading: every probe run in order, each with its honest
       // outcome. Who am I, where does my temp live, can a file land in the
@@ -562,6 +644,19 @@ namespace ols
           }
           else
             said << "integrity: no token (win32 error " << GetLastError() << "); ";
+        }
+        // Whether this process stands inside a job - the machine's own word, and
+        // the fact that decides which road the update hand takes. A task the
+        // scheduler started keeps its whole process tree in a job the scheduler
+        // closes when the task's action process lets go, so a hand left inside
+        // one would be taken down beside the server it waits behind.
+        {
+          BOOL inJob = FALSE;
+          if (IsProcessInJob(GetCurrentProcess(), nullptr, &inJob))
+            said << (inJob ? "job: inside (the hand leaves it or stands as its own entry); "
+                           : "job: outside; ");
+          else
+            said << "job: unreadable (win32 error " << GetLastError() << "); ";
         }
         const Answer whereTask = ask("where schtasks");
         said << "child where schtasks: "
@@ -648,6 +743,22 @@ namespace ols
         return true;
       }
 #endif // _WIN32: the repair task and the selftest speak windows tools
+      // Whether a staged file is one of the engine libraries: the same family of
+      // names the hand scripts move by. Both spellings count, because the engine
+      // wears `stable-diffusion-cuda.dll` on Windows and
+      // `libstable-diffusion-cuda.so` here, and a hand that named only the
+      // windows spelling reported an engine crossing beside it as though it had
+      // not been seen at all.
+      bool namesEngineLibrary(const std::string &name)
+      {
+        const bool spelled = name.rfind("stable-diffusion-", 0) == 0 ||
+                             name.rfind("libstable-diffusion-", 0) == 0;
+        if (!spelled)
+          return false;
+        return (name.size() > 4 && name.compare(name.size() - 4, 4, ".dll") == 0) ||
+               (name.size() > 3 && name.compare(name.size() - 3, 3, ".so") == 0);
+      }
+
       // The update hand, run by a detached helper running the script written
       // here. It waits for this process to let go of its file (a running image
       // is refused its own rename - that answer is the clock), moves what
@@ -716,9 +827,7 @@ namespace ols
               if (!entry.is_regular_file())
                 continue;
               const std::string name = entry.path().filename().string();
-              if (name.rfind("stable-diffusion-", 0) == 0 &&
-                  (name.size() > 4 && (name.compare(name.size() - 4, 4, ".dll") == 0 ||
-                                       name.compare(name.size() - 3, 3, ".so") == 0)))
+              if (namesEngineLibrary(name))
                 ++stagedEngines;
             }
           }
@@ -791,7 +900,10 @@ namespace ols
         // The engine libraries move beside the binary as a set: every library
         // staged under the engine's own name crosses, and a library that will
         // not move leaves the old one standing - named in the log, not lost.
-        out << "for %%F in (\"%ROOT%\\bin\\stable-diffusion-*.dll\") do (\r\n"
+        // The set is asked for only where one stands: a `for` over a pattern
+        // that matches nothing still runs its body once, with the pattern as
+        // the file's name, and the log then blames a move that was never owed.
+        out << "if exist \"%ROOT%\\bin\\stable-diffusion-*.dll\" for %%F in (\"%ROOT%\\bin\\stable-diffusion-*.dll\") do (\r\n"
             << "  move /y \"%%F\" \"%PROG%\\%%~nxF\" >nul 2>&1 || echo [%DATE% %TIME%] the staged engine library %%~nxF would not move: the old one stands>>\"%LOG%\"\r\n"
             << ")\r\n";
         out << "echo [%DATE% %TIME%] the staged binary took the running one's place>>\"%LOG%\"\r\n"
@@ -840,35 +952,85 @@ namespace ols
         }
         else
         {
-          // No manager holds this server: it raised itself when it started, so
-          // the hand asks its own program of the machine's runas verb once -
-          // the same single prompt the server itself was raised by at start.
-          // A refusal leaves everything moved and standing; the words say so.
+          // No manager holds this server, so the new program comes from the hand
+          // itself, as its own plain child - which carries the level this server
+          // stands at. No runas verb is asked here. The entry point's law is that
+          // a server runs nowhere but at its manager's level, so the level this
+          // process already holds is the level the next one needs, and asking the
+          // machine again for a leave it gave once would plant a prompt in the one
+          // road that promises there is none. A refusal leaves everything moved
+          // and standing; the words say so.
           out << "cd /d \"%ROOT%\"\r\n"
-              << "powershell -NoProfile -Command \"Start-Process -FilePath '" << progDir << "\\"
-              << exeName << "' -WorkingDirectory '%ROOT%' -Verb RunAs\" >>\"%LOG%\" 2>&1\r\n";
-          said << "no manager holds this server: the new program is asked of the machine's own "
-                  "elevation once, as it was when this server first started. this server stops now.";
+              << "start \"open-local-services\" /d \"%ROOT%\" \"%PROG%\\" << exeName << "\"\r\n";
+          said << "no manager holds this server: the new program starts from the hand, at the "
+                  "level this server stands at, with no prompt asked of anyone. this server "
+                  "stops now.";
         }
         out << ":handdone\r\n"
             << "echo [%DATE% %TIME%] the hand is done>>\"%LOG%\"\r\n"
+            << "if \"%~1\"==\"entry\" schtasks /delete /tn " << kHandEntry << " /f >nul 2>&1\r\n"
                "exit /b 0\r\n";
         out.close();
-        STARTUPINFOA look{};
-        look.cb = sizeof(look);
-        PROCESS_INFORMATION gone{};
-        std::string line = "cmd.exe /c \"" + script + "\"";
-        if (!CreateProcessA(nullptr, line.data(), nullptr, nullptr, FALSE,
-                            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &look,
-                            &gone))
+        // Where the hand may stand. The machine's scheduler keeps every process of
+        // a running task inside one job, and closes that job - with everything
+        // still inside it - the moment the task's own action process lets go. A
+        // hand born as a child of the server therefore goes down with the server
+        // it was waiting behind, before a single file has moved; a box whose home
+        // is a scheduled task measured exactly that, and left no log line behind
+        // to show for it. So where a manager's road stands this server up, and
+        // this process finds itself inside such a job, the hand stands as a
+        // one-shot entry of its own: an entry the scheduler holds beside this
+        // task's job, never inside it, which deletes itself as its last word.
+        // Only where no such road holds the server - a program started from a
+        // shell, with nothing behind it to bring it back - is the hand kept a
+        // child of this process, and then it asks to be started outside any job
+        // it was born in.
+        BOOL insideJob = FALSE;
+        const bool inJob =
+            IsProcessInJob(GetCurrentProcess(), nullptr, &insideJob) != FALSE && insideJob != FALSE;
+        bool handStands = false;
+        std::string refusal;
+        if (inJob && (byTask || byService))
         {
-          words = "this machine would not start the hand (win32 error " +
-                  std::to_string(GetLastError()) + "): nothing was stopped.";
+          std::string why{};
+          if (standsHandEntry(script, why))
+            handStands = true;
+          else
+            refusal = "standing the hand as an entry of its own was refused: " + why;
+        }
+        if (!handStands)
+        {
+          DWORD flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+          if (inJob)
+            flags |= CREATE_BREAKAWAY_FROM_JOB;
+          STARTUPINFOA look{};
+          look.cb = sizeof(look);
+          PROCESS_INFORMATION gone{};
+          std::string line = "cmd.exe /c \"" + script + "\"";
+          if (CreateProcessA(nullptr, line.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr,
+                             &look, &gone))
+          {
+            CloseHandle(gone.hThread);
+            CloseHandle(gone.hProcess);
+            handStands = true;
+          }
+          else
+          {
+            const DWORD childErr = GetLastError();
+            refusal = "this machine would not start the hand (win32 error " +
+                      std::to_string(childErr) + ")";
+            if (inJob)
+              refusal += "; this server stands inside a job the machine closes when its own task "
+                         "lets go, and a hand is not left to die in it mid-move";
+            refusal += ": nothing was stopped.";
+          }
+        }
+        if (!handStands)
+        {
+          words = refusal;
           rememberWords(words);
           return false;
         }
-        CloseHandle(gone.hThread);
-        CloseHandle(gone.hProcess);
 #else
         if (now.installed && now.manager == "systemd")
         {
@@ -923,19 +1085,27 @@ namespace ols
           // main process lets go, systemd sweeps every process the unit still
           // holds - and a helper forked here dies in that sweep before a single
           // file is moved. So the hand stands up as a transient unit of its
-          // own: a sibling beside the service, invisible to its stopping.
-          std::ostringstream escaped;
-          escaped << "systemd-run --quiet --collect --unit=ols-update-hand"
-                  << " --working-directory=" << root
-                  << " /bin/sh '" << script << "'";
-          const Answer stood = ask(escaped.str());
+          // own: a sibling beside the service, invisible to its stopping. Both
+          // names are single-quoted on the way to the shell: a folder with a
+          // space in its name is an ordinary folder, and a bare working
+          // directory would hand the rest of that path to systemd as arguments
+          // that name no file at all.
+          std::ostringstream handCommand;
+          handCommand << "systemd-run --quiet --collect --unit=ols-update-hand"
+                      << " --working-directory='" << root << "'"
+                      << " /bin/sh '" << script << "'";
+          const Answer stood = ask(handCommand.str());
           if (stood.code != 0)
           {
             // Without the transient road the hand would die in the sweep, so
             // this server says so plainly and stands aside unstopped - worse
-            // than a hand that cannot hold is a hand that breaks mid-move.
+            // than a hand that cannot hold is a hand that breaks mid-move. The
+            // machine's own words are said with the refusal: the commonest one
+            // is that a hand of this name is still running, and a second one
+            // would move the same files twice.
             words = "this machine would not stand the hand beside the unit (code " +
-                    std::to_string(stood.code) + "): nothing was stopped.";
+                    std::to_string(stood.code) + "); " + oneLine(stood.text) +
+                    ": nothing was stopped.";
             rememberWords(words);
             return false;
           }
@@ -1468,6 +1638,29 @@ namespace ols
           // second ask would put a second copy of the same server on the machine.
           said << "this machine already starts this server when the machine starts; ";
           done = true;
+        }
+        else if (now.installed && now.startup == "disabled")
+        {
+          // The machine was told to leave this entry alone at boot; taking that
+          // word back is one ask, and the entry its owner set keeps everything
+          // else it was given.
+          const Answer set = ask("schtasks /change " + name + " /enable");
+          said << "schtasks /change said: " << oneLine(set.text)
+               << "; the entry that stands is enabled again, with the start it was given";
+          done = set.code == 0;
+        }
+        else if (now.installed)
+        {
+          // An entry that stands and starts some other way belongs to the hand
+          // that set it: its folder, its words and its trigger are that hand's
+          // choice, and this door is not allowed to write a new entry over the
+          // top of one it did not make. What stands is said again, with the two
+          // asks that put this server's own entry in its place.
+          said << "an entry named " << now.name << " already stands on this machine - "
+               << now.detail << ". This door does not write over an entry it did not set: ask this "
+               "door for \"remove\", then for this one again, to have this server set an entry of "
+               "its own - or mend the standing entry where it was set";
+          done = false;
         }
         else
         {

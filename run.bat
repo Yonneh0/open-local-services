@@ -12,7 +12,8 @@ REM no ggml, and opens the engine library that stands beside it when it starts
 REM (see OLS_ENGINE in the README).
 REM Pass "vulkan" for the sdk's engine - the one that needs the Vulkan sdk and
 REM builds in the plain roots - "cuda" is taken as the default it names, and
-REM "nodevice" forces the cpu engine where a card could be named.
+REM "nodevice" forces the cpu engine where a card could be named: the x64
+REM baseline, the same shape build-rel.bat ships as cpu-plain, in the same root.
 REM Optional runtime settings as arguments: key=<access key> rate=<requests per minute>
 REM Everything already built is skipped, and a server that is running is stopped
 REM only after the build below succeeds, right before its binary is replaced.
@@ -315,7 +316,14 @@ if defined VULKAN_WANTED (
   set ENGINE_SHAPE=vulkan
 )
 if defined NODEVICE (
-  set SD_ROOT=vendor\stable-diffusion.cpp\build-nd
+  rem the cpu engine this word asks for is the one every box can run: the x64
+  rem baseline, in the same root - and under the same instruction sets - that
+  rem build-rel.bat names cpu-plain. the avx512 cpu engine is a different shape
+  rem with a different file name, stable-diffusion-cpu-avx512.dll, and the
+  rem server hands that file only to a chip that says yes to it; building it by
+  rem default here would have this box name avx512 bytes for the file a slower
+  rem chip is told to open.
+  set SD_ROOT=vendor\stable-diffusion.cpp\build-p
   set ENGINE_SHAPE=cpu
 )
 set ENGINE_NAME=stable-diffusion-!ENGINE_SHAPE!.dll
@@ -442,6 +450,19 @@ if not defined SD_DONE (
             if errorlevel 1 exit /b 1
             call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_VULKAN "OFF" "the image engine"
             if errorlevel 1 exit /b 1
+        ) else (
+            rem the two shapes a box without a card can build are told apart by
+            rem the one flag that names a device: the cpu engine answers off, and
+            rem the sdk's answers on. a tree asked for the other one would
+            rem recompile everything it holds to change its answer.
+            call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_CUDA "OFF" "the image engine"
+            if errorlevel 1 exit /b 1
+            if defined NODEVICE (
+                call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_VULKAN "OFF" "the image engine"
+            ) else (
+                call :ask_shape "!SD_ROOT!\CMakeCache.txt" GGML_VULKAN "ON" "the image engine"
+            )
+            if errorlevel 1 exit /b 1
         )
     )
     echo Building the image engine as a shared library with !BACKEND! compute
@@ -450,7 +471,7 @@ if not defined SD_DONE (
         cmake -G Ninja "-DCMAKE_MAKE_PROGRAM=!NINJA_EXE!" -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml -DGGML_CUDA=ON "-DCMAKE_CUDA_COMPILER=!CUDA_HOME!\bin\nvcc.exe" "-DCUDAToolkit_ROOT=!CUDA_HOME!" "-DCMAKE_CUDA_ARCHITECTURES=70;75;86" !OLS_GUARD!
     ) else if defined NODEVICE (
         call :stand_studio
-        cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
+        cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
     ) else (
         call :stand_studio
         cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
