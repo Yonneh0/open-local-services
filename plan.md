@@ -59,7 +59,16 @@ review format. do not edit or remove this format:
   fact from the other side. If the queue is ever tuned, a `card_at` word in the record would make this readable; not
   adding one for a problem I invented.
 - **One root: nothing asks the card how big it is.** `kVramBudget` (`ImageService.cpp:2591`) reads only `cudaDeviceTotalBytes()`, so on a vulkan box the engine is told `unlimited budget`, and the residency ceiling that decides how many models the LRU keeps open does not consult the card either: after three failed runs `/api/system` showed `loaded: [pony-diffusion-v6, realvisxl-v5-lightning]` with `resident: 7.27 + 6.94 GB` — **14.2 GB attributed to a 4 GiB card** — while the engine's own line read `available 901.25 MB device`. Measured consequence: with a model already open, the next run of a second model dies at `done=0/8` in ~5 s (`unet segment 9/17 failed during weight preparation`), whereas the same ask after `POST /api/unload` gets its whole sampler through (12/12, dying later at the decode wall). `/api/unload` is the only clearing door today.
-  Shape of the fix, for the operator to weigh: the driver's card size is already read for the device row (`cardBytesFromDriver`, `2f1dff9`), so feed the same number to `max_vram` and to the residency ceiling when nvml stays silent, and let a run that ended in error drop its model rather than leave it resident. Untouched deliberately: `budget_bytes` for cuda boxes — MSI's measured 8 GiB case (2026-11-19) is why the floor sits where it does, and changing it from one 4 GiB vulkan box would be deciding for cards I have not measured here.
+  **Fixed and proven the same day**, scoped so no cuda box can be touched by it: the budget now falls back to the card's
+  own driver size — asked by `cardBytesFromDriver` (`2f1dff9`), the same reading the device row uses — only when nvml
+  stays silent, and for such a card under six GiB the budget is all but one GiB of it. Measured on the nuc with the ask
+  that had been dying: `pony-diffusion-v6` 512² · 8 steps from a fresh start `done 8/8 in 49.2 s`, drawing
+  `gen-img-99469d94174e-ddddfe3b-0.png` (512², `device: Vulkan0`, served `200` by `/files/outputs/`); and a **second**
+  run of the same model with it already open, which had died at `done=0/8` in five seconds, came back `done 8/8 in
+  48.0 s`. So the card-sized budget cleared the starvation as well as the decode wall. Still owed there: the residency
+  ceiling itself (the LRU may still name more resident than a small card holds — it simply no longer starves it), and a
+  `card_at` word in the job record if the queue is ever tuned. `budget_bytes` for cuda boxes is left exactly as MSI's
+  measured 8 GiB case (2026-11-19) decided.
 
 ## 3. Awaiting User Verification
 when work is complete, edit this document, add any additional user guidance received during the session, and move the work item here, when completed.

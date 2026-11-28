@@ -2588,7 +2588,24 @@ namespace ols
         // without it the manager asks the card for the whole run at once and a
         // big clip dies where a spill to memory would have served. Four GiB
         // stay outside the budget for what the engine does not track.
-        const long long total = cudaDeviceTotalBytes();
+        long long total = cudaDeviceTotalBytes();
+         // A card that answers its own driver rather than nvml has never had a
+         // budget sized against it here, and unlimited is not neutral for one:
+         // measured on the nuc 2026-11-28 an SDXL ask ran its whole sampler at
+         // 512 and then refused at the decode - `need 1266.62 MB device /
+         // available 893.01 MB` - with no ceiling to spill params against.
+         // Such a card is asked to hold all but one GiB of itself. A card nvml
+         // speaks for is left exactly as the measurements below decided.
+         if (total <= 0)
+         {
+           long long budgetFree = 0;
+           if (ols::imagegen::cardBytesFromDriver(total, budgetFree) && total > 0 &&
+               total < 6LL * 1024 * 1024 * 1024)
+           {
+             const long long small = (total - 1LL * 1024 * 1024 * 1024) / (1024LL * 1024 * 1024);
+             return std::to_string(small > 0 ? small : 1);
+           }
+         }
         if (total <= 0)
           return std::string();
         long long gib = (total - 4LL * 1024 * 1024 * 1024) / (1024LL * 1024 * 1024);
