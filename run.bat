@@ -614,6 +614,27 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem ---- what this door ended through the scheduler goes back through the
+rem scheduler: a box that was serving when the build started serves again from
+rem the binary just installed. in run mode this terminal is the one that serves
+rem next, so the task stays ended and the words name the command that hands it
+rem back.
+if not defined MANAGED_TASK goto no_task_return
+if /i "%MODE%"=="build" (
+    schtasks /run /tn "!MANAGED_TASK!" >nul 2>nul
+    if errorlevel 1 (
+        echo !MANAGED_TASK! was ended to replace its binary and could not be run again.
+        echo Stand it up with: schtasks /run /tn !MANAGED_TASK!
+    ) else (
+        echo !MANAGED_TASK! is up again through its scheduler, answering from the binary just installed.
+    )
+) else (
+    echo !MANAGED_TASK! was ended to replace its binary; this terminal's server is the
+    echo one that answers now. Hand it back to the machine's scheduler with:
+    echo   schtasks /run /tn !MANAGED_TASK!
+)
+:no_task_return
+
 if /i not "%MODE%"=="build" goto start
 echo.
 echo Built. Start the server with: run.bat
@@ -813,6 +834,33 @@ rem name whose image still lives cannot be replaced. so this asks once, then
 rem waits until the process is really gone; it answers 0 when it stopped one
 rem and 1 when there was nothing to stop. the wait is bounded: a process that
 rem will not let go is left alone, and the replace's own waits decide after.
+rem
+rem where the machine's scheduler owns this server, the scheduler does the
+rem stopping. taskkill takes the process and leaves the task's run ended with
+rem nothing to stand it back up, so a finished build would report a clean stop
+rem while taking the box out of service - measured on this road's linux twin
+rem (run.sh, c27f115), where a build's kill left the unit inactive (dead) until
+rem it was started by hand two minutes later.
+set "MANAGED_TASK="
+if not defined OLS_SERVICE_NAME set "OLS_SERVICE_NAME=open-local-services"
+schtasks /query /tn "%OLS_SERVICE_NAME%" /fo LIST 2>nul | findstr /I /C:"Status" | findstr /I /C:"Running" >nul
+if errorlevel 1 goto stop_by_name
+set "MANAGED_TASK=%OLS_SERVICE_NAME%"
+schtasks /end /tn "%OLS_SERVICE_NAME%" >nul 2>nul
+echo !MANAGED_TASK! belongs to this machine's scheduler, so its scheduler stopped it (schtasks /end).
+set LEFT=0
+:stop_task_wait
+tasklist /FI "IMAGENAME eq %1" | findstr /I "%1" >nul
+if errorlevel 1 exit /b 0
+set /A LEFT=LEFT+1
+if %LEFT% geq 20 (
+    echo The task was told to end and the process still holds its image; nothing was
+    echo replaced. Wait for it to let go, or end it through the scheduler again.
+    exit /b 2
+)
+ping -n 2 >nul
+goto stop_task_wait
+:stop_by_name
 tasklist /FI "IMAGENAME eq %1" | findstr /I "%1" >nul
 if errorlevel 1 exit /b 1
 taskkill /F /IM %1 >nul 2>nul
