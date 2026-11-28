@@ -48,6 +48,9 @@ review format. do not edit or remove this format:
   Checkpoint ledger: CA/CB/CC done (`5d2caef`, `9909d17`+2, `e44e34d`). CD open — only the list-half press above. CE (TLS + push to GitHub/GitLab validated + editor proof **with the Remotes/Builds/Settings rooms real, not placeholders** — E3/E4) open. CF (caching table §9 + patch bytes) open — F2/F3. CG final — G.
   Risk notes still live: mbedtls fights accept loop → batch 1 proved the seam, fallback `OLS_TLS_PORT` separate listener; OpenSSH Windows pain → spike green, fallback vendored libssh2 transport-only (operator-OK deviation); CM6 packaging → pinned prebundle, fallback textarea editor.
 
+- Engine variants that dispatch on the chip (found on the nuc, 2026-11-27)
+  Changes: ggml's `GGML_CPU_ALL_VARIANTS` builds one cpu backend per ISA and picks at run time — the only setting that really dispatches — but it requires `GGML_BACKEND_DL`, backends as separate libraries this project does not stage; today an avx512 build is therefore a named artifact (`cpu-avx512`), never a plain one. Owed with it: a `linux-x86_64-avx512` release target — `run.sh` builds the flavour, `build-rel.sh` does not yet.
+
 ## 3. Awaiting User Verification
 when work is complete, edit this document, add any additional user guidance received during the session, and move the work item here, when completed.
 

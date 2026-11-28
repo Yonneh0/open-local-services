@@ -46,10 +46,19 @@ FRESH_FULL=
 # starting, key= and rate= are the same two settings run.bat takes, and
 # fresh-full-rebuild (or --fresh-full-rebuild) is the one word that lets this
 # path restate a tree's shape - see the shape check below, which refuses to
-# rebuild a whole tree from scratch without it.
+# rebuild a whole tree from scratch without it. cuda, cpu and cpu-avx512 name
+# an engine shape; without one the machine chooses, as below.
+SHAPE_WANTED=
 for opt in "$@"; do
   case "$opt" in
     build) MODE=build ;;
+    cuda | cpu | cpu-avx512)
+      if [ -n "$SHAPE_WANTED" ]; then
+        echo "cuda, cpu and cpu-avx512 name three shapes: name one of them, or none."
+        exit 1
+      fi
+      SHAPE_WANTED=$opt
+      ;;
     key=*) OLS_API_KEY="${opt#key=}"; export OLS_API_KEY ;;
     rate=*) OLS_RATE_LIMIT="${opt#rate=}"; export OLS_RATE_LIMIT ;;
     fresh-full-rebuild | --fresh-full-rebuild) FRESH_FULL=1 ;;
@@ -106,12 +115,23 @@ NVCC=""
 for D in /usr/local/cuda-*/bin/nvcc /usr/local/cuda/bin/nvcc; do
   [ -x "$D" ] && NVCC="$D"
 done
-# whether this box takes the card shape or the cpu shape is the nvcc above;
-# the generations the engine carries are named below, not guessed from the
-# card in front of it, so one library answers on the box that built it and on
-# every box of those generations.
+# whether this box takes the card shape or the cpu shape is the nvcc above,
+# unless a shape word was named - and naming cuda on a box with no toolkit is
+# refused, not quietly answered with another shape. The generations the engine
+# carries are named below, not guessed from the card in front of it, so one
+# library answers on the box that built it and on every box of those
+# generations. cpu-avx512 is a shape of its own because it is a claim of its
+# own: see the flags below and the loader that hands that name to a chip which
+# says yes to it.
 ENGINE_SHAPE=cpu
 if [ -n "$NVCC" ]; then ENGINE_SHAPE=cuda; fi
+if [ -n "$SHAPE_WANTED" ]; then
+  if [ "$SHAPE_WANTED" = cuda ] && [ -z "$NVCC" ]; then
+    echo "cuda was named; no nvcc under /usr/local answers. The cpu shapes are what this box can build."
+    exit 1
+  fi
+  ENGINE_SHAPE=$SHAPE_WANTED
+fi
 # the CUDA engine library carries the kernels for every generation this
 # project supports: the loader inside it picks each card's own when it is
 # opened, so the machine that builds and the machines that run need no
@@ -120,8 +140,13 @@ CUDA_ARCH_LIST="70;75;86"
 if [ "$ENGINE_SHAPE" = cuda ]; then
   echo "CUDA compiler: $NVCC"
   echo "engine shape: cuda, kernels for sm_70, sm_75 and sm_86 in one library"
+elif [ "$ENGINE_SHAPE" = cpu-avx512 ]; then
+  echo "engine shape: cpu-avx512, standing as libstable-diffusion-cpu-avx512.so for a chip that answers avx512"
 else
-  echo "No CUDA toolkit with an nvcc found under /usr/local: the engine builds on the cpu alone"
+  if [ -z "$NVCC" ]; then
+    echo "No CUDA toolkit with an nvcc found under /usr/local: the engine builds on the cpu alone"
+  fi
+  echo "engine shape: cpu, built for the avx2 floor this fleet stands on"
 fi
 JN=$(nproc)
 
@@ -151,15 +176,18 @@ CUDA_FLAGS="-include $CUDA_SHIM"
 CUDA_FLAGS_OPT="-DCMAKE_CUDA_FLAGS=$CUDA_FLAGS"
 
 # ---- the roots the engine shape builds in, named like run.bat names them ----
-# the CUDA engine builds in build-cuda and the cpu engine in the unqualified
-# build, one tree per backend, so the two never share a cache - and the same
-# roots build-rel.sh builds the same shapes in, which is what keeps a release
-# build and a development build of one shape the same incremental tree. Two
-# entry points naming one root with the same defines is what keeps the build
-# incremental: a flipped define changes every compile command in the tree and
-# rebuilds an engine for hours over and over.
+# the CUDA engine builds in build-cuda, the cpu engine in the unqualified
+# build, and the avx512 claim in build-avx512: one tree per shape, so no two
+# of them ever share a cache - and the same roots build-rel.sh builds the same
+# shapes in, which is what keeps a release build and a development build of one
+# shape the same incremental tree. Two entry points naming one root with the
+# same defines is what keeps the build incremental: a flipped define changes
+# every compile command in the tree and rebuilds an engine for hours over and
+# over.
 if [ "$ENGINE_SHAPE" = cuda ]; then
   SD_BUILD="vendor/stable-diffusion.cpp/build-cuda"
+elif [ "$ENGINE_SHAPE" = cpu-avx512 ]; then
+  SD_BUILD="vendor/stable-diffusion.cpp/build-avx512"
 else
   SD_BUILD="vendor/stable-diffusion.cpp/build"
 fi
@@ -204,7 +232,13 @@ check_shape() {
   [ -n "$SHAPE_HAS" ] || return 0
   if [ "$SHAPE_HAS" != "$SHAPE_WANT" ]; then
     if [ "$FRESH_FULL" = 1 ]; then
-      echo "fresh-full-rebuild was given: restating $SHAPE_NAME on this tree."
+      # the promise the word makes, kept: the tree is restated, not nursed.
+      # clearing it is what makes the configure below run again with this
+      # shape's flags - a configure stamp that survived here would leave the
+      # old claim in the objects while this path reported a new one, which is
+      # the silent reshape the checks above exist to refuse.
+      echo "fresh-full-rebuild was given: $SD_BUILD is cleared, then configured for $SHAPE_NAME=$SHAPE_WANT."
+      SHAPE_RESTATED=1
       return 0
     fi
     refuses_a_full_rebuild
@@ -311,14 +345,40 @@ if [ ! -f vendor/openssh/ssh ]; then
 fi
 
 # ---- the one incremental path every entry point shares ----
-# build-rel.sh names these same values for its native target, in the same
-# roots: the cpu backend of every engine is built for the baseline of its
-# architecture with run-time feature detection, never for the machine that
-# happened to compile it, and the image engine carries the configure-time
-# guard for the pinned rsqrt wrapper. Naming one shape in both entry points
-# is what keeps a shared tree incremental: the other shape's flags would
-# change every compile command, and a rebuild of unchanged code is a defect.
-COMMON="-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON -DGGML_FMA=ON -DGGML_F16C=ON"
+# build-rel.sh names these same values for its native targets, in the same
+# roots, and the image engine carries the configure-time guard for the pinned
+# rsqrt wrapper. Naming one shape in both entry points is what keeps a shared
+# tree incremental: the other shape's flags would change every compile command,
+# and a rebuild of unchanged code is a defect.
+#
+# What the instruction-set options mean here, measured on the pinned engine and
+# its ggml rather than assumed: they are a claim made to the compiler, not a
+# promise the library keeps at run time. -DGGML_AVX512=ON hands -mavx512f and
+# friends to every object of the cpu backend (ggml/src/ggml-cpu/CMakeLists.txt),
+# the compiler then writes zmm instructions wherever it finds them worth using -
+# including in code no dispatch guard stands over, and ggml_cpu_has_avx512()
+# answers from the very macro those flags set (ggml-cpu.c), so a library built
+# that way cannot discover later that the chip it landed on has none. What
+# follows is a process dying of SIGILL at its first touch of the engine: seen
+# 2026-11-27 on a kaby lake nuc (avx2, no avx512) as `trap invalid opcode ... in
+# libstable-diffusion-cpu.so` at a constant-store inside ggml_cpu_init. The one
+# ggml setting that does dispatch on the chip is GGML_CPU_ALL_VARIANTS, and it
+# wants GGML_BACKEND_DL - backends as separate libraries this project does not
+# stage; until that road is taken, a shape says what it claims and its library
+# is named for it. So the plain cpu shape asks for avx2, fma and f16c - the
+# floor every machine of this fleet stands on - and nothing above it, and the
+# avx512 claim lives in the cpu-avx512 shape, whose library the loader hands
+# only to a chip that says yes.
+NOVEC_FLAGS="-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF"
+SD_AVX512_FLAGS="-DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON"
+COMMON="-DCMAKE_BUILD_TYPE=Release"
+AVX512_WANT=OFF
+if [ "$ENGINE_SHAPE" = cpu-avx512 ]; then
+  COMMON="$COMMON $SD_AVX512_FLAGS"
+  AVX512_WANT=ON
+else
+  COMMON="$COMMON $NOVEC_FLAGS"
+fi
 OLS_GUARD="-DCMAKE_PROJECT_INCLUDE_BEFORE=$PWD/src/ols-sage-guard.cmake"
 
 # ---- build the image engine: asked for on every run, as run.bat asks it ----
@@ -335,12 +395,22 @@ if [ -f "$SD_BUILD/CMakeCache.txt" ]; then
   # of another is a full rebuild, so it is refused before cmake is asked
   # anything at all.
   check_shape "$SD_BUILD/CMakeCache.txt" GGML_VULKAN "OFF"
+  # the instruction-set claim this shape makes, asked of the tree that stands:
+  # a tree built without avx512 is not the tree the cpu-avx512 shape wants, and
+  # the other way round, and neither is fixed by nursing it - see the flags
+  # above for why a flipped claim is a different library, not a rebuild.
+  check_shape "$SD_BUILD/CMakeCache.txt" GGML_AVX512 "$AVX512_WANT"
   if [ "$ENGINE_SHAPE" = cuda ]; then
     check_shape "$SD_BUILD/CMakeCache.txt" CMAKE_CUDA_ARCHITECTURES "$CUDA_ARCH_LIST"
     check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "ON"
   else
     check_shape "$SD_BUILD/CMakeCache.txt" GGML_CUDA "OFF"
   fi
+fi
+if [ "${SHAPE_RESTATED:-0}" = 1 ]; then
+  # the one clearing this path does, and only on the word above: an engine
+  # tree whose claim this shape does not want holds nothing this run may keep.
+  rm -rf "$SD_BUILD"
 fi
 if [ ! -f "$SD_BUILD/.configured-$PIN_IMAGE" ]; then
   if [ "$ENGINE_SHAPE" = cuda ]; then

@@ -345,15 +345,21 @@ build_one() {
   # defect, and a no-change run of the development path reads 25 seconds
   # against 482 from a tree thrown away. the source trees are untouched.
 
-  # the cpu backend of every engine is built for the baseline of its
-  # architecture and given the run-time feature detection that goes with it:
-  # GGML_NATIVE=OFF leaves the engines no -march shortcut for the machine doing
-  # the building, and the ISA options name the instruction sets a binary may
-  # use - up to avx512, and the fused multiply-add and the fp16 conversion that
-  # its packing code uses - which the backend then reaches only through what the
-  # cpu it runs on reports. so an artifact built on a cpu with avx512 runs
-  # unchanged on one that has none, and uses avx512 on a cpu that has it.
-  COMMON="-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=ON -DGGML_FMA=ON -DGGML_F16C=ON"
+  # the cpu backend of every engine is built for the floor of its architecture,
+  # never for the machine that happened to compile it: GGML_NATIVE=OFF leaves
+  # the engines no -march shortcut. What those flags are NOT is a run-time
+  # promise. -DGGML_AVX512=ON hands -mavx512f to every object of the cpu
+  # backend, the compiler writes zmm instructions wherever it wants them -
+  # including where no dispatch guard stands - and ggml_cpu_has_avx512()
+  # answers from the macro those flags set, so the built library never finds
+  # out that the chip below it has none: it dies of SIGILL at its first touch.
+  # Measured 2026-11-27 on a kaby lake nuc building this line as it stood, and
+  # the same trap is why the engine's own name says what it claims. The ggml
+  # setting that does dispatch on the chip is GGML_CPU_ALL_VARIANTS, which asks
+  # for GGML_BACKEND_DL - backends as separate libraries this project does not
+  # stage - so an avx512 build is an avx512 artifact, named for it, and the
+  # plain artifact asks for avx2, fma and f16c: the floor this fleet stands on.
+  COMMON="-DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF"
   # shared libraries find each other by the folder they stand in, not by the
   # folder they were built in: an artifact unpacked on a machine that never
   # held this tree has no build roots to fall back on, so every library gets

@@ -150,10 +150,16 @@ namespace ols
       // come back in the order worth trying.
 #ifdef _WIN32
       // Whether this chip answers the avx512 questions the avx512 cpu engine
-      // was compiled against. The windows compiler writes those instruction
-      // sets straight into the code - no run-time dispatch stands behind them
-      // like the linux engines have - so the avx512 engine may only be handed
-      // to a chip that says yes to f, vbmi and vnni itself.
+      // was compiled against. That claim is written straight into the code on
+      // either platform: the cmake option hands -mavx512f to every object of
+      // the cpu backend, the compiler then uses those registers wherever it
+      // likes - including where no dispatch guard stands - and the engine's own
+      // ggml_cpu_has_avx512() answers from the macro the option set, so a
+      // library built that way never finds out that the chip below it has none.
+      // Seen on the linux side 2026-11-27: such an engine, built by a door that
+      // named no flavour, died of SIGILL inside ggml_cpu_init on a chip with
+      // avx2 and nothing above it. So the flavoured engine goes only to a chip
+      // that says yes to f, vbmi and vnni itself, on either road.
       bool chipAnswersAvx512()
       {
         int regs[4] = {0, 0, 0, 0};
@@ -165,6 +171,18 @@ namespace ols
         const bool vbmi = (regs[1] & (1 << 1)) != 0;
         const bool vnni = (regs[1] & (1 << 11)) != 0;
         return f && vbmi && vnni;
+      }
+#elif defined(__x86_64__) || defined(__i386__)
+      bool chipAnswersAvx512()
+      {
+        __builtin_cpu_init();
+        return __builtin_cpu_supports("avx512f") != 0 && __builtin_cpu_supports("avx512vbmi") != 0 &&
+               __builtin_cpu_supports("avx512vnni") != 0;
+      }
+#else
+      bool chipAnswersAvx512()
+      {
+        return false;
       }
 #endif
       std::vector<std::string> machineOrder()
@@ -201,6 +219,12 @@ namespace ols
           dlclose(loader);
           order.push_back("vulkan");
         }
+        // the flavoured cpu engine is asked for here as it is on the windows
+        // road: by name, and only of a chip that answers for the claim that
+        // name carries. a tree that built no such library simply is not there,
+        // and the plain cpu engine below answers.
+        if (chipAnswersAvx512())
+          order.push_back("cpu-avx512");
 #endif
         order.push_back("cpu");
         return order;

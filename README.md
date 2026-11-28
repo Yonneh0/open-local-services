@@ -66,7 +66,7 @@ WIZMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMmmmmmmMMMMMMMMMMMMMMMMMMMMMMMMM*MJJ
 
 # open-local-services
 
-A local server for image generation and video clips. One server process serves the web UI and all API endpoints from one fixed port. The server links no image engine and no ggml at all: the engine is a library beside the binary — `stable-diffusion-cuda.dll`, `-vulkan`, `-cpu-avx512`, `-cpu` on Windows, `libstable-diffusion-cuda.so` or `-cpu.so` on Linux — and the server opens the one that answers the machine it stands on, in that order, when it starts. One server binary per platform therefore runs on every machine of that platform; what differs between machines is the library lying beside it.
+A local server for image generation and video clips. One server process serves the web UI and all API endpoints from one fixed port. The server links no image engine and no ggml at all: the engine is a library beside the binary — `stable-diffusion-cuda.dll`, `-vulkan`, `-cpu-avx512`, `-cpu` on Windows, `libstable-diffusion-cuda.so`, `-cpu-avx512.so` or `-cpu.so` on Linux — and the server opens the one that answers the machine it stands on, in that order, when it starts. One server binary per platform therefore runs on every machine of that platform; what differs between machines is the library lying beside it.
 
 ## Repository
 
@@ -88,7 +88,24 @@ build-rel.bat           # Windows release artifacts
 build-rel.sh            # Linux release artifacts
 ```
 
-The development scripts build missing parts, then start the server. Pass `build` to stop before starting. `run.bat` accepts `vulkan`, `cuda`, `nodevice`, `key=`, `rate=`, `arch=`, and `fresh-full-rebuild`. With no shape word it reads the machine: a card the machine names — or one named by `arch=` or the environment — builds the CUDA engine, a box whose probe names no card builds the Vulkan engine from the SDK it carries, and a box with no SDK at all builds the cpu engine. The CUDA engine carries kernels for every supported card generation (`sm_70`, `sm_75`, `sm_86`) in one library, whichever card built it. The server itself builds the same way on every machine — it links no engine — and starts on the engine library its machine opens; `OLS_ENGINE` in `.env` names another choice. `run.sh` accepts `build`, `key=`, `rate=`, and `fresh-full-rebuild`; a box with a CUDA toolkit gets the CUDA engine, and one without builds the cpu engine.
+The development scripts build missing parts, then start the server. Pass `build` to stop before starting. `run.bat` accepts `vulkan`, `cuda`, `nodevice`, `key=`, `rate=`, `arch=`, and `fresh-full-rebuild`. With no shape word it reads the machine: a card the machine names — or one named by `arch=` or the environment — builds the CUDA engine, a box whose probe names no card builds the Vulkan engine from the SDK it carries, and a box with no SDK at all builds the cpu engine. The CUDA engine carries kernels for every supported card generation (`sm_70`, `sm_75`, `sm_86`) in one library, whichever card built it. The server itself builds the same way on every machine — it links no engine — and starts on the engine library its machine opens; `OLS_ENGINE` in `.env` names another choice. `run.sh` accepts `build`, `key=`, `rate=`, `cuda`, `cpu`, `cpu-avx512`, and `fresh-full-rebuild`; with no shape word a box with a CUDA toolkit gets the CUDA engine and one without builds the cpu engine, and naming `cuda` where no `nvcc` answers is refused rather than answered with another shape. `fresh-full-rebuild` is the word that clears the engine tree and configures it for the shape now asked for — a tree whose claim differs is refused before cmake is asked anything, because a flipped claim is a different library, not a rebuild.
+
+What a shape's name is worth, measured rather than assumed: ggml's instruction-set
+options are a claim made to the compiler, not a promise kept at run time. Asking
+for avx512 hands `-mavx512f` to every object of the cpu backend, the compiler
+then uses those registers wherever it likes — including where no dispatch guard
+stands — and the engine's own `ggml_cpu_has_avx512()` answers from the macro
+those options set, so the library never finds out that the chip beneath it has
+none. Such a library dies of `SIGILL` at its first touch: seen 2026-11-27 on a
+kaby lake box (avx2, no avx512) as a trap inside `ggml_cpu_init`, in a cpu engine
+that its own door had named plain `cpu`. So an avx512 build is an avx512
+artifact, named `cpu-avx512` and handed only to a chip that says yes to f, vbmi
+and vnni, on either platform; the plain cpu engine asks for nothing above what
+this fleet stands on (avx2, fma, f16c on Linux — Windows leaves them at the
+engine's own defaults, which its measured artifacts were cut against). ggml does
+have one setting that dispatches on the chip, `GGML_CPU_ALL_VARIANTS`, and it
+requires `GGML_BACKEND_DL` — backends as separate libraries this project does not
+stage; recorded as pending work in plan.md.
 
 ## How a release works
 
@@ -134,7 +151,7 @@ OLS_ENGINE=
 OLS_ENGINE_DIR=
 ```
 
-`OLS_ENGINE` names the engine library the server must open (`cuda`, `vulkan`, `cpu`, or a flavored file name like `cpu-avx512`); left empty, the server picks in order — CUDA if the card answers, Vulkan if the loader opens, then the cpu engine its chip can run. `OLS_ENGINE_DIR` names a folder to search for engine libraries before the folder the server itself stands in.
+`OLS_ENGINE` names the engine library the server must open (`cuda`, `vulkan`, `cpu`, or a flavored file name like `cpu-avx512`); left empty, the server picks in order — CUDA if the card answers, Vulkan if the loader opens, then `cpu-avx512` where the chip itself answers f, vbmi and vnni, then the plain cpu engine. `OLS_ENGINE_DIR` names a folder to search for engine libraries before the folder the server itself stands in.
 
 `OLS_SERVICE_NAME` names the machine's home entry for this server — the scheduled task on Windows, the systemd unit on Linux — where that home goes by anything other than the default (on X1 it is `ols-serve`). The environment wins over the `.env` line; the hand, the doors, and the state readings all ask the scheduler for this one name.
 

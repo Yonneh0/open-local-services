@@ -365,7 +365,13 @@ rem avx512-bf16 stays off the windows builds like the release script leaves it:
 rem the bf16 kernels of the vendored engines cast through MSVC's strict
 rem __m512bh type and only compile under gcc - a development tree that asked
 rem for them would not build for reasons of compiler, not of chip.
-set SD_CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX512_VBMI=ON -DGGML_AVX512_VNNI=ON -DGGML_AVX512_BF16=OFF
+rem and no development shape claims avx512 at all, whatever backend it builds:
+rem the option writes those instruction sets into every object of the cpu
+rem backend, the engine's own ggml_cpu_has_avx512() answers from the macro the
+rem option set, and the loader cannot tell a claiming library from a chip that
+rem cannot run it - the one avx512 artifact of this project is the release
+rem target named for it, stable-diffusion-cpu-avx512.dll, asked for by name by
+rem a loader that first listens to the chip.
 set NOVEC_FLAGS=-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
 echo == building the parts, skipping anything already built ==
 
@@ -474,7 +480,7 @@ if not defined SD_DONE (
         cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=OFF -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
     ) else (
         call :stand_studio
-        cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !SD_CPU_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
+        cmake !ENGINE_GEN! -S vendor\stable-diffusion.cpp -B !SD_ROOT! -DCMAKE_BUILD_TYPE=Release -DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_CLI=OFF -DSD_BUILD_TEST=OFF -DSD_ENABLE_OPENVINO=OFF !NOVEC_FLAGS! -DGGML_VULKAN=ON -DGGML_HIP=OFF -DGGML_COMMON=OFF -DGGML_OPENMP=OFF -DMATH_LIBRARY= -DUSE_GGML_SUBPROJECT=OFF -DGGML_SRC=ggml !OLS_GUARD!
     )
     if errorlevel 1 (
       echo Could not configure the image engine.
